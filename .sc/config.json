@@ -1,0 +1,9 @@
+{
+  "model_id": "arn:aws:bedrock:us-east-1:676534553170:inference-profile/global.anthropic.claude-sonnet-4-20250514-v1:0",
+  "aws_region": "us-east-1",
+  "max_tokens": 2500,
+  "temperature": 0.0,
+  "lease_ttl_hours": 72,
+  "scope_budget_files": 12,
+  "permanent_approval_threshold": 3
+}
