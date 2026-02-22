@@ -2,6 +2,8 @@ from __future__ import annotations
 
 ### This is mostly an AI-Generate file based off the DB schema I designed
 
+### TODO: modularize code in this file, clean up boilerplate
+
 # central persistence layer for governance state.
 # stores leases, decision traces, constraints, guidelines, and calibration data.
 # schema migrations are additive (new columns only) to avoid breaking existing dbs.
