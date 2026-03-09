@@ -1,0 +1,38 @@
+\section{System Overview}
+
+\begin{figure}[t]
+  \centering
+  \fbox{\parbox{0.95\columnwidth}{\textbf{Placeholder for architecture figure.} Replace this box with the Smart Coder architecture diagram: developer $\leftrightarrow$ CLI governance layer $\leftrightarrow$ untrusted model, with SQLite traces, policy engine, prompt builder, and verification loop.}}
+  \caption{Smart Coder architecture. The model proposes actions; the local CLI remains the sole enforcement boundary for file access, writes, and verification.}
+  \label{fig:architecture}
+\end{figure}
+
+Smart Coder is implemented as a local Python CLI that sits between the developer and a Bedrock-hosted coding model. The model operates through a strict structured protocol: it may request file reads, declare intent, issue check-ins, and propose file updates, but it cannot directly read or modify the repository. The CLI validates every request against repository-local state and decides whether to continue, prompt, or block.
+
+This design can also be understood through a capability-security lens~\\cite{lampson1971protection}. Smart Coder's leases are not generic trust toggles; they are temporary, path-scoped capabilities for a specific access type, with expiry and local revocation.
+
+\subsection{Governance and adaptive autonomy}
+
+Every read and write request passes through an approval cascade. First, Smart Coder checks hard constraints, which encode deterministic read/write policies such as \texttt{always\_deny}, \texttt{always\_check\_in}, and \texttt{always\_allow}. Second, it checks active leases, which are temporary trust grants derived from prior approvals. Third, it evaluates a heuristic policy score built from interaction history and risk signals. The score is based on factors such as prior approvals and denials, review speed, edit distance, blast radius, change type, diff size, security sensitivity, and verification-failure history. The user does not directly manipulate this scoring logic; instead, they interact through qualitative autonomy modes such as \emph{strict}, \emph{balanced}, \emph{milestone}, and \emph{autonomous}.
+
+This policy layer is deliberately hybrid rather than purely heuristic. Some checkpoints are deterministic and milestone-driven regardless of score: plan approval, phase transitions, constrained files, deviations from an approved plan, and verification hotspots can all trigger review. This hybrid design matches the interaction style preferred by many of our survey respondents: do not interrupt for routine work, but do stop at meaningful decision points.
+
+\subsection{Dual-initiator check-ins}
+
+Smart Coder supports two independent sources of oversight. The first is policy-initiated oversight from the CLI. The second is model-initiated oversight, where the model is explicitly instructed to surface uncertainty, assumptions, and design tradeoffs through structured \texttt{CheckInMessage} outputs. This matters because not all valuable pauses can be expressed as static rules. A model may recognize that preserving an API response envelope conflicts with a cleaner abstraction, or that a spec appears to require an interface change. When that happens, Smart Coder allows the model to ask for guidance rather than silently choose.
+
+Each check-in is logged with an explicit initiator field. This makes the system auditable and creates a natural research question for future study: whether CLI-side or model-side check-ins are better calibrated for different users or tasks.
+
+\subsection{Trace-driven prompt and policy loop}
+
+Smart Coder's core mechanism is an external trace loop. Every interaction produces structured traces that include the stage, file path, change type, risk features, user decision, review timing, free-text feedback, verification result, and model metadata such as self-reported confidence and check-in assumptions. These traces are persisted in SQLite and reused in two places.
+
+First, traces affect future governance decisions. Repeated denials, high edit distance, verification failures, or low-confidence behavior can tighten autonomy in a file or pattern. Repeated successful approvals can loosen it. Second, traces are summarized into future system prompts. The model sees qualitative trust summaries, relevance-ranked historical corrections, behavioral guidelines, autonomy preferences, and workflow phase. It does not see raw internal thresholds or exact trust scores.
+
+This externalized trace-to-policy and trace-to-prompt loop is a central distinction between Smart Coder and both static configuration files and model-internal personalization methods such as PAHF-style memory updates~\\cite{liang2026pahf}. In the current prototype, prompt-side retrieval already goes beyond simple recency: historical corrections and accepted guidelines are ranked against the current task and spec context before being injected. The adaptation remains inspectable, local, and separable from the underlying model.
+
+\subsection{Spec-aware planning and verification}
+
+Smart Coder optionally accepts a task specification via \texttt{--spec}. The spec is digested into prompt context, and the model is asked to map its plan to requirements and declare potential deviations. The CLI then treats missing requirement coverage or explicit deviations as reasons to stop at the plan gate. This produces a lightweight spec-driven workflow without requiring a full external planning system.
+
+After approval, updates are applied atomically and passed through a configured verification command. Verification outcomes are logged and fed back into future autonomy decisions. This matters for safety: repeated verification failures should reduce autonomy even if a developer has previously approved similar edits quickly.

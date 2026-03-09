@@ -95,6 +95,50 @@ class PromptBuilderTests(unittest.TestCase):
             self.assertIn("Approved specification context:", prompt)
             self.assertIn("preserve API compatibility", prompt)
 
+    def test_build_prompt_retrieves_relevant_guidance_for_task(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "trust.db"
+            db = TrustDB(db_path)
+            repo = "/tmp/repo"
+
+            db.replace_behavioral_guidelines(
+                repo_root=repo,
+                source="rules.md",
+                guidelines=[
+                    "Do not change response envelopes without approval.",
+                    "Always run tests after editing.",
+                ],
+            )
+            db.record_trace(
+                repo_root=repo,
+                session_id="s1",
+                task="task",
+                stage="apply",
+                action_type="write_request",
+                file_path="api.py",
+                change_type="api",
+                diff_size=4,
+                blast_radius=1,
+                existing_lease=False,
+                lease_type=None,
+                prior_approvals=0,
+                prior_denials=0,
+                policy_action="check_in",
+                policy_score=-0.5,
+                user_decision="deny",
+                user_feedback_text="Keep the existing response envelope for list endpoints.",
+            )
+
+            prompt = build_run_system_prompt(
+                trust_db=db,
+                repo_root=repo,
+                workflow_phase="planning",
+                task_text="Add filtering to the list endpoint while preserving the response envelope.",
+            )
+
+            self.assertIn("Do not change response envelopes without approval.", prompt)
+            self.assertIn("Keep the existing response envelope for list endpoints.", prompt)
+
 
 if __name__ == "__main__":
     unittest.main()

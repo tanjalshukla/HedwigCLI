@@ -1,0 +1,45 @@
+\documentclass[sigconf,review]{acmart}
+
+\AtBeginDocument{%
+  \providecommand\BibTeX{{%
+    Bib\TeX}}
+}
+
+% TODO: Replace with final ACM metadata after acceptance, if required.
+\settopmatter{printacmref=false}
+\renewcommand\footnotetextcopyrightpermission[1]{}
+\pagestyle{plain}
+
+\title{Smart Coder: Dynamic Autonomy for Coding Agents Under Explicit Local Governance}
+
+% TODO: Replace author metadata before submission.
+\author{Tanja L. Shukla}
+\email{TODO}
+\affiliation{%
+  \institution{TODO}
+  \city{TODO}
+  \state{TODO}
+  \country{USA}
+}
+
+\renewcommand{\shortauthors}{Shukla}
+
+\begin{document}
+
+\begin{abstract}
+Coding agents force an uncomfortable tradeoff: either developers approve nearly every action, which slows work, or they grant broad autonomy and accept the risk of subtle bugs, unsafe changes, and scope drift. We present Smart Coder, a governance-first framework for adaptive autonomy in coding agents. Smart Coder treats the language model as untrusted: the model may request reads, declare intent, initiate check-ins, and propose file updates, but it cannot directly read files, write files, or execute commands. A local CLI mediates every side effect using hard constraints, workflow phase, verification outcomes, and interaction traces. The system combines two independent oversight sources: policy-initiated check-ins from the CLI and model-initiated check-ins when the model surfaces uncertainty, assumptions, or architectural tradeoffs. Every interaction is logged and reused to adapt both future policy decisions and future prompt context. The current prototype implements a heuristic baseline with milestone-aware oversight, read/write-split constraints, spec-aware planning, and exportable study traces. We position Smart Coder as both a working research artifact and a framework for studying how adaptive autonomy can better balance developer productivity and safety in agent-assisted software engineering.
+\end{abstract}
+
+\keywords{coding agents, adaptive autonomy, human-AI collaboration, software engineering, AI oversight, agentic systems}
+
+\maketitle
+
+\input{sections/01-intro}
+\input{sections/02-system}
+\input{sections/03-demo}
+\input{sections/04-discussion}
+
+\bibliographystyle{ACM-Reference-Format}
+\bibliography{refs}
+
+\end{document}

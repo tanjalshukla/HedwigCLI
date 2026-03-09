@@ -46,6 +46,7 @@ def _apply_phase_transition(
     current_phase: WorkflowPhase,
     next_phase: WorkflowPhase,
     autonomy_mode: str,
+    task_text: str,
     spec_digest: str | None = None,
 ) -> WorkflowPhase:
     if next_phase == current_phase:
@@ -55,6 +56,7 @@ def _apply_phase_transition(
         repo_root=repo_root,
         workflow_phase=next_phase,
         autonomy_mode=autonomy_mode,
+        task_text=task_text,
         spec_digest=spec_digest,
     )
     return next_phase
@@ -70,6 +72,7 @@ def _apply_phase_transition_with_display(
     show_system_prompt: bool,
     feedback: SessionFeedback,
     autonomy_mode: str,
+    task_text: str,
     spec_digest: str | None = None,
 ) -> WorkflowPhase:
     previous_phase = current_phase
@@ -80,6 +83,7 @@ def _apply_phase_transition_with_display(
         current_phase=current_phase,
         next_phase=next_phase,
         autonomy_mode=autonomy_mode,
+        task_text=task_text,
         spec_digest=spec_digest,
     )
     feedback.set_phase(current_phase)
@@ -238,6 +242,7 @@ def _generate_updates_with_repair(
                 repo_root=repo_root_str,
                 workflow_phase=current_phase,
                 autonomy_mode=autonomy_mode,
+                task_text=task,
                 spec_digest=spec_context.digest if spec_context else None,
             )
             _refresh_session_context(session, feedback)
@@ -280,6 +285,7 @@ def _generate_updates_with_repair(
                 show_system_prompt=show_system_prompt,
                 feedback=feedback,
                 autonomy_mode=autonomy_mode,
+                task_text=task,
                 spec_digest=spec_context.digest if spec_context else None,
             )
             continue

@@ -258,7 +258,9 @@ In pair mode, the developer sees:
 
 Built dynamically per-session from the trust DB. The model is an active participant in oversight but doesn't get information it could exploit — no exact trust scores (could game thresholds), no list of which files will be auto-approved (prevents strategic behavior). It does know which areas it's been corrected on and what the hard constraints are.
 
-The prompt includes: role framing, check-in guidance, trust summary (high/low trust areas by name, no scores), hard constraints, behavioral guidelines, last 5 corrections with developer feedback text, autonomy preferences, phase-specific guidance, session warnings.
+The prompt includes: role framing, check-in guidance, trust summary (high/low trust areas by name, no scores), hard constraints, relevance-ranked behavioral guidelines, relevance-ranked historical corrections with developer feedback text, autonomy preferences, phase-specific guidance, session warnings.
+
+The current prototype already uses a lightweight local retrieval step over historical corrections and guidelines, keyed by task/spec text and simple token-overlap features. That is enough to move beyond pure recency. A future version should replace this with stronger semantic retrieval over richer task, file, and pattern context.
 
 ## Evaluation
 
@@ -305,6 +307,12 @@ Reporting: accuracy/precision/recall per policy, learning curves, feature ablati
 
 **PAHF (Liang et al., 2026, arXiv 2602.16173).** Meta/Princeton framework for continual personalization. Post-action feedback is "particularly important for robust personalization without pre-existing user data" — our cold-start scenario exactly. We took: immediate correction injection, drift detection design, four-phase evaluation protocol. Key difference: PAHF's memory is model-internal; ours is CLI-governed.
 
+**Appropriate reliance (Benda et al., 2022).** This literature argues that AI systems should be designed so users neither over-trust nor under-trust them. Smart Coder's rubber-stamp discounting, qualitative reason strings, and milestone-aware oversight are intended as appropriate-reliance mechanisms rather than generic trust maximization.
+
+**Scalable oversight via debate (Irving et al., 2018).** The broader safety framing is that oversight must remain meaningful even as model capability increases. Smart Coder instantiates a narrow systems version of that principle: the model remains structurally untrusted, and the CLI enforces an external oversight boundary.
+
+**Capability-based protection (Lampson, 1971/1974).** Smart Coder's leases are effectively temporary per-path capabilities, scoped by access type and expiry. This framing helps distinguish the lease system from ad hoc approval caching.
+
 ## Current Status
 
 ### Lab-study baseline (implemented)
@@ -329,9 +337,11 @@ This subsection is the single place to look for important things discussed in re
 - **Reversibility as a separate risk dimension** — blast radius exists; reversibility does not.
 - **Richer interrupt semantics** — no explicit `user_takeover`, `partial_approve`, or typed interrupt reasons yet.
 - **Deeper spec-driven development** — current `--spec` support is bounded prompt grounding, not a full structured spec workflow.
+- **Stronger semantic correction retrieval** — the current prototype uses lightweight local relevance ranking for historical corrections and guidelines, not embeddings or richer semantic retrieval over file clusters and task structure.
 - **Deterministic promotion of soft rules** — guidelines can influence prompts, but most are not yet converted into enforceable checks.
 - **Async delegation mode** — current UX is pair mode; no queue/review workflow yet.
 - **Subagent planner/coder split** — still a research-track idea, not part of the shipped runtime.
+- **Post-hoc correction after approval** — the current system captures denials and inline corrections, but it does not yet let a developer retroactively mark an already-approved change as a negative signal.
 
 ## Todo Backlog
 
@@ -339,7 +349,7 @@ The backlog below is the canonical implementation list for the gaps above plus a
 
 ### Near-term
 
-1. **Learned policy weights** — replace guessed heuristic weights with a classifier trained on `decision_traces` data. Contextual bandit (LinUCB) over check-in decisions. Asymmetric reward: missing a needed check-in costs more than an unnecessary interruption.
+1. **Learned policy weights** — replace guessed heuristic weights with a classifier trained on `decision_traces` data. The intended first step is a contextual bandit (for example, LinUCB): on each decision, the policy sees the current context, chooses among a small set of actions (`proceed`, `proceed_flag`, `check_in`), and updates itself from the observed outcome. Asymmetric reward remains important: missing a needed check-in should cost more than an unnecessary interruption.
 
 2. **Async delegation mode** — background execution with `sc status`, `sc review`, check-in queue, session summaries.
 
@@ -352,48 +362,57 @@ The backlog below is the canonical implementation list for the gaps above plus a
 
 5. **Spec-aware execution loop** — move beyond bounded spec digests toward structured spec retrieval, explicit requirement lineage, and section-level grounding during planning and implementation.
 
-6. **Verifiability-first policy taxonomy** — classify every policy by enforcement capability, not by domain:
+6. **Stronger correction retrieval over historical traces** — replace the current lightweight relevance ranking with richer retrieval over semantically relevant corrections, accepted guidelines, and file-pattern history. Candidate signals:
+   - similarity to the current task text
+   - similarity to touched file paths / file clusters
+   - matching change pattern (error handling, API, schema, validation, etc.)
+   - recency as a secondary tiebreaker, not the primary rule.
+   This is the main place where a fuller RAG-style component is likely justified.
+
+7. **Verifiability-first policy taxonomy** — classify every policy by enforcement capability, not by domain:
    - `deterministic_enforced` (hard block/fail)
    - `deterministic_advisory` (warn + explicit override)
    - `best_effort` (prompt steering only)
    This replaces the implicit “file-access => hard constraint, everything else => guideline” split.
 
-7. **Policy expectation disclosure at creation time** — when a user adds/imports a rule, immediately report:
+8. **Policy expectation disclosure at creation time** — when a user adds/imports a rule, immediately report:
    - enforcement class (`deterministic_enforced` / `deterministic_advisory` / `best_effort`)
    - exact matched scope (files/globs)
    - failure behavior (block / prompt / note)
    - rationale if downgraded to best-effort.
 
-8. **Vague-scope resolution step** — for ambiguous policies (e.g., “frontend style files”), require disambiguation before persisting:
+9. **Vague-scope resolution step** — for ambiguous policies (e.g., “frontend style files”), require disambiguation before persisting:
    - propose concrete candidate scopes
    - require user confirmation
    - store normalized scope set + original natural-language policy text.
 
-9. **Promotable policy pipeline** — automatically attempt to promote verifiable natural-language policies to deterministic enforcement:
+10. **Promotable policy pipeline** — automatically attempt to promote verifiable natural-language policies to deterministic enforcement:
    - process rules (e.g., “always run tests”) -> verification hooks
    - content rules (e.g., “use AppError, not Error”) -> static checks/lints
    - access rules -> hard constraints
    - non-verifiable policies remain best-effort guidelines.
 
-10. **LLM policy judge/compiler** — add a dedicated policy-compiler model call that decides:
+11. **LLM policy judge/compiler** — add a dedicated policy-compiler model call that decides:
    - prompt-only guidance vs deterministic script/check
    - confidence + explanation for classification
    - generated checker spec (not raw shell by default), with CLI validation before activation.
    Runtime enforcement remains CLI-deterministic; the LLM is only a compiler/planner.
 
+12. **Shadow-mode policy evaluation** — during live sessions, log what each baseline policy would have done (Always Ask, Never Ask, Static Rules, Heuristic, future learned policy) while only executing the active policy. This enables offline comparison without separate participant groups.
+
 ### Medium-term
 
-11. **Interaction-style cold start prior (CowCorpus)** — classify users as hands-off/hands-on/collaborative/takeover from first 3-5 sessions using interrupt frequency, review duration, edit distance. Use style as a prior for thresholds before enough traces accumulate.
+13. **Interaction-style cold start prior (CowCorpus)** — classify users as hands-off/hands-on/collaborative/takeover from first 3-5 sessions using interrupt frequency, review duration, edit distance. Use style as a prior for thresholds before enough traces accumulate.
 
-12. **Reversibility as first-class risk signal (McCain)** — add `is_reversible` to traces. Score irreversible actions with an explicit penalty separate from blast radius.
+14. **Reversibility as first-class risk signal (McCain)** — add `is_reversible` to traces. Score irreversible actions with an explicit penalty separate from blast radius.
 
-13. **Interrupt taxonomy (McCain)** — extend user response semantics with `partial_approve`, `user_takeover`, and `interrupt_reason` (correction/takeover/redirect/excessive_execution/sufficient_progress). Takeover/sufficient-progress interrupts should be neutral or positive, not denials.
+15. **Interrupt taxonomy (McCain)** — extend user response semantics with `partial_approve`, `user_takeover`, `posthoc_revert`, and `interrupt_reason` (correction/takeover/redirect/excessive_execution/sufficient_progress). Takeover/sufficient-progress interrupts should be neutral or positive, not denials.
 
-14. **Review-phase failure preference learning** — track developer treatment of failing checks (blocking vs. ignorable). Persist in traces and surface in trust/prompt context.
+16. **Review-phase failure preference learning** — track developer treatment of failing checks (blocking vs. ignorable). Persist in traces and surface in trust/prompt context.
 
-15. **Research-phase markdown writeback** — controlled write policy for `.md` findings/plan artifacts during research. Keep non-markdown writes blocked.
+17. **Research-phase markdown writeback** — controlled write policy for `.md` findings/plan artifacts during research. Keep non-markdown writes blocked.
 
-16. **Subagent execution architecture (experimental)** — evaluate a two-agent topology:
+18. **Subagent execution architecture (experimental)** — evaluate a two-agent topology:
    - `planner/oversight subagent`: plans work according to autonomy and policy rules, emits checkpoints/delegations
    - `coding subagent`: produces edits within delegated scope
    - CLI remains the single enforcement boundary across both agents.
@@ -401,17 +420,17 @@ The backlog below is the canonical implementation list for the gaps above plus a
 
 ### Long-term
 
-17. **Full RL** — only if the bandit can't capture sequential dependencies within sessions. Episode = session, state = context + session history, PPO or DQN.
+19. **Full RL** — only if the contextual bandit cannot capture the sequential dependencies that matter within sessions. In that case, treat an entire session as an episode and learn over state + history rather than one decision at a time.
 
-18. **Trust decay** — exponential decay on trust scores (target: ~14-day half-life). Not yet implemented because we need real usage data to validate the decay rate.
+20. **Trust decay** — exponential decay on trust scores (target: ~14-day half-life). Not yet implemented because we need real usage data to validate the decay rate.
 
-19. **Drift detection** — track corrections that contradict existing guidelines. If 2+ contradictions, flag at session end for review.
+21. **Drift detection** — track corrections that contradict existing guidelines. If 2+ contradictions, flag at session end for review.
 
 ## Design Decisions
 
 | Decision | Current | Revisit if... |
 |---|---|---|
-| Learning algorithm | Heuristic weights | Lab study data available → contextual bandit |
+| Learning algorithm | Heuristic weights | Lab study data available → contextual bandit (context -> choose approval action -> update from observed outcome) |
 | Change pattern classification | Rule-based (features.py) | Rules miss too many patterns → lightweight LLM |
 | Trust decay | None implemented | Users report stale trust → add exponential decay |
 | Lease threshold | 3 consecutive approvals | Too aggressive or conservative |

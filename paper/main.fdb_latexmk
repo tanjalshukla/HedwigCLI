@@ -1,0 +1,13 @@
+# Fdb version 4
+["pdflatex"] 1773083458.13323 "main.tex" "main.pdf" "main" 1773083458.22819 2
+  "/Users/tanjalshukla/Library/TinyTeX/texmf-dist/web2c/texmf.cnf" 1749313668 42213 4e2ca030e8e2640502016e9e45868dcb ""
+  "/Users/tanjalshukla/Library/TinyTeX/texmf-var/web2c/pdftex/pdflatex.fmt" 1769658942 2236369 c863650d3261fc0fa9146f1aff0ecd44 ""
+  "/Users/tanjalshukla/Library/TinyTeX/texmf.cnf" 1769666832.26942 708 85fd07691b6294ba94c59dbc62380410 ""
+  "acmart.cls" 0 -1 0 ""
+  "main.aux" 1773083450.13266 32 3985256e7290058c681f74d7a3565a19 "pdflatex"
+  "main.tex" 1773083387.67618 2268 e45a141945b4ebb30fef64231f288fd3 ""
+  (generated)
+  "main.aux"
+  "main.log"
+  "main.pdf"
+  (rewritten before read)

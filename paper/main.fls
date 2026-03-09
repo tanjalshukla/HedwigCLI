@@ -1,0 +1,6 @@
+PWD /Users/tanjalshukla/dynamic_autonomy_mvp/paper
+INPUT /Users/tanjalshukla/Library/TinyTeX/texmf.cnf
+INPUT /Users/tanjalshukla/Library/TinyTeX/texmf-dist/web2c/texmf.cnf
+INPUT /Users/tanjalshukla/Library/TinyTeX/texmf-var/web2c/pdftex/pdflatex.fmt
+INPUT main.tex
+OUTPUT main.log

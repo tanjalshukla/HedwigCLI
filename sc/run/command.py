@@ -87,6 +87,7 @@ def _resolve_intent_declaration(
                 repo_root=repo_root_str,
                 workflow_phase=current_phase,
                 autonomy_mode=profile.mode,
+                task_text=task,
                 spec_digest=spec_context.digest if spec_context else None,
             )
             _refresh_session_context(session, feedback)
@@ -128,6 +129,7 @@ def _resolve_intent_declaration(
                 show_system_prompt=show_system_prompt,
                 feedback=feedback,
                 autonomy_mode=study_context.autonomy_mode or "balanced",
+                task_text=task,
                 spec_digest=spec_context.digest if spec_context else None,
             )
             continue
@@ -263,6 +265,7 @@ def _resolve_intent_declaration(
         show_system_prompt=show_system_prompt,
         feedback=feedback,
         autonomy_mode=study_context.autonomy_mode or "balanced",
+        task_text=task,
         spec_digest=spec_context.digest if spec_context else None,
     )
     return _IntentResolution(
@@ -421,6 +424,7 @@ def run(
             repo_root=repo_root_str,
             workflow_phase=current_phase,
             autonomy_mode=profile.mode,
+            task_text=task,
             spec_digest=spec_context.digest if spec_context else None,
         )
     )

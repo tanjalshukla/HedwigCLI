@@ -5,6 +5,7 @@ from __future__ import annotations
 # schema migrations are additive (new columns only) to avoid breaking existing dbs.
 
 import json
+import re
 import sqlite3
 import time
 from contextlib import contextmanager
@@ -17,6 +18,61 @@ from .autonomy import (
     AutonomyPreferences,
     merge_preferences,
 )
+
+
+_RETRIEVAL_STOPWORDS = {
+    "a",
+    "an",
+    "and",
+    "are",
+    "as",
+    "at",
+    "be",
+    "before",
+    "by",
+    "do",
+    "for",
+    "from",
+    "if",
+    "in",
+    "into",
+    "is",
+    "it",
+    "its",
+    "of",
+    "on",
+    "or",
+    "same",
+    "should",
+    "that",
+    "the",
+    "then",
+    "this",
+    "to",
+    "use",
+    "with",
+}
+
+
+def _retrieval_tokens(*parts: str | None) -> set[str]:
+    tokens: set[str] = set()
+    for part in parts:
+        if not part:
+            continue
+        for token in re.findall(r"[a-z0-9_]+", part.lower()):
+            if len(token) < 3 or token in _RETRIEVAL_STOPWORDS:
+                continue
+            tokens.add(token)
+    return tokens
+
+
+def _overlap_score(query_tokens: set[str], candidate_tokens: set[str]) -> float:
+    if not query_tokens or not candidate_tokens:
+        return 0.0
+    score = 0.0
+    for token in query_tokens & candidate_tokens:
+        score += 1.5 if len(token) >= 7 else 1.0
+    return score
 
 
 # --- data classes returned by query methods ---
@@ -1597,6 +1653,91 @@ class TrustDB:
             if len(snippets) >= max(limit, 1):
                 break
         return snippets
+
+    def relevant_feedback_snippets(
+        self,
+        repo_root: str,
+        *,
+        query_text: str,
+        spec_text: str | None = None,
+        limit: int = 4,
+        search_limit: int = 200,
+    ) -> list[str]:
+        query_tokens = _retrieval_tokens(query_text, spec_text)
+        if not query_tokens:
+            return self.recent_feedback_snippets(repo_root, limit=limit)
+
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT user_feedback_text, file_path, change_type, created_at, id
+                FROM decision_traces
+                WHERE repo_root = ?
+                  AND user_feedback_text IS NOT NULL
+                  AND TRIM(user_feedback_text) != ''
+                ORDER BY created_at DESC, id DESC
+                LIMIT ?
+                """,
+                (repo_root, max(search_limit, 1)),
+            ).fetchall()
+
+        ranked: list[tuple[float, int, str]] = []
+        seen: set[str] = set()
+        for rank, row in enumerate(rows):
+            text = " ".join(str(row["user_feedback_text"]).split()).strip()
+            if not text or text in seen:
+                continue
+            seen.add(text)
+            score = _overlap_score(query_tokens, _retrieval_tokens(text)) * 2.0
+            score += _overlap_score(query_tokens, _retrieval_tokens(str(row["file_path"]))) * 0.75
+            score += _overlap_score(query_tokens, _retrieval_tokens(str(row["change_type"] or ""))) * 1.25
+            score += max(0.0, 0.25 - (rank * 0.01))
+            ranked.append((score, rank, text[:220]))
+
+        ranked.sort(key=lambda item: (-item[0], item[1], item[2]))
+        selected = [text for score, _, text in ranked if score > 0][: max(limit, 1)]
+        if len(selected) >= max(limit, 1):
+            return selected
+
+        fallback = self.recent_feedback_snippets(repo_root, limit=limit)
+        for item in fallback:
+            if item not in selected:
+                selected.append(item)
+            if len(selected) >= max(limit, 1):
+                break
+        return selected
+
+    def relevant_behavioral_guidelines(
+        self,
+        repo_root: str,
+        *,
+        query_text: str,
+        spec_text: str | None = None,
+        limit: int = 8,
+    ) -> list[BehavioralGuideline]:
+        items = self.list_behavioral_guidelines(repo_root)
+        query_tokens = _retrieval_tokens(query_text, spec_text)
+        if not query_tokens:
+            return items[: max(limit, 1)]
+
+        ranked: list[tuple[float, int, BehavioralGuideline]] = []
+        for idx, item in enumerate(items):
+            score = _overlap_score(query_tokens, _retrieval_tokens(item.guideline)) * 2.0
+            score += max(0.0, 0.1 - (idx * 0.01))
+            ranked.append((score, idx, item))
+
+        ranked.sort(key=lambda row: (-row[0], row[1], row[2].guideline))
+        selected = [item for score, _, item in ranked if score > 0][: max(limit, 1)]
+        if len(selected) >= max(limit, 1):
+            return selected
+        seen = {item.guideline for item in selected}
+        for item in items:
+            if item.guideline in seen:
+                continue
+            selected.append(item)
+            if len(selected) >= max(limit, 1):
+                break
+        return selected
 
     def access_stats(self, repo_root: str, limit: int = 200) -> AccessStats:
         with self._connect() as conn:

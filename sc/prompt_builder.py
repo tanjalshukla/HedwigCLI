@@ -27,13 +27,24 @@ def build_run_system_prompt(
     repo_root: str,
     workflow_phase: WorkflowPhase,
     autonomy_mode: str = "balanced",
+    task_text: str = "",
     spec_digest: str | None = None,
 ) -> str:
     # pull all context from trust db — each piece maps to a prompt section
     trust_summary = trust_db.trust_summary(repo_root)
     constraints = trust_db.list_constraints(repo_root)
-    guidelines = trust_db.list_behavioral_guidelines(repo_root)
-    feedback_snippets = trust_db.recent_feedback_snippets(repo_root, limit=4)
+    guidelines = trust_db.relevant_behavioral_guidelines(
+        repo_root,
+        query_text=task_text,
+        spec_text=spec_digest,
+        limit=6,
+    )
+    feedback_snippets = trust_db.relevant_feedback_snippets(
+        repo_root,
+        query_text=task_text,
+        spec_text=spec_digest,
+        limit=4,
+    )
     calibration = trust_db.checkin_calibration(repo_root)
     autonomy_preferences = trust_db.autonomy_preferences(repo_root)
     access_stats = trust_db.access_stats(repo_root, limit=200)
