@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 import unittest
 
-from sc.constraints import parse_constraints_file, parse_constraints_from_text
+from sc.constraints import compile_manual_constraint_rule, parse_constraints_file, parse_constraints_from_text
 
 
 class ConstraintParserTests(unittest.TestCase):
@@ -43,6 +43,15 @@ class ConstraintParserTests(unittest.TestCase):
         constraint = parsed.constraints[0]
         self.assertEqual(constraint.read_policy, "always_allow")
         self.assertEqual(constraint.write_policy, "always_check_in")
+
+    def test_compiles_manual_path_constraint_sentence_to_write_deny(self) -> None:
+        text = "Never modify files under `config/prod/*`."
+        parsed = compile_manual_constraint_rule(text, source="manual_rule")
+        self.assertEqual(len(parsed.constraints), 1)
+        constraint = parsed.constraints[0]
+        self.assertEqual(constraint.path_pattern, "config/prod/*")
+        self.assertEqual(constraint.write_policy, "always_deny")
+        self.assertEqual(constraint.read_policy, "always_allow")
 
 
 if __name__ == "__main__":

@@ -3,6 +3,7 @@ from __future__ import annotations
 import typer
 
 from .commands.admin import (
+    add_rule,
     ask,
     constraints,
     constraints_relax,
@@ -59,6 +60,7 @@ config_app.command("set-mode")(set_mode)
 config_app.command("set-verification-cmd")(set_verification_cmd)
 
 rules_app.command("list")(rules_list)
+rules_app.command("add")(add_rule)
 rules_app.command("import")(import_rules)
 rules_app.command("clear")(constraints_clear)
 rules_app.command("suggest")(guidelines_suggest)

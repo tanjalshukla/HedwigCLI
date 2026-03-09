@@ -233,6 +233,37 @@ def parse_constraints_from_text(text: str, source: str) -> ParseResult:
     )
 
 
+def compile_manual_constraint_rule(rule: str, source: str) -> ParseResult:
+    """Compile a single natural-language rule into the safest deterministic constraint form."""
+    normalized = " ".join(rule.split()).strip()
+    if not normalized:
+        return ParseResult(constraints=[], behavioral_guidelines=[], unresolved_lines=[])
+
+    line_lower = normalized.lower()
+    paths = _extract_path_tokens(normalized)
+    if (
+        paths
+        and any(keyword in line_lower for keyword in _DENY_KEYWORDS)
+        and not any(keyword in line_lower for keyword in _READ_DENY_KEYWORDS)
+    ):
+        constraints = [
+            HardConstraint(
+                path_pattern=path,
+                source=source,
+                overridable=False,
+                read_policy="always_allow",
+                write_policy="always_deny",
+            )
+            for path in paths
+        ]
+        return ParseResult(
+            constraints=constraints,
+            behavioral_guidelines=[],
+            unresolved_lines=[],
+        )
+    return parse_constraints_from_text(normalized, source=source)
+
+
 def parse_constraints_file(path: Path) -> ParseResult:
     source = path.name
     try:

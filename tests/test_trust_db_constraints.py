@@ -70,6 +70,25 @@ class TrustDBConstraintTests(unittest.TestCase):
             self.assertEqual(read_constraint.policy_for("read"), "always_allow")
             self.assertEqual(write_constraint.policy_for("write"), "always_check_in")
 
+    def test_add_constraints_deduplicates_existing_rows(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "trust.db"
+            db = TrustDB(db_path)
+            repo = "/tmp/repo"
+            row = HardConstraint.for_both(
+                path_pattern="config/prod/*",
+                constraint_type="always_deny",
+                source="manual_rule",
+                overridable=False,
+            )
+            inserted = db.add_constraints(repo, [row])
+            inserted_again = db.add_constraints(repo, [row])
+            self.assertEqual(inserted, 1)
+            self.assertEqual(inserted_again, 0)
+            rows = db.list_constraints(repo)
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(rows[0].path_pattern, "config/prod/*")
+
     def test_replace_and_list_behavioral_guidelines(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             db_path = Path(tmpdir) / "trust.db"

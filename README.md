@@ -77,6 +77,12 @@ sc rules constraints
 sc rules guidelines
 ```
 
+Compile a direct natural-language path rule into an enforced constraint:
+
+```bash
+sc rules add "Never modify files under `config/prod/*`."
+```
+
 Set autonomy mode:
 
 ```bash

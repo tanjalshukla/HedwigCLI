@@ -22,7 +22,7 @@ from ..config import (
     normalize_autonomy_mode,
     save_config,
 )
-from ..constraints import parse_constraints_file
+from ..constraints import compile_manual_constraint_rule, parse_constraints_file
 from ..session import ClaudeSession
 from ..trust_db import HardConstraint
 
@@ -253,6 +253,41 @@ def import_rules(
 
     print(f"[bold]Total constraints imported:[/bold] {total_imported}")
     print(f"[bold]Total behavioral guidelines imported:[/bold] {total_guidelines}")
+
+
+def add_rule(
+    rule: str = typer.Argument(..., help="Natural-language path rule to compile into a hard constraint."),
+    source: str = typer.Option("manual_rule", "--source", help="Source label stored with the compiled constraint."),
+    yes: bool = typer.Option(False, "--yes", help="Skip confirmation."),
+):
+    """Compile a narrow natural-language path rule into enforced hard constraints."""
+    repo_root = require_repo_root()
+    trust_db = open_trust_db(repo_root)
+    parsed = compile_manual_constraint_rule(rule, source=source)
+    if not parsed.constraints:
+        print("[red]Could not compile an enforced path constraint from that rule.[/red]")
+        if parsed.behavioral_guidelines:
+            print("[yellow]The rule looks like best-effort guidance, not a deterministic path constraint.[/yellow]")
+        raise typer.Exit(code=1)
+
+    table = Table(title="Compiled Hard Constraints")
+    table.add_column("Pattern")
+    table.add_column("Policy")
+    table.add_column("Source")
+    for item in parsed.constraints:
+        table.add_row(item.path_pattern, _constraint_display(item), item.source)
+    print(table)
+    if parsed.unresolved_lines:
+        print("[yellow]Only the deterministic path portion was compiled.[/yellow]")
+
+    if not yes:
+        confirmed = Prompt.ask("Add these hard constraints", choices=["y", "n"], default="y")
+        if confirmed != "y":
+            print("[yellow]No constraints added.[/yellow]")
+            raise typer.Exit(code=0)
+
+    inserted = trust_db.add_constraints(str(repo_root), parsed.constraints)
+    print(f"[green]Added {inserted} hard constraint(s).[/green]")
 
 
 _CONSTRAINT_LABELS: dict[str, str] = {

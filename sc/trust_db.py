@@ -651,6 +651,61 @@ class TrustDB:
             )
         return len(unique)
 
+    def add_constraints(
+        self,
+        repo_root: str,
+        constraints: Iterable[HardConstraint],
+    ) -> int:
+        """Append new hard constraints without deleting existing ones."""
+        now = int(time.time())
+        items: dict[tuple[str, str, str, str], HardConstraint] = {}
+        for constraint in constraints:
+            key = (
+                constraint.path_pattern,
+                str(constraint.read_policy),
+                str(constraint.write_policy),
+                constraint.source,
+            )
+            items[key] = constraint
+        if not items:
+            return 0
+
+        existing = {
+            (
+                item.path_pattern,
+                str(item.read_policy),
+                str(item.write_policy),
+                item.source,
+            )
+            for item in self.list_constraints(repo_root)
+        }
+        pending = [item for key, item in items.items() if key not in existing]
+        if not pending:
+            return 0
+
+        with self._connect() as conn:
+            conn.executemany(
+                """
+                INSERT INTO hard_constraints (
+                    repo_root, path_pattern, constraint_type, read_policy, write_policy, source, overridable, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                [
+                    (
+                        repo_root,
+                        item.path_pattern,
+                        item.constraint_type,
+                        item.read_policy,
+                        item.write_policy,
+                        item.source,
+                        1 if item.overridable else 0,
+                        now,
+                    )
+                    for item in pending
+                ],
+            )
+        return len(pending)
+
     def list_constraints(self, repo_root: str) -> list[HardConstraint]:
         with self._connect() as conn:
             rows = conn.execute(

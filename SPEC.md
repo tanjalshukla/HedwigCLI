@@ -183,6 +183,7 @@ The public interface is intentionally small:
 - `sc run` — main governed coding loop
 - `sc ask` — no-write question answering
 - `sc rules ...` — import and inspect constraints/guidelines
+- `sc rules add` — compile a narrow natural-language path rule into an enforced hard constraint
 - `sc observe ...` — traces, exports, explainability, resets
 - `sc config ...` — autonomy mode and verification setup
 
@@ -319,7 +320,22 @@ The current prototype is in a lab-study-ready state with the following baseline:
 - qualitative reason strings in the runtime UI
 - spec-aware planning via optional `--spec`
 
+### Outstanding gaps from papers and survey
+
+This subsection is the single place to look for important things discussed in related work or survey feedback that are not fully implemented in the current prototype.
+
+- **Learned calibration instead of guessed weights** — the current approval policy is still heuristic.
+- **Interaction-style cold start** — no CowCorpus-style hands-off / collaborative / takeover prior yet.
+- **Reversibility as a separate risk dimension** — blast radius exists; reversibility does not.
+- **Richer interrupt semantics** — no explicit `user_takeover`, `partial_approve`, or typed interrupt reasons yet.
+- **Deeper spec-driven development** — current `--spec` support is bounded prompt grounding, not a full structured spec workflow.
+- **Deterministic promotion of soft rules** — guidelines can influence prompts, but most are not yet converted into enforceable checks.
+- **Async delegation mode** — current UX is pair mode; no queue/review workflow yet.
+- **Subagent planner/coder split** — still a research-track idea, not part of the shipped runtime.
+
 ## Todo Backlog
+
+The backlog below is the canonical implementation list for the gaps above plus additional next steps.
 
 ### Near-term
 
