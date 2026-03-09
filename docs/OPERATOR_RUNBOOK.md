@@ -6,6 +6,8 @@ This runbook is for running `sc` reliably in demos, lab sessions, and internal s
 
 ```bash
 source .venv/bin/activate
+python -m pip install --upgrade pip setuptools wheel
+pip install --no-build-isolation -e .
 unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN
 aws sso login --profile dev
 ```
@@ -13,36 +15,36 @@ aws sso login --profile dev
 Verify account + Bedrock:
 
 ```bash
-AWS_PROFILE=dev python -m sc doctor --model-id <inference-profile-arn> --region us-east-1
+AWS_PROFILE=dev sc doctor --model-id <inference-profile-arn> --region us-east-1
 ```
 
 ## 2) Clean Baseline (Recommended Before Every Study Session)
 
 ```bash
 git restore demo/checkin/service.py demo/feature.py demo/docs/notes.md
-python -m sc rules constraints-clear --all
-python -m sc rules guidelines-clear --all
-python -m sc observe reset-study-state --yes
-python -m sc config set-mode balanced
-python -m sc config set-verification-cmd ".venv/bin/python -m py_compile demo/feature.py demo/checkin/service.py"
-python -m sc rules import demo/DEMO_RULES.md
+sc rules constraints-clear --all
+sc rules guidelines-clear --all
+sc observe reset-study-state --yes
+sc config set-mode balanced
+sc config set-verification-cmd ".venv/bin/python -m py_compile demo/feature.py demo/checkin/service.py"
+sc rules import demo/DEMO_RULES.md
 ```
 
 ## 3) Standard Demo Flow
 
 1. Import + inspect rules:
-   - `python -m sc rules constraints`
-   - `python -m sc rules guidelines`
+   - `sc rules constraints`
+   - `sc rules guidelines`
 2. Run multi-file task:
-   - `python -m sc run "<task>" --show-intent`
+   - `sc run "<task>" --show-intent`
 3. Show adaptive state:
-   - `python -m sc observe leases`
-   - `python -m sc observe traces --limit 20`
+   - `sc observe leases`
+   - `sc observe traces --limit 20`
 4. Show safety block:
    - attempt read/write under `demo/locked/*`
 5. Show observability:
-   - `python -m sc observe report`
-   - `python -m sc observe checkin-stats`
+   - `sc observe report`
+   - `sc observe checkin-stats`
 
 Use `demo/DEMO_COMMANDS.md` for a paste-ready script.
 
@@ -55,7 +57,7 @@ Fix:
 ```bash
 unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN
 aws sso login --profile dev
-AWS_PROFILE=dev python -m sc doctor --model-id <inference-profile-arn> --region us-east-1
+AWS_PROFILE=dev sc doctor --model-id <inference-profile-arn> --region us-east-1
 ```
 
 ### `could not resolve credentials from session`
@@ -73,17 +75,17 @@ Fix:
 
 ## 5) Lab Study Hygiene
 
-- Start each participant from a deterministic baseline with `python -m sc observe reset-study-state --yes`.
+- Start each participant from a deterministic baseline with `sc observe reset-study-state --yes`.
 - Keep the same verification command across sessions.
 - Export traces after each session:
 
 ```bash
-python -m sc observe export --out .sc/exports
+sc observe export --out .sc/exports
 ```
 
 ## 6) Post-Session Reset
 
 ```bash
 git restore demo/checkin/service.py demo/feature.py demo/docs/notes.md
-python -m sc observe reset-study-state --yes
+sc observe reset-study-state --yes
 ```

@@ -15,7 +15,6 @@ from .commands.admin import (
     init,
     rules_list,
     set_mode,
-    set_threshold,
     set_verification_cmd,
 )
 from .commands.observe import (
@@ -41,8 +40,6 @@ app = typer.Typer(add_completion=False)
 config_app = typer.Typer(help="Configuration commands.")
 rules_app = typer.Typer(help="Rule management.", invoke_without_command=True)
 observe_app = typer.Typer(help="Observability commands.")
-history_app = typer.Typer(help="Decision history.")
-dev_app = typer.Typer(help="Developer/demo utilities.")
 
 
 def _register_hidden_aliases(root: typer.Typer, aliases: dict[str, object]) -> None:
@@ -66,7 +63,6 @@ app.command()(reset)
 
 config_app.command("set-mode")(set_mode)
 config_app.command("set-verification-cmd")(set_verification_cmd)
-config_app.command("set-threshold", hidden=True)(set_threshold)
 
 rules_app.command("list")(rules_list)
 rules_app.command("import")(import_rules)
@@ -80,11 +76,6 @@ rules_app.command("guidelines", hidden=True)(guidelines)
 rules_app.command("guidelines-suggest", hidden=True)(guidelines_suggest)
 rules_app.command("guidelines-clear", hidden=True)(guidelines_clear)
 
-history_app.command("list")(traces)
-history_app.command("explain")(explain)
-history_app.command("clear")(clear_traces)
-history_app.command("stats")(checkin_stats)
-
 observe_app.command("leases")(leases)
 observe_app.command("traces")(traces)
 observe_app.command("explain")(explain)
@@ -97,22 +88,16 @@ observe_app.command("revoke")(revoke)
 observe_app.command("export")(export)
 observe_app.command("reset-study-state")(reset)
 
-dev_app.command("demo-seed")(demo_seed)
-
 app.add_typer(config_app, name="config")
 app.add_typer(rules_app, name="rules")
-app.add_typer(history_app, name="history", hidden=True)
 app.add_typer(observe_app, name="observe")
-app.add_typer(dev_app, name="dev", hidden=True)
 
 _register_hidden_aliases(
     app,
     {
-        "access": leases,
         "preferences": preferences,
         "start": run,
         "set-mode": set_mode,
-        "set-threshold": set_threshold,
         "set-verification-cmd": set_verification_cmd,
         "import-rules": import_rules,
         "import": import_rules,

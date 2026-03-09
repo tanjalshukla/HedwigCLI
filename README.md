@@ -1,13 +1,22 @@
-# Semantic Autonomy MVP
+# Smart Coder
 
-`sc` is a governance-first coding agent CLI.  
-The model proposes; the CLI enforces.
+Smart Coder (`sc`) is a governance-first coding agent CLI. The model proposes; the CLI enforces.
 
 Core design:
 - untrusted model with strict JSON protocol
 - local policy and constraint enforcement
 - trace-backed adaptive autonomy
 - explicit read/apply checkpoints when risk is high
+
+## Why It Exists
+
+Most coding agents force a bad tradeoff: either approve everything manually, or trust the agent too broadly. Smart Coder is built to study and improve that boundary. It learns from developer interaction history, but keeps all authority in the local CLI:
+
+- the model can request reads, propose plans, suggest check-ins, and generate updates
+- the CLI decides what is actually read, written, verified, or blocked
+- every decision is traced so autonomy can adapt over time and be studied later
+
+For architecture, internals, and future work, see `SPEC.md`.
 
 ## Prerequisites
 
@@ -20,24 +29,27 @@ Core design:
 ```bash
 python -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt
+python -m pip install --upgrade pip setuptools wheel
+pip install --no-build-isolation -e .
 ```
+
+After install, use `sc` as the CLI entry point. `python -m sc` still works.
 
 ## Quick Start
 
 ```bash
-python -m sc init --model-id <inference-profile-arn> --region us-east-1
-python -m sc doctor --model-id <inference-profile-arn> --region us-east-1
-python -m sc run "Add a small unit test for function X in foo.py" --show-intent
+sc init --model-id <inference-profile-arn> --region us-east-1
+sc doctor --model-id <inference-profile-arn> --region us-east-1
+sc run "Add a small unit test for function X in foo.py" --show-intent
 ```
 
 This creates local state in `.sc/config.json` and `.sc/trust.db`.
 
 ## Command Groups
 
-- `python -m sc config ...` config updates (`set-mode`, `set-verification-cmd`)
-- `python -m sc rules ...` import/manage hard constraints and guidelines
-- `python -m sc observe ...` traces, leases, explainability, stats, preferences
+- `sc config ...` config updates (`set-mode`, `set-verification-cmd`)
+- `sc rules ...` import/manage hard constraints and guidelines
+- `sc observe ...` traces, leases, explainability, stats, preferences
 
 Legacy top-level aliases still work for compatibility.
 
@@ -46,42 +58,42 @@ Legacy top-level aliases still work for compatibility.
 Run with intent visibility:
 
 ```bash
-python -m sc run "Update foo.py and add tests" --show-intent
+sc run "Update foo.py and add tests" --show-intent
 ```
 
 Inspect live policy state:
 
 ```bash
-python -m sc observe leases
-python -m sc observe traces --limit 20
-python -m sc observe report
+sc observe leases
+sc observe traces --limit 20
+sc observe report
 ```
 
 Import rules from AGENTS/CLAUDE-style files:
 
 ```bash
-python -m sc rules import demo/DEMO_RULES.md
-python -m sc rules constraints
-python -m sc rules guidelines
+sc rules import demo/DEMO_RULES.md
+sc rules constraints
+sc rules guidelines
 ```
 
 Set autonomy mode:
 
 ```bash
-python -m sc config set-mode balanced
-python -m sc config set-mode milestone
+sc config set-mode balanced
+sc config set-mode milestone
 ```
 
 Reset learned autonomy preferences:
 
 ```bash
-python -m sc observe preferences-clear --yes
+sc observe preferences-clear --yes
 ```
 
 Export the latest session bundle for analysis:
 
 ```bash
-python -m sc observe export --out .sc/exports
+sc observe export --out .sc/exports
 ```
 
 ## Enforcement Semantics
@@ -96,7 +108,7 @@ python -m sc observe export --out .sc/exports
 ## Testing
 
 ```bash
-python -m pytest tests -q
+.venv/bin/python -m pytest tests -q
 ```
 
 ## Demo

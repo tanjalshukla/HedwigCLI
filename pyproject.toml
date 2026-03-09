@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "semantic-autonomy"
+version = "0.1.0"
+description = "Governance-first coding agent CLI with adaptive autonomy."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "anthropic[bedrock]>=0.40.0",
+    "boto3>=1.37.0",
+    "typer>=0.12.0",
+    "rich>=13.7.0",
+    "pydantic>=2.6.0",
+]
+
+[project.scripts]
+sc = "sc.cli:app"
+
+[tool.setuptools.packages.find]
+include = ["sc*"]

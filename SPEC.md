@@ -1,21 +1,23 @@
-# AdaptiveAuth
+# Smart Coder
 
-A CLI governance layer between a developer and an LLM coding agent. It learns when to pause and ask the developer vs. when to proceed autonomously, adapting over time to each developer's implicit preferences.
+Smart Coder is a local CLI that sits between a developer and an LLM coding agent. Its job is to decide when the agent should continue independently and when it should stop for review.
 
-The model is untrusted. It proposes actions; the CLI enforces all reads, writes, and check-ins. Trust is built from interaction traces — approval history, correction patterns, review timing — not from the model's self-assessment. The model participates in oversight by reasoning about its own uncertainty and surfacing architectural decisions, but the CLI makes the final call.
+The model is untrusted. It can request reads, propose plans, generate edits, and initiate architectural check-ins, but the CLI is the enforcement boundary for every read, write, and verification step.
 
-This targets skilled engineers who plan, supervise, and validate. The goal: supervision gets more efficient over time because the system learns what this particular developer actually cares about.
+The system is designed for developers who already supervise and validate agent work. The goal is not zero oversight; it is lower-friction oversight that adapts to the developer's actual behavior over time.
 
 ---
 
 # Part 1: Technical Implementation
 
+This document focuses on architecture, runtime behavior, data flow, and future implementation work. Installation, command-line usage, and operator steps live in `README.md` and `docs/OPERATOR_RUNBOOK.md`.
+
 ## Architecture
 
 Check-ins come from two independent sources:
 
-1. **CLI policy engine** — evaluates trust scores, file features, constraints, session state. Decides auto-approve vs. check-in vs. deny. Runs regardless of what the model does.
-2. **Model system prompt** — the model is told its trust context and instructed to reason about uncertainty. It pauses for architectural decisions, approach tradeoffs, plan deviations. Does not pause for file permissions or routine implementation.
+1. **CLI governance + policy engine** — evaluates constraints, leases, trace history, file-level risk signals, and session state. Decides auto-approve vs. check-in vs. deny. Runs regardless of what the model does.
+2. **Model-side reasoning** — the system prompt gives the model trust context and asks it to surface uncertainty. It should pause for architectural decisions, approach tradeoffs, and plan deviations, not for routine file access or style choices.
 
 Either side can trigger a check-in independently. Both are logged with `check_in_initiator` so we can learn which source is better calibrated over time.
 
@@ -27,7 +29,7 @@ Either side can trigger a check-in independently. Both are logged with `check_in
                        │ commands, approvals, corrections
                        ▼
 ┌─────────────────────────────────────────────────────┐
-│                 AdaptiveAuth CLI                     │
+│                  Smart Coder CLI                     │
 │                                                     │
 │  ┌─────────────┐  ┌──────────────┐  ┌────────────┐ │
 │  │  Governance  │  │   Policy     │  │   Trace    │ │
@@ -46,8 +48,8 @@ Either side can trigger a check-in independently. Both are logged with `check_in
 │         │         └──────────────┘                   │
 │         ▼                                            │
 │  ┌──────────────────────────────────────────────┐   │
-│  │   AGENTS.md / CLAUDE.md parser               │   │
-│  │   (imports static rules as hard constraints) │   │
+│  │   Rules importer                             │   │
+│  │   (`sc rules import ...` -> constraints)     │   │
 │  └──────────────────────────────────────────────┘   │
 │  ┌──────────────────────────────────────────────┐   │
 │  │   System prompt builder                      │   │
@@ -73,7 +75,7 @@ Either side can trigger a check-in independently. Both are logged with `check_in
 └─────────────────────────────────────────────────────┘
 ```
 
-## 4-Stage Pipeline
+## Runtime Flow
 
 Every task flows through:
 
@@ -84,16 +86,16 @@ Every task flows through:
 
 ## Approval Cascade
 
-For every file access, evaluated in order:
+For every file access, evaluated in order, and separately for reads and writes:
 
-1. **Hard constraints** — permanent rules (always_deny, always_check_in, always_allow). Override everything.
-2. **Active leases** — temporary trust grants from prior approvals. Auto-approve for the session.
+1. **Hard constraints** — permanent rules (`always_deny`, `always_check_in`, `always_allow`) resolved per access type. Override everything.
+2. **Active leases** — temporary trust grants from prior approvals. Resolved per access type.
 3. **Adaptive policy** (`policy.py`) — computes a score from weighted signals, compared against thresholds.
 4. **Threshold adaptation** (`autonomy.py`) — thresholds shift based on learned preferences and check-in calibration.
 
 ## Policy Engine
 
-Heuristic scoring from `policy.py`. All weights are initial guesses — lab studies will produce data to replace them with learned values.
+Heuristic scoring from `policy.py`. The current weights are an explicit baseline, not a claimed optimum. Lab studies are meant to produce the data needed to recalibrate or replace them.
 
 **Signals and weights (actual implementation):**
 
@@ -126,7 +128,7 @@ Heuristic scoring from `policy.py`. All weights are initial guesses — lab stud
 
 These numeric thresholds remain implementation details. Lab participants should interact with qualitative autonomy modes and reason strings, not raw scores.
 
-## User-Facing Autonomy Modes
+## Autonomy Modes
 
 For lab studies and product UX, the user should control autonomy through one qualitative setting instead of threshold tuning:
 
@@ -144,7 +146,7 @@ Modes compile down to internal thresholds and plan-gate behavior. The numeric po
 
 ## Preference Learning
 
-When the user gives feedback at any approval point, the text goes to the model via `summarize_autonomy_feedback()` which returns structured JSON. No regex parsing — the model classifies intent into 4 preference fields:
+When the user gives feedback at any approval point, the text is summarized into structured preference data by `summarize_autonomy_feedback()`. The resulting preference state has four fields:
 
 - `prefer_fewer_checkins` (boolean)
 - `allowed_checkin_topics` (subset of: api, signature, schema, security, architecture, config, test, deployment)
@@ -155,7 +157,7 @@ Preferences merge additively (OR for booleans, UNION for collections) and persis
 
 ## Behavioral Guidelines
 
-When the system sees repeated denial feedback on the same pattern, `guideline_candidates()` drafts permanent prompt injections (e.g., "Use AppError with error codes, not generic Error"). Accepted guidelines go into the system prompt. The model never writes its own rules — the CLI detects patterns, drafts suggestions, the developer confirms.
+When the system sees repeated denial feedback on the same pattern, `guideline_candidates()` drafts a candidate guideline (for example: "Use AppError with error codes, not generic Error"). Accepted guidelines are injected into the system prompt. The CLI proposes them; the developer decides whether they become part of the working policy context.
 
 ## Database Schema
 
@@ -174,99 +176,40 @@ SQLite with 8 tables:
 
 The `decision_traces` table is the primary data source for post-study analysis. It records: stage, action_type, file_path, change_type, diff_size, blast_radius, lease state, approval history, policy score + reasons, user decision, response time, rubber-stamp flag, edit distance, feedback text, verification result, model confidence, check-in initiator, participant/run/task study metadata, and autonomy mode.
 
-## CLI Commands
+## External Interface
 
-All commands use the `sc` prefix. Core surface:
+The public interface is intentionally small:
 
-```
-sc run --task "..."              # main orchestration loop
-sc ask "..."                     # chat without changes
-sc init                          # initialize repo config
-sc doctor                        # verify AWS/Bedrock setup
-sc report                        # session summary
+- `sc run` — main governed coding loop
+- `sc ask` — no-write question answering
+- `sc rules ...` — import and inspect constraints/guidelines
+- `sc observe ...` — traces, exports, explainability, resets
+- `sc config ...` — autonomy mode and verification setup
 
-sc rules import <file>           # import constraints from AGENTS.md/CLAUDE.md
-sc rules constraints             # list/add hard constraints
-sc rules guidelines              # list/add behavioral guidelines
-sc rules guidelines-suggest      # suggest guidelines from trace patterns
+The operator-facing details belong in `README.md`. In this spec, only the behavior of those surfaces matters:
 
-sc observe traces                # query decision history
-sc observe explain <id>          # explain a specific trace
-sc observe preferences           # show learned autonomy preferences
-sc observe preferences-clear     # reset learned preferences
-sc observe checkin-stats         # check-in usefulness metrics
-sc observe leases                # list active trust grants
-sc observe export                # export latest session bundle for lab analysis
-sc observe reset-study-state     # clear mutable state between participants
-
-sc config set-mode               # set qualitative autonomy mode
-sc config set-verification-cmd   # custom post-write verification
-```
-
-## Configuration (SAConfig)
-
-| Field | Default | Purpose |
-|-------|---------|---------|
-| `model_id` | (required) | Bedrock model ID |
-| `aws_region` | us-east-1 | AWS region |
-| `max_tokens` | 2500 | Model output limit |
-| `temperature` | 0.0 | Model temperature |
-| `lease_ttl_hours` | 72 | Lease expiration |
-| `scope_budget_files` | 12 | Max files per action |
-| `autonomy_mode` | balanced | User-facing autonomy preset |
-| `permanent_approval_threshold` | 3 | Consecutive approvals for permanent lease |
-| `read_max_chars` | 12000 | File content truncation |
-| `adaptive_policy_enabled` | true | Enable heuristic policy |
-| `policy_proceed_threshold` | 0.9 | Internal auto-approve threshold |
-| `policy_flag_threshold` | 0.2 | Internal flag-for-review threshold |
-| `strict_plan_gate` | false | Always require plan approval |
-| `plan_checkpoint_max_files` | 1 | Files before plan gate fires |
-| `max_plan_revisions` | 2 | Revision rounds before forcing approval |
-| `verification_enabled` | true | Run post-write checks |
-| `verification_timeout_sec` | 20 | Verification command timeout |
-| `verification_command` | null | Custom verification command |
+- the user selects a qualitative `autonomy_mode`
+- verification is a configured local command
+- exported study artifacts come from `observe export`
+- mutable local state can be reset between sessions/participants
 
 ## Project Structure
 
-```
-dynamic_autonomy_mvp/
-├── sc/
-│   ├── cli.py                  # command registration and routing
-│   ├── cli_shared.py           # shared CLI helpers (config, file context, truncation)
-│   ├── config.py               # SAConfig dataclass with JSON persistence
-│   ├── autonomy.py             # AutonomyPreferences, threshold adaptation, model payload parsing
-│   ├── agent_client.py         # Bedrock client wrapper, structured JSON protocol
-│   ├── policy.py               # heuristic policy scoring engine
-│   ├── plan_gate.py            # plan checkpoint decision logic
-│   ├── prompt_builder.py       # dynamic system prompt from trust state
-│   ├── trust_db.py             # SQLite schema + all data access
-│   ├── constraints.py          # AGENTS.md/CLAUDE.md rule parser
-│   ├── features.py             # change pattern classification, security detection, blast radius
-│   ├── schema.py               # Pydantic models (ReadRequest, IntentDeclaration, CheckInMessage)
-│   ├── session.py              # message history with pinned first message
-│   ├── session_feedback.py     # recent decision/correction context for prompts
-│   ├── checkin_quality.py      # check-in message validation (markers, length, options)
-│   ├── verification.py         # post-write verification runner
-│   ├── phase.py                # workflow phase gates (research/planning/implementation/review)
-│   ├── patch.py                # patch validation (path escape, scope enforcement)
-│   ├── repo.py                 # git repo root resolution
-│   ├── commands/
-│   │   ├── admin.py            # init, doctor, ask, constraints, guidelines, import-rules
-│   │   ├── observe.py          # traces, explain, preferences, checkin-stats, leases
-│   │   └── shared.py           # repo/db resolution helpers
-│   └── run/
-│       ├── command.py          # top-level run orchestration
-│       ├── read_stage.py       # read permission/policy flow
-│       ├── apply_stage.py      # write policy + atomic apply + verification
-│       ├── model.py            # model check-ins, phase transitions, retries
-│       ├── helpers.py          # feedback learning, change metrics, policy decisions
-│       ├── traces.py           # trace persistence helpers
-│       ├── reporting.py        # end-of-run summary + guideline suggestions
-│       └── ui.py               # terminal prompts and rendering
-├── tests/                      # 58 unit tests across 18 test files
-├── SPEC.md
-└── README.md
-```
+Key modules, by responsibility:
+
+- `agent_client.py` — Bedrock client + strict structured output protocol
+- `prompt_builder.py` — dynamic system prompt from trust state
+- `policy.py` / `autonomy.py` — heuristic approval scoring + autonomy adaptation
+- `plan_gate.py` / `phase.py` — milestone and phase enforcement
+- `trust_db.py` — SQLite persistence, analytics, traces, exports
+- `constraints.py` — rule import and path-policy resolution
+- `features.py` — blast radius, sensitivity, semantic change classification
+- `verification.py` — post-write checks
+- `run/` — orchestration for declare/read/check-in/apply/report
+- `commands/` — user-facing CLI surface
+- `tests/` — behavior and regression coverage for policy, DB, parsing, prompts, and run stages
+- `README.md` — installation, usage, operator workflow
+- `SPEC.md` — architecture, data model, research framing, future work
 
 ---
 
@@ -276,7 +219,7 @@ dynamic_autonomy_mvp/
 
 Current tools offer binary autonomy: ask before every edit, or edit automatically. Static config files (CLAUDE.md, .cursorrules) capture preferences the developer can articulate in advance, but most preferences are implicit — they show up as correction patterns, review timing, edit distance, and phase-of-work context.
 
-Anthropic's study of millions of agent interactions (McCain et al., Feb 2026) found that agents are far more capable than their deployment patterns suggest. METR estimates Claude handles ~5-hour tasks, but real-world turn duration caps around 42 minutes. The gap isn't capability, it's trust infrastructure. Experienced developers shift from per-action approval to monitoring + targeted intervention (auto-approve rises from 20% to 40%+), and agent-initiated stops are more common than human interruptions on complex tasks. The top reason Claude self-stops is to present approach choices (35%). AdaptiveAuth learns and accelerates this behavioral shift per-developer.
+Recent studies suggest the main bottleneck is not raw model capability but trust infrastructure: when to let the agent continue, when to intervene, and how to turn observed behavior into future calibration. Smart Coder is an attempt to make that boundary explicit and measurable.
 
 ## The Trace-Prompt Feedback Loop
 
@@ -293,33 +236,13 @@ Full cycle: **traces → trust scores → prompt context → model reasoning →
 
 ## Pair Mode UX (implemented)
 
-```
-$ sc run --task "Refactor payment validation to use new schema"
+In pair mode, the developer sees:
 
-[AdaptiveAuth] Loaded trust profile: 847 prior interactions
-[AdaptiveAuth] Session started. Agent working...
-
-── Agent Plan ──────────────────────────────────────────────────
-Subtasks:
-  1. Update PaymentValidator.validate()     → CHECK-IN (corrected similar 3x)
-  2. Update test_payment_validation.py      → AUTO (12 approvals, 0 corrections)
-  3. Update PaymentTypes API interface      → FLAG (shared interface, 3 dependents)
-  4. Update API docs                        → AUTO (high trust)
-────────────────────────────────────────────────────────────────
-
-[1/4] PaymentValidator.validate()
-  Checking in because: you've corrected my payment validation changes 3 times.
-  [diff preview]
-  (a)pprove  (e)dit  (d)eny  (s)kip  > a
-
-[2/4] test_payment_validation.py — auto-approved (12 prior approvals)
-[3/4] PaymentTypes API interface — completed, flagged for summary review
-[4/4] API docs — auto-approved
-
-── Session Summary ─────────────────────────────────────────────
-  2 auto-approved  |  1 check-in (approved)  |  1 flagged
-────────────────────────────────────────────────────────────────
-```
+- a structured plan before implementation when the plan gate fires
+- policy snapshots for reads and writes
+- model-initiated architectural check-ins when the model identifies uncertainty
+- diff approval only for files that actually require review
+- a run summary with session id, change patterns, and trace/export support
 
 ## Phase-Aware Behavior
 
@@ -354,13 +277,13 @@ The prompt includes: role framing, check-in guidance, trust summary (high/low tr
 
 ### Baselines
 
-1. Always Ask — 100% correct caution, 0% correct trust, maximum interruption
-2. Never Ask — 0% correct caution, maximum missed check-ins
-3. Static Rules — hand-coded from survey data, explicit preferences only
-4. Heuristic — the weighted policy (current implementation)
-5. Bandit — the learned policy (future)
+1. Always Ask
+2. Never Ask
+3. Static Rules — explicit preferences only
+4. Heuristic — current implementation
+5. Bandit — future learned policy
 
-The gap between static rules and the learned policy is the paper's core finding: implicit preferences that config files can't capture.
+The key comparison is between static rules and adaptive behavior learned from traces.
 
 ### Protocol (adapted from PAHF)
 
