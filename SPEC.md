@@ -306,7 +306,22 @@ Reporting: accuracy/precision/recall per policy, learning curves, feature ablati
 
 ## Future Work
 
-### Near-term (post lab study)
+### Current lab-study baseline (implemented)
+
+The current prototype is in a lab-study-ready state with the following baseline:
+
+- qualitative autonomy modes (`strict`, `balanced`, `milestone`, `autonomous`)
+- hybrid milestone + heuristic check-ins
+- read/write-split hard constraints
+- plan gating, phase gating, and post-write verification
+- trace capture with participant/run/task metadata
+- export/reset commands for study operations
+- qualitative reason strings in the runtime UI
+- spec-aware planning via optional `--spec`
+
+## Todo Backlog
+
+### Near-term
 
 1. **Learned policy weights** — replace guessed heuristic weights with a classifier trained on `decision_traces` data. Contextual bandit (LinUCB) over check-in decisions. Asymmetric reward: missing a needed check-in costs more than an unnecessary interruption.
 
@@ -314,107 +329,67 @@ Reporting: accuracy/precision/recall per policy, learning curves, feature ablati
 
 3. **Structured plan rendering** — render plans as structured markdown with section headers, file-level summaries, and inline code samples. Goal: minimize ambiguity before the developer approves a plan.
 
-4. **Deterministic guideline enforcement** — currently behavioral guidelines are purely soft (injected into the system prompt as preferred style). The model can ignore them. When a guideline is accepted, classify it into one of three enforcement tiers:
-   - **Path constraint** (e.g., "never modify production configs") → convert to hard constraint in `hard_constraints` table (deterministic, CLI-enforced).
-   - **Content rule** (e.g., "use AppError, not generic Error") → generate a grep/lint check added to the post-write verification pipeline (deterministic, fails apply stage).
-   - **Style preference** (e.g., "prefer composition over inheritance") → keep as prompt injection (soft, model-dependent).
-   The model can do this classification at guideline creation time. This closes the gap between "the system knows what the developer wants" and "the system actually enforces it."
+4. **Deterministic guideline enforcement** — currently behavioral guidelines are soft prompt context. Add a promotion path that classifies accepted guidelines into:
+   - **Path constraint** -> insert into `hard_constraints` (CLI-enforced)
+   - **Content rule** -> generate a grep/lint/static check in verification
+   - **Style preference** -> keep as prompt injection
 
-5. **Spec-aware execution loop** — optional `--spec` artifacts should eventually support structured parsing instead of simple bounded prompt injection. The current implementation injects a truncated spec digest into the system prompt and requires the plan to expose `requirements_covered`, `expected_change_types`, and `potential_deviations`. Future work is retrieving exact requirement sections on demand and storing spec lineage more explicitly for analysis.
+5. **Spec-aware execution loop** — move beyond bounded spec digests toward structured spec retrieval, explicit requirement lineage, and section-level grounding during planning and implementation.
 
-### Lab study shipping requirements
-
-These items are required before distributing the prototype to study participants.
-
-1. **Qualitative autonomy control** — expose `strict` / `balanced` / `milestone` / `autonomous` as the primary control surface. Threshold tuning remains internal and optionally available only for research/debug workflows.
-
-2. **Milestone-first check-ins** — default behavior should align with survey feedback:
-   - plan approval
-   - phase transitions
-   - first risky write batch
-   - architectural or interface tradeoffs
-   - verification failures / recovery proposals
-   Routine low-risk edits should not interrupt.
-
-3. **Study metadata on every trace** — record enough context to analyze behavior offline:
-   - participant identifier
-   - study run identifier
-   - optional task identifier
-   - autonomy mode used for the run
-
-4. **Operator-grade export** — one command should export session traces, report summary, active preferences, constraints, and guidelines for a participant/run without manual SQLite queries.
-
-5. **Operator-grade reset** — one command should reset learned state for a clean participant start:
-   - leases
-   - traces
-   - approval history
-   - learned autonomy preferences
-   Rules imported from fixture files can then be re-imported deterministically.
-
-6. **Qualitative reason strings** — the runtime UI should explain decisions in natural language:
-   - why a read/write/check-in happened
-   - why autonomy increased or decreased
-   - what milestone or risk condition triggered the pause
-   Users should not need to understand the scoring model to supervise the agent.
-
-### Medium-term
-
-6. **Interaction-style cold start prior (CowCorpus)** — classify users as hands-off/hands-on/collaborative/takeover from first 3-5 sessions using interrupt frequency, review duration, edit distance. Use style as a prior for thresholds before enough traces accumulate.
-
-7. **Reversibility as first-class risk signal (McCain)** — add `is_reversible` to traces. Score irreversible actions with an explicit penalty separate from blast radius.
-
-8. **Interrupt taxonomy (McCain)** — extend user_response with `partial_approve`, `user_takeover`. Add `interrupt_reason`: correction/takeover/redirect/excessive_execution/sufficient_progress. Takeover/sufficient-progress interrupts should be neutral or positive, not denials.
-
-9. **Review-phase failure preference learning** — track developer treatment of failing checks (blocking vs. ignorable). Persist in traces and surface in trust/prompt context.
-
-10. **Research-phase markdown writeback** — controlled write policy for `.md` findings/plan artifacts during research. Keep non-markdown writes blocked.
-
-### Long-term
-
-11. **Full RL** — only if the bandit can't capture sequential dependencies within sessions. Episode = session, state = context + session history, PPO or DQN.
-
-12. **Trust decay** — exponential decay on trust scores (target: ~14-day half-life). Not yet implemented because we need real usage data to validate the decay rate.
-
-13. **Drift detection** — track corrections that contradict existing guidelines. If 2+ contradictions, flag at session end for review.
-
-## Todo Backlog (Policy Enforcement Refactor)
-
-These items are approved for the next spec iteration and should be treated as implementation todos.
-
-1. **Verifiability-first policy taxonomy** — classify every policy by enforcement capability, not by domain:
+6. **Verifiability-first policy taxonomy** — classify every policy by enforcement capability, not by domain:
    - `deterministic_enforced` (hard block/fail)
    - `deterministic_advisory` (warn + explicit override)
    - `best_effort` (prompt steering only)
    This replaces the implicit “file-access => hard constraint, everything else => guideline” split.
 
-2. **Policy expectation disclosure at creation time** — when a user adds/imports a rule, immediately report:
+7. **Policy expectation disclosure at creation time** — when a user adds/imports a rule, immediately report:
    - enforcement class (`deterministic_enforced` / `deterministic_advisory` / `best_effort`)
    - exact matched scope (files/globs)
    - failure behavior (block / prompt / note)
    - rationale if downgraded to best-effort.
 
-3. **Vague-scope resolution step** — for ambiguous policies (e.g., “frontend style files”), require disambiguation before persisting:
+8. **Vague-scope resolution step** — for ambiguous policies (e.g., “frontend style files”), require disambiguation before persisting:
    - propose concrete candidate scopes
    - require user confirmation
    - store normalized scope set + original natural-language policy text.
 
-4. **Promotable policy pipeline** — automatically attempt to promote verifiable natural-language policies to deterministic enforcement:
+9. **Promotable policy pipeline** — automatically attempt to promote verifiable natural-language policies to deterministic enforcement:
    - process rules (e.g., “always run tests”) -> verification hooks
    - content rules (e.g., “use AppError, not Error”) -> static checks/lints
    - access rules -> hard constraints
    - non-verifiable policies remain best-effort guidelines.
 
-5. **LLM policy judge/compiler** — add a dedicated policy-compiler model call that decides:
+10. **LLM policy judge/compiler** — add a dedicated policy-compiler model call that decides:
    - prompt-only guidance vs deterministic script/check
    - confidence + explanation for classification
    - generated checker spec (not raw shell by default), with CLI validation before activation.
    Runtime enforcement remains CLI-deterministic; the LLM is only a compiler/planner.
 
-6. **Subagent execution architecture (experimental)** — evaluate a two-agent topology:
+### Medium-term
+
+11. **Interaction-style cold start prior (CowCorpus)** — classify users as hands-off/hands-on/collaborative/takeover from first 3-5 sessions using interrupt frequency, review duration, edit distance. Use style as a prior for thresholds before enough traces accumulate.
+
+12. **Reversibility as first-class risk signal (McCain)** — add `is_reversible` to traces. Score irreversible actions with an explicit penalty separate from blast radius.
+
+13. **Interrupt taxonomy (McCain)** — extend user response semantics with `partial_approve`, `user_takeover`, and `interrupt_reason` (correction/takeover/redirect/excessive_execution/sufficient_progress). Takeover/sufficient-progress interrupts should be neutral or positive, not denials.
+
+14. **Review-phase failure preference learning** — track developer treatment of failing checks (blocking vs. ignorable). Persist in traces and surface in trust/prompt context.
+
+15. **Research-phase markdown writeback** — controlled write policy for `.md` findings/plan artifacts during research. Keep non-markdown writes blocked.
+
+16. **Subagent execution architecture (experimental)** — evaluate a two-agent topology:
    - `planner/oversight subagent`: plans work according to autonomy and policy rules, emits checkpoints/delegations
    - `coding subagent`: produces edits within delegated scope
    - CLI remains the single enforcement boundary across both agents.
    This is research-track; do not put on critical lab path until deterministic traceability is validated.
+
+### Long-term
+
+17. **Full RL** — only if the bandit can't capture sequential dependencies within sessions. Episode = session, state = context + session history, PPO or DQN.
+
+18. **Trust decay** — exponential decay on trust scores (target: ~14-day half-life). Not yet implemented because we need real usage data to validate the decay rate.
+
+19. **Drift detection** — track corrections that contradict existing guidelines. If 2+ contradictions, flag at session end for review.
 
 ## Design Decisions
 

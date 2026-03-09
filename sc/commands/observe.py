@@ -12,7 +12,6 @@ from rich.table import Table
 from ..commands.shared import open_trust_db, require_repo_root
 from ..cli_shared import is_approval_decision as _is_approval_decision
 from ..config import load_config
-from ..demo_seed_data import seed_demo_data
 
 def _format_expiry(expires_at: int | None) -> str:
     if expires_at is None:
@@ -603,32 +602,6 @@ def reset(
     )
     print(f"  Access: revoked {revoked_leases} leases")
     print(f"  Preferences: {'cleared' if cleared_prefs else 'none to clear'}")
-
-
-def demo_seed(
-    reset: bool = typer.Option(
-        True,
-        "--reset/--no-reset",
-        help="Reset existing traces and plan revisions for deterministic demo output.",
-    ),
-):
-    """Seed deterministic trace data for a no-network advisor demo."""
-    repo_root = require_repo_root()
-
-    repo_root_str = str(repo_root)
-    trust_db = open_trust_db(repo_root)
-    cleared_traces, cleared_revisions = seed_demo_data(
-        trust_db=trust_db,
-        repo_root=repo_root_str,
-        reset=reset,
-    )
-    if reset:
-        print(
-            f"[yellow]Cleared {cleared_traces} traces and {cleared_revisions} plan revisions.[/yellow]"
-        )
-    print("[green]Seeded deterministic demo traces.[/green]")
-    print("Run `python -m sc report` and `python -m sc traces --limit 20`.")
-
 
 def revoke(
     path: str | None = typer.Argument(None, help="Repo-relative file path to revoke."),
