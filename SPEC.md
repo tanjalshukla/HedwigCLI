@@ -270,6 +270,7 @@ The evaluation plan is intentionally simple:
 - **Calibration metrics** — useful vs. wasted check-ins, split by initiator (CLI vs. model), plus agreement rates between CLI, model, and developer.
 - **Learning metrics** — correction repeat rate, trust trajectory, preference carryover across sessions, and change in interruption rate after feedback.
 - **Quality metrics** — rubber-stamp rate, review duration, verification outcomes, and false-confidence indicators.
+- **Human-centered metrics** — interruption burden, check-in usefulness, developer understanding, and trust calibration are first-class outcomes alongside task completion.
 
 Planned baselines:
 - Always Ask
@@ -291,6 +292,7 @@ The key comparison is between static rules and adaptive behavior learned from tr
 - **CowCorpus** motivates the idea that users have stable interaction styles and that oversight behavior can be learned per user. Smart Coder takes the same premise but keeps the adaptation in a separable governance layer rather than retraining the model.
 - **Grunde-McLaughlin et al.** motivate review-quality signals: Smart Coder uses assumptions in check-ins and discounts rubber-stamp approvals instead of treating every approval equally.
 - **PAHF** motivates post-action personalization. Smart Coder adopts the same feedback-driven idea but keeps the memory and adaptation loop outside the model, in the local CLI.
+- **Humans are Missing from AI Coding Agent Research** strengthens the motivation for Smart Coder's study design: oversight quality, steerability, verifiability, and adaptability should be evaluated on realistic human-agent workflows rather than only offline autonomous benchmarks.
 - **Appropriate reliance / scalable oversight / capability security** provide the broader framing: the goal is calibrated reliance, meaningful oversight as capability grows, and explicit scoped authority rather than broad agent trust.
 
 ## Current Status
@@ -322,6 +324,9 @@ This subsection is the single place to look for important things discussed in re
 - **Async delegation mode** — current UX is pair mode; no queue/review workflow yet.
 - **Subagent planner/coder split** — still a research-track idea, not part of the shipped runtime.
 - **Post-hoc correction after approval** — the current system captures denials and inline corrections, but it does not yet let a developer retroactively mark an already-approved change as a negative signal.
+- **Checkpoint / rewind workflow** — the system applies writes atomically, but it does not yet expose first-class checkpoints or a rewind command that records deliberate rollback as a trust signal.
+- **Git-aware local-change risk** — the policy does not yet treat uncommitted developer edits as a separate risk signal when the agent proposes touching the same file.
+- **Longitudinal human-centered evaluation** — the current system is instrumented for lab studies, but it has not yet been validated over repeated human sessions where interruption burden, understanding, steerability, and trust calibration are measured directly.
 
 ## Todo Backlog
 
@@ -346,12 +351,14 @@ This is the prioritized post-demo backlog.
 - **Stronger correction retrieval** — upgrade the current lightweight relevance ranking into richer retrieval over task text, file clusters, change patterns, and accepted guidelines.
 - **Deeper spec-driven execution** — move from bounded spec digests to structured requirement lineage and section-level grounding.
 - **Post-hoc correction support** — allow a developer to retroactively mark an approved change as a negative signal.
+- **Checkpoint / rewind support** — create pre-apply checkpoints and an explicit rewind path so rollback becomes both a user tool and a high-confidence negative preference signal.
 - **Review-phase preference learning** — learn which failing checks are blocking vs. ignorable.
 
 ### Priority 4: broader workflow support
 
 - **Async delegation mode** — background execution with queue/review UX.
 - **Research-phase markdown writeback** — controlled markdown artifacts during research.
+- **Git-aware risk features** — incorporate local working-tree state (for example, developer-uncommitted edits in a touched file) into risk scoring and check-in rationale.
 - **Subagent planner/coder split** — experimental architecture only after deterministic traceability is strong enough.
 
 ### Longer-term research
