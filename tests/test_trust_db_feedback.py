@@ -152,6 +152,34 @@ class TrustDBFeedbackTests(unittest.TestCase):
             self.assertGreaterEqual(len(guidelines), 1)
             self.assertEqual(guidelines[0].guideline, "Do not change response envelopes without approval.")
 
+    def test_relevant_logic_notes_prefers_functional_match(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = TrustDB(Path(tmpdir) / "trust.db")
+            repo = "/tmp/repo"
+
+            db.add_logic_notes(
+                repo,
+                source="run_summary",
+                notes=[
+                    "Added a dedicated summary endpoint instead of changing the existing list response envelope.",
+                    "Validation changes in the service layer should stay local and avoid API surface changes.",
+                ],
+                files=["task_api/api.py", "task_api/service.py"],
+                change_types=["api_change", "error_handling"],
+            )
+
+            notes = db.relevant_logic_notes(
+                repo,
+                query_text="Add a summary route while keeping the existing list response envelope intact.",
+                limit=2,
+            )
+
+            self.assertGreaterEqual(len(notes), 1)
+            self.assertEqual(
+                notes[0].note,
+                "Added a dedicated summary endpoint instead of changing the existing list response envelope.",
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

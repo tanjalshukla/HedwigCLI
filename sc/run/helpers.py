@@ -253,6 +253,56 @@ def _apply_feedback_learning(
     return learned
 
 
+def _capture_logic_notes(
+    *,
+    trust_db: TrustDB,
+    repo_root: str,
+    session_id: str,
+    task: str,
+    declaration: IntentDeclaration,
+    touched_files: list[str],
+    patch_text: str,
+    spec_context: SpecContext | None,
+    client: ClaudeClient | None,
+) -> list[str]:
+    """Summarize completed work into reusable functionality notes."""
+    if not client or not touched_files or not patch_text.strip():
+        return []
+
+    feedback_texts = [
+        str(row["user_feedback_text"]).strip()
+        for row in trust_db.session_traces(repo_root, session_id)
+        if row["user_feedback_text"]
+    ]
+    verification_passed = trust_db.session_verification_status(repo_root, session_id)
+    patch_excerpt = patch_text[:2200]
+    try:
+        result = client.summarize_logic_notes(
+            task=task,
+            intent_summary=declaration.task_summary,
+            touched_files=touched_files,
+            change_types=declaration.expected_change_types,
+            spec_digest=spec_context.digest if spec_context else None,
+            patch_excerpt=patch_excerpt,
+            feedback_texts=feedback_texts,
+            verification_passed=verification_passed,
+        )
+    except Exception:
+        return []
+
+    notes = result.notes
+    if not notes:
+        return []
+    trust_db.add_logic_notes(
+        repo_root,
+        source="run_summary",
+        notes=notes,
+        files=touched_files,
+        change_types=declaration.expected_change_types,
+    )
+    return notes
+
+
 def _load_spec_context(repo_root: Path, spec_path: str | None, max_chars: int) -> SpecContext | None:
     if not spec_path:
         return None

@@ -24,6 +24,12 @@ _ARCHITECTURE_MARKERS = (
     "schema",
     "dependency",
     "workflow",
+    "api",
+    "endpoint",
+    "route",
+    "handler",
+    "response",
+    "envelope",
 )
 
 _OPTIONS_REQUIRED = {

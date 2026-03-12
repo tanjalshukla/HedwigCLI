@@ -62,8 +62,6 @@ This creates local state in `.sc/config.json` and `.sc/trust.db`.
 - `sc rules ...` import/manage hard constraints and guidelines
 - `sc observe ...` traces, leases, explainability, stats, preferences
 
-Legacy top-level aliases still work for compatibility.
-
 ## Core Workflows
 
 Run with intent visibility:
@@ -80,18 +78,19 @@ sc observe traces --limit 20
 sc observe report
 ```
 
-Import rules from AGENTS/CLAUDE-style files:
+Import structured rules from AGENTS/CLAUDE-style files:
 
 ```bash
-sc rules import demo/DEMO_RULES.md
+sc rules import path/to/RULES.md
 sc rules constraints
 sc rules guidelines
 ```
 
-Compile a direct natural-language path rule into an enforced constraint:
+Add a freeform natural-language rule. Smart Coder compiles it into enforced constraints and/or prompt-level guidance:
 
 ```bash
 sc rules add "Never modify files under `config/prod/*`."
+sc rules add "Only check in for API or schema changes."
 ```
 
 Set autonomy mode:
@@ -130,8 +129,32 @@ sc observe export --out .sc/exports
 
 ## Demo
 
-- Copy-paste demo script: `demo/DEMO_COMMANDS.md`
+The demo target repo is `demo_task_api/`.
+
+- Two-session demo flow: `demo_task_api/DEMO_FLOW.md`
 - Operator steps: `docs/OPERATOR_RUNBOOK.md`
+
+### Install and Run the Demo
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip setuptools wheel
+pip install --no-build-isolation -e .
+export AWS_PROFILE=<PROFILE>
+export AWS_REGION=us-east-1
+export AWS_DEFAULT_REGION=us-east-1
+export AWS_SDK_LOAD_CONFIG=1
+sc doctor --model-id <INFERENCE_PROFILE_ARN> --region us-east-1
+cd demo_task_api
+git init   # one-time, if the demo fixture is not already its own repo
+git rev-parse --show-toplevel   # should print .../demo_task_api
+sc reset --yes
+sc rules constraints-clear --all
+sc rules guidelines-clear --all
+sc config set-mode balanced
+sc config set-verification-cmd "python -m pytest tests -q"
+```
 
 ## Notes
 

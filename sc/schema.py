@@ -18,6 +18,7 @@ ChangeType = Literal[
     "dependency_update",
     "error_handling",
 ]
+ConstraintPolicy = Literal["always_allow", "always_check_in", "always_deny"]
 
 
 class ReadRequest(BaseModel):
@@ -90,3 +91,63 @@ class CheckInMessage(BaseModel):
     options: list[str] | None = None
     assumptions: list[str] | None = None
     confidence: float | None = Field(default=None, ge=0.0, le=1.0)
+
+
+class CompiledConstraintProposal(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    path_pattern: str
+    read_policy: ConstraintPolicy
+    write_policy: ConstraintPolicy
+    reason: str | None = None
+
+    @field_validator("path_pattern")
+    @classmethod
+    def validate_path_pattern(cls, value: str) -> str:
+        normalized = value.strip().replace("\\", "/")
+        if not normalized:
+            raise ValueError("path_pattern cannot be empty")
+        if Path(normalized).is_absolute() or normalized.startswith("/"):
+            raise ValueError("path_pattern must be repo-relative")
+        parts = [part for part in normalized.split("/") if part]
+        if any(part == ".." for part in parts):
+            raise ValueError("path_pattern must not escape repo")
+        if normalized.startswith("./"):
+            normalized = normalized[2:]
+        if normalized.endswith("/"):
+            normalized = normalized + "*"
+        return normalized
+
+
+class RuleCompilation(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    constraints: list[CompiledConstraintProposal] = Field(default_factory=list)
+    behavioral_guidelines: list[str] = Field(default_factory=list)
+    unresolved: list[str] = Field(default_factory=list)
+
+    @field_validator("behavioral_guidelines", "unresolved")
+    @classmethod
+    def validate_text_items(cls, value: list[str]) -> list[str]:
+        normalized: list[str] = []
+        for item in value:
+            text = " ".join(item.split()).strip()
+            if text:
+                normalized.append(text)
+        return normalized
+
+
+class LogicNoteCompilation(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    notes: list[str] = Field(default_factory=list)
+
+    @field_validator("notes")
+    @classmethod
+    def validate_notes(cls, value: list[str]) -> list[str]:
+        normalized: list[str] = []
+        for item in value:
+            text = " ".join(item.split()).strip()
+            if text:
+                normalized.append(text[:280])
+        return normalized[:3]

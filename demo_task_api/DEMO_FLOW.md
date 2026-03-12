@@ -14,9 +14,8 @@ Do not reset between session 1 and session 2.
 
 1. `0:00-0:25` - add one hard rule and one behavioral rule
 2. `0:25-2:10` - session 1: spec-aware plan + model-initiated API check-in
-3. `2:10-2:25` - show learned preference state
-4. `2:25-4:05` - session 2: related work with fewer interruptions
-5. `4:05-5:00` - observability close
+3. `2:10-3:45` - session 2: semantically related follow-up with fewer interruptions
+4. `3:45-5:00` - observability close
 
 ## Off-camera setup
 
@@ -48,7 +47,7 @@ Show these two commands on camera:
 
 ```bash
 sc config set-mode balanced
-sc rules add "Always check in before modifying task_api/api.py."
+sc rules add "Never modify files under locked/."
 sc rules add "For routine validation and service-layer changes, continue autonomously; only check in for API, schema, or security changes."
 ```
 
@@ -59,7 +58,7 @@ What this proves:
 - the system separates task contract, hard governance, and soft preference
 
 Script:
-- the first rule is a hard boundary on API-facing edits
+- the first rule is a hard boundary on a protected path
 - the second rule is a softer preference about interruption style
 - this is the distinction between governance and adaptive conditioning
 - do not linger here; the point is classification, not rule administration
@@ -96,31 +95,22 @@ After the run:
 sc observe export --session-id <SESSION_1_ID> --out .sc/exports/session1
 ```
 
-## Part 3: show persisted preference state
-
-```bash
-sc observe preferences
-```
-
-What this proves:
-- the preference is stored locally
-- Smart Coder is not relying only on immediate conversation state
-
-## Part 4: session 2
+## Part 3: session 2
 
 ```bash
 sc run \
-"Using the same spec, add optional `priority` filtering to the existing task list endpoint and tighten validation messages while preserving response envelopes and handler signatures. Continue autonomously for low-risk changes and only check in if an API or interface change is required." \
+"Using the same spec, extend the new `/tasks/summary` flow to accept an optional `priority` filter while preserving the existing list endpoint, response envelopes, and handler signatures. Reuse the existing priority validation logic, do not create new files, and continue autonomously for low-risk internal changes." \
 --spec docs/task_api_spec.md \
 --show-intent
 ```
 
 Expected outcome:
 - fewer unnecessary check-ins than session 1
-- preserved response envelope
+- preserved response envelopes
 - preserved handler signatures
-- low-risk service and validation work proceeds with less friction
-- any remaining check-in happens at the API/interface layer
+- the model recognizes this as a semantically related follow-up to the earlier summary-endpoint work
+- the session bootstrap line should show `history=loaded`
+- low-risk follow-up work proceeds with less friction
 
 After the run:
 
@@ -128,7 +118,7 @@ After the run:
 sc observe export --session-id <SESSION_2_ID> --out .sc/exports/session2
 ```
 
-## Part 5: observability close
+## Part 4: observability close
 
 Show one command. Prefer the report:
 
@@ -152,7 +142,7 @@ Session 1:
 - the CLI still governs the risky surface
 
 Session 2:
-- prior feedback changes future behavior
+- prior interaction history changes future behavior
 - autonomy increases selectively, not blindly
 - the adaptive part is the point; everything else supports that moment
 
@@ -170,7 +160,7 @@ Capture these screenshots:
 - one guidance-rule compilation example
 - the spec-aware intent summary
 - the model-initiated architectural check-in
-- `sc observe preferences` before session 2
+- the `history=loaded` bootstrap line at session 2 start
 - one observability close
 
 Evidence to pull into the paper:
@@ -179,4 +169,5 @@ Evidence to pull into the paper:
 - whether session 1 completed successfully with verification passing
 - model-initiated vs policy-initiated check-ins in session 1
 - whether session 2 required fewer interruptions than session 1
+- whether session 2 started from loaded history rather than cold start
 - one exported bundle + trace CSV proving the run is fully instrumented

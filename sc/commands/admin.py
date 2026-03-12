@@ -22,7 +22,7 @@ from ..config import (
     normalize_autonomy_mode,
     save_config,
 )
-from ..constraints import compile_manual_constraint_rule, parse_constraints_file
+from ..constraints import ParseResult, parse_constraints_file
 from ..session import ClaudeSession
 from ..trust_db import HardConstraint
 
@@ -256,38 +256,108 @@ def import_rules(
 
 
 def add_rule(
-    rule: str = typer.Argument(..., help="Natural-language path rule to compile into a hard constraint."),
+    rule: str = typer.Argument(..., help="Natural-language rule to compile into enforced constraints and/or behavioral guidance."),
     source: str = typer.Option("manual_rule", "--source", help="Source label stored with the compiled constraint."),
+    model_id: str = typer.Option(None, "--model-id", help="Bedrock inference profile ID/ARN."),
+    region: str = typer.Option(None, "--region", help="AWS region for Bedrock."),
     yes: bool = typer.Option(False, "--yes", help="Skip confirmation."),
 ):
-    """Compile a narrow natural-language path rule into enforced hard constraints."""
+    """Compile a natural-language rule into enforced constraints and/or behavioral guidance."""
     repo_root = require_repo_root()
     trust_db = open_trust_db(repo_root)
-    parsed = compile_manual_constraint_rule(rule, source=source)
-    if not parsed.constraints:
-        print("[red]Could not compile an enforced path constraint from that rule.[/red]")
-        if parsed.behavioral_guidelines:
-            print("[yellow]The rule looks like best-effort guidance, not a deterministic path constraint.[/yellow]")
+    config = _resolve_config_or_exit(repo_root, model_id, region)
+    try:
+        parsed = _compile_rule_with_model(
+            repo_root=repo_root,
+            rule=rule,
+            source=source,
+            model_id=config.model_id,
+            region=config.aws_region,
+        )
+    except Exception as exc:
+        print(f"[red]{exc}[/red]")
         raise typer.Exit(code=1)
 
-    table = Table(title="Compiled Hard Constraints")
-    table.add_column("Pattern")
-    table.add_column("Policy")
-    table.add_column("Source")
-    for item in parsed.constraints:
-        table.add_row(item.path_pattern, _constraint_display(item), item.source)
-    print(table)
+    if not parsed.constraints and not parsed.behavioral_guidelines:
+        print("[red]Could not compile a usable rule from that input.[/red]")
+        if parsed.unresolved_lines:
+            print("[yellow]The rule was too ambiguous to enforce or inject safely.[/yellow]")
+        raise typer.Exit(code=1)
+
+    if parsed.constraints:
+        table = Table(title="Proposed Hard Constraints")
+        table.add_column("Pattern")
+        table.add_column("Policy")
+        table.add_column("Source")
+        for item in parsed.constraints:
+            table.add_row(item.path_pattern, _constraint_display(item), item.source)
+        print(table)
+    if parsed.behavioral_guidelines:
+        table = Table(title="Proposed Behavioral Guidelines")
+        table.add_column("Guideline")
+        table.add_column("Source")
+        for guideline in parsed.behavioral_guidelines:
+            table.add_row(guideline, source)
+        print(table)
     if parsed.unresolved_lines:
-        print("[yellow]Only the deterministic path portion was compiled.[/yellow]")
+        print("[yellow]Unresolved portions (not persisted):[/yellow]")
+        for line in parsed.unresolved_lines:
+            print(f"[yellow]- {line}[/yellow]")
 
     if not yes:
-        confirmed = Prompt.ask("Add these hard constraints", choices=["y", "n"], default="y")
+        confirmed = Prompt.ask("Add these compiled rules", choices=["y", "n"], default="y")
         if confirmed != "y":
-            print("[yellow]No constraints added.[/yellow]")
+            print("[yellow]No rules added.[/yellow]")
             raise typer.Exit(code=0)
 
     inserted = trust_db.add_constraints(str(repo_root), parsed.constraints)
+    guideline_count = trust_db.add_behavioral_guidelines(
+        str(repo_root),
+        source=source,
+        guidelines=parsed.behavioral_guidelines,
+    )
     print(f"[green]Added {inserted} hard constraint(s).[/green]")
+    print(f"[green]Added {guideline_count} behavioral guideline(s).[/green]")
+
+
+def _repo_inventory(repo_root: Path, *, limit: int = 80) -> list[str]:
+    items: list[str] = []
+    ignored = {".git", ".venv", ".sc", "__pycache__"}
+    for path in sorted(repo_root.rglob("*")):
+        if len(items) >= limit:
+            break
+        if any(part in ignored for part in path.parts):
+            continue
+        if path.is_file():
+            items.append(str(path.relative_to(repo_root)))
+    return items
+
+
+def _compile_rule_with_model(
+    *,
+    repo_root: Path,
+    rule: str,
+    source: str,
+    model_id: str,
+    region: str,
+):
+    client = ClaudeClient(model_id=model_id, region=region)
+    compiled = client.compile_rule(rule, repo_inventory=_repo_inventory(repo_root))
+    constraints = [
+        HardConstraint(
+            path_pattern=item.path_pattern,
+            source=source,
+            overridable=False,
+            read_policy=item.read_policy,
+            write_policy=item.write_policy,
+        )
+        for item in compiled.constraints
+    ]
+    return ParseResult(
+        constraints=constraints,
+        behavioral_guidelines=compiled.behavioral_guidelines,
+        unresolved_lines=compiled.unresolved,
+    )
 
 
 _CONSTRAINT_LABELS: dict[str, str] = {

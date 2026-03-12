@@ -32,6 +32,15 @@ class PromptBuilderTests(unittest.TestCase):
                 source="DEMO_RULES.md",
                 guidelines=["Always run tests after editing."],
             )
+            db.add_logic_notes(
+                repo,
+                source="run_summary",
+                notes=[
+                    "Preserved the list response envelope by adding a separate summary endpoint.",
+                ],
+                files=["src/api/tasks.py"],
+                change_types=["api_change"],
+            )
 
             for _ in range(3):
                 db.record_trace(
@@ -92,6 +101,8 @@ class PromptBuilderTests(unittest.TestCase):
             self.assertIn("return a CheckInMessage JSON", prompt)
             self.assertIn("Recent qualitative guidance:", prompt)
             self.assertIn("Use existing auth adapter", prompt)
+            self.assertIn("Relevant prior functionality notes:", prompt)
+            self.assertIn("summary endpoint", prompt)
             self.assertIn("Approved specification context:", prompt)
             self.assertIn("preserve API compatibility", prompt)
 

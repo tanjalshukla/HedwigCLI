@@ -45,6 +45,12 @@ def build_run_system_prompt(
         spec_text=spec_digest,
         limit=4,
     )
+    logic_notes = trust_db.relevant_logic_notes(
+        repo_root,
+        query_text=task_text,
+        spec_text=spec_digest,
+        limit=3,
+    )
     calibration = trust_db.checkin_calibration(repo_root)
     autonomy_preferences = trust_db.autonomy_preferences(repo_root)
     access_stats = trust_db.access_stats(repo_root, limit=200)
@@ -54,6 +60,7 @@ def build_run_system_prompt(
         for item in constraints
     ]
     guideline_lines = [item.guideline for item in guidelines]
+    logic_note_lines = [item.note for item in logic_notes]
     feedback_lines = [f"Developer said: {text}" for text in feedback_snippets]
     autonomy_lines = autonomy_preferences.prompt_lines()
     access_lines: list[str] = [
@@ -141,6 +148,8 @@ def build_run_system_prompt(
         f"{_bullet_lines(trust_summary.corrected_patterns, 'No correction pattern history yet.')}\n"
         "Recent qualitative guidance:\n"
         f"{_bullet_lines(feedback_lines, 'No direct feedback captured yet.')}\n\n"
+        "Relevant prior functionality notes:\n"
+        f"{_bullet_lines(logic_note_lines, 'No prior functionality notes captured yet.')}\n\n"
         "Developer autonomy preferences:\n"
         f"{_bullet_lines(autonomy_lines, 'No explicit autonomy preference learned yet.')}\n\n"
         "Observed access statistics:\n"

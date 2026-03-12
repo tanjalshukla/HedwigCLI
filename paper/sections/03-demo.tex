@@ -1,51 +1,26 @@
 \section{Demo Scenario and Evidence}
 
-The demo is designed to show Smart Coder's contribution through a short, concrete two-session interaction on a small external codebase. Rather than demonstrating arbitrary code generation, the scenario emphasizes governed autonomy, model-side architectural reasoning, and cross-session adaptation.
+The demo uses a small external Python task API repository with route handlers, a service layer, structured application errors, tests, and a short task specification. The specification acts as a task contract: it preserves response envelopes and handler signatures while leaving implementation strategy open. Before coding begins, the developer authors two freeform rules with \texttt{sc rules add}: one that compiles into a CLI-enforced constraint and one that compiles into prompt-level behavioral guidance. This setup makes the separation between deterministic governance, softer preferences, and task-specific specification visible before the main coding task starts.
 
-\subsection{Demo task}
-
-We use a small Python task API fixture with route handlers, service-layer validation, structured application errors, and a short task specification. The specification preserves response envelopes and handler signatures while allowing low-risk internal improvements. One file is marked as interface-sensitive, one path is explicitly locked, and the system is configured to run tests after edits.
-
-The first session asks Smart Coder to add a summary view of task counts by status while preserving the existing API envelope and public handler signatures. This task is chosen because it creates a real architectural fork: either extend an existing handler or add a dedicated summary route. That fork is exactly the kind of decision Smart Coder is meant to surface through a model-initiated check-in.
-
-The second session asks for a related follow-up change, such as priority filtering and tighter validation messaging, while preserving the same interface constraints. Between the two sessions, the developer's feedback from the first run remains in the trace database. The second run therefore demonstrates whether Smart Coder can change its behavior based on prior interaction rather than treating every session as a cold start.
-
-\subsection{What attendees will see}
-
-The live demonstration highlights four moments:
-\begin{enumerate}
-    \item \textbf{Spec-aware planning.} Smart Coder shows an intent declaration grounded in the provided task specification rather than immediately generating code.
-    \item \textbf{A model-initiated architectural check-in.} The model surfaces a design tradeoff, states its assumptions, and presents explicit options instead of silently picking one.
-    \item \textbf{Selective autonomy under governance.} Low-risk work proceeds with less friction, while interface-sensitive or constrained work still triggers review.
-    \item \textbf{Cross-session adaptation.} A preference or correction given in the first session appears in the second session as prompt context, learned preference state, or altered oversight behavior.
-\end{enumerate}
-
-This sequence is the most compelling way to show Smart Coder's intended contribution: it is neither a static rules engine nor an unconstrained autonomous agent, but a governed system that adapts over time.
-
-\subsection{Evidence in the current artifact}
-
-The CAIS demo track asks authors to show evidence that the system works and is meaningfully different from alternatives. Smart Coder's current evidence is artifact-centric rather than a completed user study.
+The live workflow then proceeds in two short sessions. In session 1, Smart Coder receives the task and the spec, produces a spec-aware plan, and surfaces an API design tradeoff through a model-initiated check-in rather than guessing silently. The developer chooses an option and gives one explicit instruction about how subsequent low-risk work should proceed. In session 2, Smart Coder performs a related follow-up task on the same repository, now starting from loaded interaction history and reducing unnecessary interruption while preserving review at the API boundary. The demo closes with one observability view, showing that the run was fully traced and exported. This sequence highlights the system's intended contribution: adaptive oversight, not static prompting or unconstrained autonomy.
 
 \begin{table}[t]
-  \caption{Evidence to include in the final submission. Replace placeholder values with exported data from one or more representative pilot sessions.}
+  \caption{Evidence to include in the final submission from one or more representative rehearsal runs.}
   \label{tab:evidence}
   \centering
   \begin{tabular}{p{0.44\columnwidth}p{0.42\columnwidth}}
     \toprule
     Evidence item & Current source \\
     \midrule
-    Representative task success & \textbf{Placeholder:} exported session bundle \\
-    Number of model-initiated check-ins & \textbf{Placeholder:} \texttt{observe checkin-stats} \\
-    Number of policy-initiated check-ins & \textbf{Placeholder:} \texttt{observe checkin-stats} \\
-    Cross-session preference carryover & \textbf{Placeholder:} session 1 vs session 2 trace diff \\
-    Example rationale for auto-approval/check-in & exported traces + screenshots \\
+    Hard-rule compilation example & \textbf{TODO:} \texttt{sc rules add} output \\
+    Guidance-rule compilation example & \textbf{TODO:} \texttt{sc rules add} output \\
+    Representative task success & \textbf{TODO:} exported session bundle \\
+    Session 1 model vs policy check-ins & \textbf{TODO:} \texttt{observe checkin-stats} \\
+    Session 2 fewer interruptions than Session 1 & \textbf{TODO:} session trace comparison \\
+    Session 2 starts from loaded history & \textbf{TODO:} run bootstrap output \\
     Verification outcomes & session bundle + trace CSV \\
     \bottomrule
   \end{tabular}
 \end{table}
 
-At minimum, the final paper should include one clean exported session bundle and one trace CSV from the demo scenario. Those artifacts support three claims: first, that the system runs end to end on a real task; second, that both model-side and policy-side oversight occur; and third, that traces from one session can affect behavior in the next.
-
-\paragraph{Placeholder for demo video link.} Insert the private video URL as a footnote in the camera-ready or submission draft, as permitted by the CAIS demo CFP.
-
-\paragraph{Placeholder for pilot metrics.} Add 2--4 concrete values from a rehearsed run, for example: number of actions, number of check-ins by initiator, whether the second session reduced unnecessary interruptions, and whether the learned preference appeared in the prompt or preference view.
+At minimum, the final submission should include one clean exported session bundle, one trace CSV, and a short video demonstrating the full two-session flow. Those artifacts support the three claims this paper needs: the system runs end to end on a realistic coding task, both model-side and policy-side oversight occur, and observed developer behavior changes later system behavior.

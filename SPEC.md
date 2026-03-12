@@ -183,7 +183,7 @@ The public interface is intentionally small:
 - `sc run` — main governed coding loop
 - `sc ask` — no-write question answering
 - `sc rules ...` — import and inspect constraints/guidelines
-- `sc rules add` — compile a narrow natural-language path rule into an enforced hard constraint
+- `sc rules add` — compile a freeform natural-language rule into either enforced constraints or prompt-level guidance
 - `sc observe ...` — traces, exports, explainability, resets
 - `sc config ...` — autonomy mode and verification setup
 
@@ -320,13 +320,22 @@ This subsection is the single place to look for important things discussed in re
 - **Richer interrupt semantics** — no explicit `user_takeover`, `partial_approve`, or typed interrupt reasons yet.
 - **Deeper spec-driven development** — current `--spec` support is bounded prompt grounding, not a full structured spec workflow.
 - **Stronger semantic correction retrieval** — the current prototype uses lightweight local relevance ranking for historical corrections and guidelines, not embeddings or richer semantic retrieval over file clusters and task structure.
+- **Only coarse similarity reasoning so far** — the current runtime adapts from prior approvals, denials, change-pattern classes, file/area history, and lightweight textual retrieval. It does not yet maintain a deeper semantic memory of previously solved logic or semantically similar code tasks.
+- **Structured logic-note memory is still lightweight** — the runtime now stores short functionality notes about completed work and retrieves relevant notes into future prompt context, but this remains a shallow local memory layer rather than a deeper semantic representation of prior code logic.
+- **No developer-intent labeling** — approvals, denials, and corrections are recorded, but the system cannot yet distinguish whether a developer objected to the file touched, the implementation approach, the timing of a check-in, or overall code quality.
 - **Deterministic promotion of soft rules** — guidelines can influence prompts, but most are not yet converted into enforceable checks.
+- **Process-rule compilation** — `sc rules add` can currently classify freeform rules into enforced access constraints or prompt-level guidance, but it cannot yet compile deterministic workflow rules such as always running verification before completion.
+- **Unified rule taxonomy across sources** — the system still treats `--spec`, project policy files (`CLAUDE.md` / `AGENTS.md`), and interactive `sc rules add` inputs as partially separate surfaces. A cleaner design would classify all incoming rules into the same canonical buckets: task contract, behavioral guidance, deterministic access constraint, or deterministic process rule.
+- **Model-assisted rules import** — `sc rules import` still relies on deterministic parsing; it should reuse the same model-assisted, line-by-line compilation path as `sc rules add` so each imported rule can be classified as either an enforced constraint or prompt-level guidance.
 - **Async delegation mode** — current UX is pair mode; no queue/review workflow yet.
 - **Subagent planner/coder split** — still a research-track idea, not part of the shipped runtime.
 - **Post-hoc correction after approval** — the current system captures denials and inline corrections, but it does not yet let a developer retroactively mark an already-approved change as a negative signal.
 - **Checkpoint / rewind workflow** — the system applies writes atomically, but it does not yet expose first-class checkpoints or a rewind command that records deliberate rollback as a trust signal.
 - **Git-aware local-change risk** — the policy does not yet treat uncommitted developer edits as a separate risk signal when the agent proposes touching the same file.
+- **Pre-action uncertainty declarations** — the model can proactively check in today, but it does not yet declare uncertainty or expected risk before attempting a new action class or generation step.
 - **Asymmetric autonomy adaptation** — the current adaptation logic mainly moves in one direction with accumulated trust. A stronger policy should loosen routine, repeatedly successful work while maintaining or tightening interrupt sensitivity when complexity, novelty, or impact signals spike.
+- **Phase model likely heavier than necessary** — the four enforced phases are useful for the prototype, but the long-term product may need a simpler boundary model centered on pre-write planning and post-write verification.
+- **Autonomy modes are still a coarse control surface** — `strict`, `balanced`, `milestone`, and `autonomous` work as cold-start presets, but they are probably not the right long-term UX once the system can infer a developer's preferred level of friction directly.
 - **Longitudinal human-centered evaluation** — the current system is instrumented for lab studies, but it has not yet been validated over repeated human sessions where interruption burden, understanding, steerability, and trust calibration are measured directly.
 
 ## Todo Backlog
@@ -339,10 +348,14 @@ This is the prioritized post-demo backlog.
 - **Shadow-mode evaluation** — log what the alternate baselines would have done during live sessions without changing the active experience.
 - **Interaction-style priors** — use early-session behavior to infer a cold-start oversight style rather than treating every user identically.
 - **Asymmetric adaptation by complexity** — routine, repeatedly successful actions should become less interruptive over time, while complex or high-impact actions should remain sensitive to interruption even for experienced users.
+- **Replace fixed heuristic constants with learned signals** — move beyond hand-picked values such as rubber-stamp multipliers and static thresholds when trace data is strong enough to learn developer-specific calibration.
 
 ### Priority 2: stronger rule enforcement and explanation
 
 - **Deterministic promotion of soft rules** — promote verifiable guidelines into hard constraints, verification hooks, or static checks instead of leaving them as prompt-only guidance.
+- **Process-rule compilation** — extend model-assisted rule authoring so `sc rules add` can also produce deterministic workflow rules, such as always running verification before task completion, rather than only access constraints or prompt guidance.
+- **Unified rule taxonomy and ingestion** — introduce one canonical rule model that classifies inputs from `--spec`, project policy files (`CLAUDE.md` / `AGENTS.md`), and `sc rules add` into task contracts, behavioral guidance, deterministic access constraints, or deterministic process rules, with source tracked separately from enforcement.
+- **Replace regex-style rules import** — upgrade `sc rules import` from deterministic phrase/path matching to the same model-assisted line-by-line compilation used by `sc rules add`, while keeping local validation and explicit confirmation before persistence.
 - **Verifiability-first policy taxonomy** — classify all rules as deterministic enforced, deterministic advisory, or best-effort.
 - **Policy expectation disclosure** — when rules are added/imported, tell the user exactly how they will be enforced.
 - **Vague-scope resolution** — require disambiguation for policies like “frontend style files” before persisting them.
@@ -351,6 +364,9 @@ This is the prioritized post-demo backlog.
 ### Priority 3: richer memory and spec use
 
 - **Stronger correction retrieval** — upgrade the current lightweight relevance ranking into richer retrieval over task text, file clusters, change patterns, and accepted guidelines.
+- **Deeper semantic memory of prior work** — move beyond coarse change-pattern classes and file-history proxies so the system can reason about whether it has successfully handled semantically similar logic before.
+- **Richer structured logic-note memory** — the system now generates and retrieves short logic notes, but the next step is to improve note quality, deduplication, note-trigger conditions, and retrieval beyond shallow textual overlap.
+- **Developer-intent feedback taxonomy** — capture whether a denial or correction was about the wrong file, the wrong approach, poor quality, risky timing, or insufficient explanation so future adaptation updates the right dimension.
 - **Deeper spec-driven execution** — move from bounded spec digests to structured requirement lineage and section-level grounding.
 - **Post-hoc correction support** — allow a developer to retroactively mark an approved change as a negative signal.
 - **Checkpoint / rewind support** — create pre-apply checkpoints and an explicit rewind path so rollback becomes both a user tool and a high-confidence negative preference signal.
@@ -361,7 +377,10 @@ This is the prioritized post-demo backlog.
 - **Async delegation mode** — background execution with queue/review UX.
 - **Research-phase markdown writeback** — controlled markdown artifacts during research.
 - **Git-aware risk features** — incorporate local working-tree state (for example, developer-uncommitted edits in a touched file) into risk scoring and check-in rationale.
+- **Pre-action uncertainty declarations** — let the model declare uncertainty and expected risk before generating a new action or change set so the governance layer can intervene earlier.
 - **Subagent planner/coder split** — experimental architecture only after deterministic traceability is strong enough.
+- **Simplify workflow control** — evaluate whether the current four-phase model should collapse into fewer explicit boundaries, such as plan approval before writes and verification before task completion.
+- **Infer autonomy posture instead of selecting modes** — treat `strict`, `balanced`, `milestone`, and `autonomous` as cold-start presets only, then transition toward a learned friction preference rather than a persistent manual mode selection.
 
 ### Longer-term research
 

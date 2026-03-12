@@ -42,6 +42,7 @@ from .ui import (
 )
 from .helpers import (
     _apply_feedback_learning,
+    _capture_logic_notes,
     SpecContext,
     StudyContext,
     _load_spec_context,
@@ -543,6 +544,18 @@ def run(
         updates=updates,
         touched_files=touched_files,
         file_hashes=file_hashes,
+    )
+
+    _capture_logic_notes(
+        trust_db=trust_db,
+        repo_root=repo_root_str,
+        session_id=run_session_id,
+        task=task,
+        declaration=declaration,
+        touched_files=touched_files,
+        patch_text=patch_text,
+        spec_context=spec_context,
+        client=client,
     )
 
     print("[green]Patch applied successfully.[/green]")

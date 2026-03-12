@@ -142,6 +142,12 @@ class BehavioralGuideline:
     source: str
 
 
+@dataclass(frozen=True)
+class LogicNote:
+    note: str
+    source: str
+
+
 # injected into the system prompt as vague area names (no numeric scores)
 # so the model can reason about uncertainty without gaming thresholds
 @dataclass(frozen=True)
@@ -353,6 +359,19 @@ class TrustDB:
             )
             conn.execute(
                 """
+                CREATE TABLE IF NOT EXISTS logic_notes (
+                    id INTEGER PRIMARY KEY,
+                    repo_root TEXT NOT NULL,
+                    note TEXT NOT NULL,
+                    files_json TEXT NOT NULL,
+                    change_types_json TEXT,
+                    source TEXT NOT NULL,
+                    created_at INTEGER NOT NULL
+                )
+                """
+            )
+            conn.execute(
+                """
                 CREATE TABLE IF NOT EXISTS autonomy_preferences (
                     id INTEGER PRIMARY KEY,
                     repo_root TEXT NOT NULL UNIQUE,
@@ -442,6 +461,9 @@ class TrustDB:
                 )
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_guidelines_repo_source ON behavioral_guidelines (repo_root, source)"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_logic_notes_repo_source ON logic_notes (repo_root, source)"
             )
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_autonomy_prefs_repo ON autonomy_preferences (repo_root)"
@@ -887,6 +909,118 @@ class TrustDB:
                 (repo_root,),
             ).fetchall()
         return [BehavioralGuideline(guideline=row["guideline"], source=row["source"]) for row in rows]
+
+    def add_logic_notes(
+        self,
+        repo_root: str,
+        *,
+        source: str,
+        notes: Iterable[str],
+        files: Iterable[str],
+        change_types: Iterable[str] | None = None,
+    ) -> int:
+        items = [item.strip() for item in dict.fromkeys(notes) if item.strip()]
+        if not items:
+            return 0
+        files_json = json.dumps(sorted(dict.fromkeys(files)))
+        change_types_json = json.dumps(sorted(dict.fromkeys(change_types or [])))
+        now = int(time.time())
+        inserted = 0
+        with self._connect() as conn:
+            for note in items:
+                existing = conn.execute(
+                    """
+                    SELECT 1
+                    FROM logic_notes
+                    WHERE repo_root = ? AND note = ?
+                    LIMIT 1
+                    """,
+                    (repo_root, note),
+                ).fetchone()
+                if existing is not None:
+                    continue
+                conn.execute(
+                    """
+                    INSERT INTO logic_notes (
+                        repo_root, note, files_json, change_types_json, source, created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (repo_root, note, files_json, change_types_json, source, now),
+                )
+                inserted += 1
+        return inserted
+
+    def recent_logic_notes(self, repo_root: str, limit: int = 3) -> list[LogicNote]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT note, source
+                FROM logic_notes
+                WHERE repo_root = ?
+                ORDER BY created_at DESC, id DESC
+                LIMIT ?
+                """,
+                (repo_root, max(limit, 1)),
+            ).fetchall()
+        return [LogicNote(note=str(row["note"]), source=str(row["source"])) for row in rows]
+
+    def relevant_logic_notes(
+        self,
+        repo_root: str,
+        *,
+        query_text: str,
+        spec_text: str | None = None,
+        limit: int = 3,
+        search_limit: int = 80,
+    ) -> list[LogicNote]:
+        query_tokens = _retrieval_tokens(query_text, spec_text)
+        if not query_tokens:
+            return self.recent_logic_notes(repo_root, limit=limit)
+
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT note, files_json, change_types_json, source, created_at, id
+                FROM logic_notes
+                WHERE repo_root = ?
+                ORDER BY created_at DESC, id DESC
+                LIMIT ?
+                """,
+                (repo_root, max(search_limit, 1)),
+            ).fetchall()
+
+        ranked: list[tuple[float, int, LogicNote]] = []
+        for rank, row in enumerate(rows):
+            note = str(row["note"]).strip()
+            if not note:
+                continue
+            files = " ".join(json.loads(row["files_json"] or "[]"))
+            change_types = " ".join(json.loads(row["change_types_json"] or "[]"))
+            score = _overlap_score(query_tokens, _retrieval_tokens(note)) * 2.5
+            score += _overlap_score(query_tokens, _retrieval_tokens(files)) * 0.75
+            score += _overlap_score(query_tokens, _retrieval_tokens(change_types)) * 1.0
+            score += max(0.0, 0.2 - (rank * 0.01))
+            ranked.append(
+                (
+                    score,
+                    rank,
+                    LogicNote(note=note[:280], source=str(row["source"])),
+                )
+            )
+
+        ranked.sort(key=lambda row: (-row[0], row[1], row[2].note))
+        selected = [item for score, _, item in ranked if score > 0][: max(limit, 1)]
+        if len(selected) >= max(limit, 1):
+            return selected
+
+        seen = {item.note for item in selected}
+        for item in self.recent_logic_notes(repo_root, limit=limit):
+            if item.note in seen:
+                continue
+            selected.append(item)
+            if len(selected) >= max(limit, 1):
+                break
+        return selected
 
     def autonomy_preferences(self, repo_root: str) -> AutonomyPreferences:
         with self._connect() as conn:
@@ -1568,6 +1702,21 @@ class TrustDB:
         if row is None:
             return (0, 0)
         return (int(row["total"] or 0), int(row["passed"] or 0))
+
+    def session_verification_status(self, repo_root: str, session_id: str) -> bool | None:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT verification_passed
+                FROM decision_traces
+                WHERE repo_root = ? AND session_id = ? AND stage = 'apply' AND verification_passed IS NOT NULL
+                ORDER BY created_at DESC, id DESC
+                """,
+                (repo_root, session_id),
+            ).fetchall()
+        if not rows:
+            return None
+        return all(int(row["verification_passed"]) == 1 for row in rows)
 
     def checkin_usefulness_summary(
         self,
