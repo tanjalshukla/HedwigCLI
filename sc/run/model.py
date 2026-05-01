@@ -39,30 +39,6 @@ def _infer_phase_from_checkin(check_in: CheckInMessage, current_phase: WorkflowP
     return current_phase
 
 
-def _apply_phase_transition(
-    *,
-    session: ClaudeSession,
-    trust_db: TrustDB,
-    repo_root: str,
-    current_phase: WorkflowPhase,
-    next_phase: WorkflowPhase,
-    autonomy_mode: str,
-    task_text: str,
-    spec_digest: str | None = None,
-) -> WorkflowPhase:
-    if next_phase == current_phase:
-        return current_phase
-    session.system_prompt = build_run_system_prompt(
-        trust_db=trust_db,
-        repo_root=repo_root,
-        workflow_phase=next_phase,
-        autonomy_mode=autonomy_mode,
-        task_text=task_text,
-        spec_digest=spec_digest,
-    )
-    return next_phase
-
-
 def _apply_phase_transition_with_display(
     *,
     session: ClaudeSession,
@@ -76,19 +52,19 @@ def _apply_phase_transition_with_display(
     task_text: str,
     spec_digest: str | None = None,
 ) -> WorkflowPhase:
-    previous_phase = current_phase
-    current_phase = _apply_phase_transition(
-        session=session,
-        trust_db=trust_db,
-        repo_root=repo_root,
-        current_phase=current_phase,
-        next_phase=next_phase,
-        autonomy_mode=autonomy_mode,
-        task_text=task_text,
-        spec_digest=spec_digest,
-    )
+    phase_changed = next_phase != current_phase
+    if phase_changed:
+        session.system_prompt = build_run_system_prompt(
+            trust_db=trust_db,
+            repo_root=repo_root,
+            workflow_phase=next_phase,
+            autonomy_mode=autonomy_mode,
+            task_text=task_text,
+            spec_digest=spec_digest,
+        )
+        current_phase = next_phase
     feedback.set_phase(current_phase)
-    if show_system_prompt and current_phase != previous_phase:
+    if show_system_prompt and phase_changed:
         _show_system_prompt(current_phase, session.system_prompt)
     return current_phase
 

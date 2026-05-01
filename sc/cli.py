@@ -1,3 +1,5 @@
+"""Command router with a compact public surface."""
+
 from __future__ import annotations
 
 import typer
@@ -26,14 +28,14 @@ from .commands.observe import (
     leases,
     preferences,
     preferences_clear,
+    preferences_revoke,
     report,
     reset,
     revoke,
     traces,
+    weights,
 )
 from .run.command import run
-
-"""Command router with a compact public surface and legacy aliases."""
 
 app = typer.Typer(add_completion=False)
 
@@ -76,12 +78,14 @@ observe_app.command("traces")(traces)
 observe_app.command("explain")(explain)
 observe_app.command("checkin-stats")(checkin_stats)
 observe_app.command("preferences")(preferences)
+observe_app.command("preferences-revoke")(preferences_revoke)
 observe_app.command("preferences-clear")(preferences_clear)
 observe_app.command("clear-traces")(clear_traces)
 observe_app.command("report")(report)
 observe_app.command("revoke")(revoke)
 observe_app.command("export")(export)
-observe_app.command("reset-study-state")(reset)
+observe_app.command("reset")(reset)
+observe_app.command("weights")(weights)
 
 app.add_typer(config_app, name="config")
 app.add_typer(rules_app, name="rules")

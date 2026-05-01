@@ -1,6 +1,6 @@
 from task_api.errors import AppError
 from task_api.models import Task
-from task_api.service import create_task, delete_task, list_tasks, update_task_status
+from task_api.service import create_task, delete_task, list_tasks, summarize_tasks, update_task_status
 
 
 def list_tasks_handler(query: dict[str, str | None]) -> tuple[dict[str, object], int]:
@@ -9,7 +9,6 @@ def list_tasks_handler(query: dict[str, str | None]) -> tuple[dict[str, object],
     except AppError as exc:
         return exc.to_response(), exc.status_code
     return _ok({"tasks": [_task_to_dict(task) for task in tasks]}), 200
-
 
 def create_task_handler(payload: dict[str, str]) -> tuple[dict[str, object], int]:
     try:
@@ -33,6 +32,14 @@ def delete_task_handler(task_id: str) -> tuple[dict[str, object], int]:
     except AppError as exc:
         return exc.to_response(), exc.status_code
     return _ok({"deleted": True}), 200
+
+
+def summary_handler(query: dict[str, str | None]) -> tuple[dict[str, object], int]:
+    try:
+        counts = summarize_tasks(priority=query.get("priority"))
+    except AppError as exc:
+        return exc.to_response(), exc.status_code
+    return _ok({"counts": counts}), 200
 
 
 def _ok(data: dict[str, object]) -> dict[str, object]:

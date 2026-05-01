@@ -17,6 +17,7 @@ from typing import Iterator, Iterable
 from .autonomy import (
     AutonomyPreferences,
     merge_preferences,
+    revoke_preferences,
 )
 
 
@@ -467,6 +468,16 @@ class TrustDB:
             )
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_autonomy_prefs_repo ON autonomy_preferences (repo_root)"
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS policy_models (
+                    repo_root TEXT PRIMARY KEY,
+                    model_blob BLOB NOT NULL,
+                    sample_count INTEGER NOT NULL DEFAULT 0,
+                    updated_at INTEGER NOT NULL
+                )
+                """
             )
 
     def _ensure_column(self, conn: sqlite3.Connection, *, table: str, column: str, definition: str) -> None:
@@ -1047,6 +1058,33 @@ class TrustDB:
             return []
         self._save_autonomy_preferences(repo_root, updated)
         return learned
+
+    def revoke_autonomy_preference(
+        self,
+        repo_root: str,
+        *,
+        topics: tuple[str, ...] = (),
+        paths: tuple[str, ...] = (),
+        prefer_fewer_checkins: bool = False,
+        skip_low_risk_plan_checkpoint: bool = False,
+    ) -> list[str]:
+        """Subtract specific preferences from the current stored state.
+
+        Returns human-readable descriptions of what was revoked, or an
+        empty list if nothing changed.
+        """
+        current = self.autonomy_preferences(repo_root)
+        updated, revoked = revoke_preferences(
+            current,
+            topics=topics,
+            paths=paths,
+            prefer_fewer_checkins=prefer_fewer_checkins,
+            skip_low_risk_plan_checkpoint=skip_low_risk_plan_checkpoint,
+        )
+        if updated == current:
+            return []
+        self._save_autonomy_preferences(repo_root, updated)
+        return revoked
 
     def _save_autonomy_preferences(self, repo_root: str, preferences: AutonomyPreferences) -> None:
         now = int(time.time())
@@ -2006,5 +2044,53 @@ class TrustDB:
                 if path in counts:
                     counts[path] += 1
         return counts
+
+    def load_policy_model(self, repo_root: str) -> "PolicyClassifier | None":
+        """Return the persisted PolicyClassifier for repo_root, or None if absent."""
+        from .ml_policy import PolicyClassifier  # local import to keep trust_db lean
+
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT model_blob FROM policy_models WHERE repo_root = ?",
+                (repo_root,),
+            ).fetchone()
+        if row is None:
+            return None
+        try:
+            return PolicyClassifier.from_bytes(bytes(row["model_blob"]))
+        except Exception:
+            return None
+
+    def save_policy_model(self, repo_root: str, model: "PolicyClassifier") -> None:
+        """Persist a PolicyClassifier for repo_root."""
+        now = int(time.time())
+        blob = model.to_bytes()
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO policy_models (repo_root, model_blob, sample_count, updated_at)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(repo_root) DO UPDATE SET
+                    model_blob = excluded.model_blob,
+                    sample_count = excluded.sample_count,
+                    updated_at = excluded.updated_at
+                """,
+                (repo_root, blob, model.sample_count, now),
+            )
+
+    def policy_model_sample_count(self, repo_root: str) -> int:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT sample_count FROM policy_models WHERE repo_root = ?",
+                (repo_root,),
+            ).fetchone()
+        return int(row["sample_count"]) if row else 0
+
+    def delete_policy_model(self, repo_root: str) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                "DELETE FROM policy_models WHERE repo_root = ?",
+                (repo_root,),
+            )
 
     # Read approvals are permanent once granted; no counters needed.

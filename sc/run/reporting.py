@@ -18,7 +18,14 @@ def _render_run_summary(
     rows = trust_db.session_traces(repo_root, session_id)
     if not rows:
         return
-    check_ins = sum(1 for row in rows if row["action_type"] == "check_in")
+    policy_checkins = sum(
+        1 for row in rows
+        if str(row["check_in_initiator"] or "") == "policy"
+    )
+    model_checkins = sum(
+        1 for row in rows
+        if str(row["check_in_initiator"] or "") == "model_proactive"
+    )
     apply_files = sorted(
         {
             str(row["file_path"])
@@ -26,26 +33,26 @@ def _render_run_summary(
             if row["stage"] == "apply" and str(row["file_path"]) != "__session__"
         }
     )
-    changed_patterns = sorted(
-        {
-            str(row["change_type"])
-            for row in rows
-            if row["stage"] == "apply"
-            and row["change_type"] is not None
-            and str(row["change_type"]).strip()
-        }
-    )
     print("\n[bold]Run complete[/bold]")
     if apply_files:
         print("Updated files:")
         _render_file_list(apply_files)
-    if check_ins:
-        label = "check-in" if check_ins == 1 else "check-ins"
-        print(f"{check_ins} {label} during run.")
-    if changed_patterns:
-        print("Change patterns:")
-        for pattern in changed_patterns:
-            print(f"  - {pattern}")
+
+    checkin_parts: list[str] = []
+    if policy_checkins:
+        checkin_parts.append(f"{policy_checkins} policy-initiated")
+    if model_checkins:
+        checkin_parts.append(f"{model_checkins} model-initiated")
+    if checkin_parts:
+        print(f"Check-ins: {', '.join(checkin_parts)}.")
+    else:
+        print("No check-ins — agent operated autonomously.")
+
+    sample_count = trust_db.policy_model_sample_count(repo_root)
+    if sample_count >= 10:
+        print(f"[dim]Learned policy active ({sample_count} decisions recorded this repo).[/dim]")
+    else:
+        print(f"[dim]Policy: heuristic priors ({sample_count}/10 decisions to activate learned model).[/dim]")
 
 
 def _maybe_prompt_guideline_suggestions(

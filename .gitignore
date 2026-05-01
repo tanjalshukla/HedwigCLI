@@ -21,6 +21,11 @@ htmlcov/
 # Editor workspaces
 *.code-workspace
 
+# Internal paper-writing notes (not for public repo)
+FEEDBACK.md
+PAPER_CHANGES.md
+CAMERA_READY_STATUS.md
+
 # Local paper build artifacts
 paper.zip
 paper/*.aux

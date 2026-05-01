@@ -31,7 +31,7 @@ def test_update_task_status_rejects_invalid_status() -> None:
 
 
 def test_summary_handler_uses_query_convention_if_present() -> None:
-    if not hasattr(api_module, "summary_handler"):
+    if not hasattr(api_module, "summary_tasks_handler"):
         return
-    signature = inspect.signature(api_module.summary_handler)
+    signature = inspect.signature(api_module.summary_tasks_handler)
     assert list(signature.parameters) == ["query"]

@@ -38,6 +38,10 @@ hw init --model-id "$SA_MODEL_ID" --region us-east-1
 hw reset --yes
 hw rules constraints-clear --all
 hw rules guidelines-clear --all
+
+# Pre-seed ML policy with synthetic developer history so `hw observe weights`
+# shows real coefficient drift during the demo, not a flat prior-only table.
+python ../scripts/seed_demo_db.py --repo-root .
 ```
 
 Before filming, confirm the fixture is at the pre-session1 baseline:
@@ -168,7 +172,65 @@ If you want to show the follow-up change in the editor, open:
 - `task_api/api.py`
 - `task_api/service.py`
 
-### 6. Observability close
+### 6. Inspect stored policies
+
+Run:
+
+```bash
+hw observe preferences
+```
+
+Expected highlights:
+
+- `Prefer fewer check-ins: yes` (inferred from session-1 guidance)
+- `Allowed check-in topics: api, schema, security, signature`
+- Effective scoring bands table shows how those preferences shifted the
+  auto-approve threshold
+
+This demonstrates what the stored policies look like in practice, and
+shows the audience why session-2 produced fewer prompts than session-1.
+
+Point out: these preferences can be revoked individually without resetting
+everything. For example, if the developer no longer trusts the agent with
+API changes:
+
+```bash
+hw observe preferences-revoke --topic api
+```
+
+This tightens oversight selectively rather than wiping the slate. It
+directly demonstrates the claim that oversight can both loosen and tighten
+across sessions.
+
+### 7. Show the learned policy weights
+
+Run:
+
+```bash
+hw observe weights
+```
+
+Expected output: a table of all 13 feature coefficients with three columns —
+prior (warm-start from heuristic), current (updated from trace history),
+and signed delta. The sample count in the table title shows how many real
+developer decisions have been incorporated.
+
+Key talking point: the warm-start priors encode the hand-crafted heuristic
+weights. Every approve/deny decision recorded in the trace log shifts
+the coefficients toward this developer's actual risk preferences via online
+logistic regression. The delta column shows which risk signals have moved
+most — for example, `change_pattern_risk` and `prior_denials` typically
+shift after just two sessions. This is Hedwig's trace-driven personalization
+made directly observable.
+
+After showing the table, point out that the end-of-session summary also
+reports the sample count:
+
+```
+Learned policy active (N decisions recorded this repo).
+```
+
+### 8. Observability close
 
 Run:
 
@@ -194,12 +256,17 @@ Use these for screenshots or the video pause:
 1. Session 1:
    - the model check-in with the two interface options
 2. Session 2:
-   - `Reduced friction (read): ...`
-   - `Retrieved guidance: ...`
-   - `Autonomy rationale (read): ...`
-3. Observability close:
-   - `model_proactive`
-   - `policy`
+   - `read: prior approvals N -- guidance: "..."` compact auto-approve line
+   - end-of-session: `Check-ins: 1 policy-initiated.` vs session-1's higher count
+3. Preferences inspection:
+   - `hw observe preferences` table showing inferred topics and scoring bands
+   - `hw observe preferences-revoke --topic api` showing that oversight can tighten
+4. Learned policy weights:
+   - `hw observe weights` table: prior vs. current coefficients with signed deltas
+   - sample count in the title confirming real decisions drove the update
+   - end-of-session line: `Learned policy active (N decisions recorded this repo).`
+5. Observability close:
+   - `model_proactive` vs `policy` separation in `hw observe report`
 
 ## If You Need to Reset and Rerun
 
@@ -208,6 +275,7 @@ git restore task_api/api.py task_api/service.py
 hw reset --yes
 hw rules constraints-clear --all
 hw rules guidelines-clear --all
+python ../scripts/seed_demo_db.py --repo-root .
 ```
 
 ## Troubleshooting

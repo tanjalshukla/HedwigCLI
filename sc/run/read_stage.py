@@ -28,6 +28,7 @@ from .traces import _policy_checkin_initiators, _record_traces
 from .ui import (
     _confirm_read_missing,
     _prompt_read,
+    _render_auto_approve_summary,
     _render_autonomy_rationale,
     _render_file_list,
     _render_history_context,
@@ -220,16 +221,13 @@ def _process_read_request(
             policies=read_policies,
             client=client,
         )
-    if history_context is not None:
-        _render_history_context(
+    if not needs_prompt and not denied_reads:
+        _render_auto_approve_summary(
             "read",
-            history_context.quantitative,
-            history_context.qualitative,
+            history_context.quantitative if history_context else None,
+            history_context.qualitative if history_context else None,
+            rationale or _summarize_autonomy_rationale(files=requested, policies=read_policies),
         )
-    _render_autonomy_rationale(
-        "read",
-        rationale or _summarize_autonomy_rationale(files=requested, policies=read_policies),
-    )
 
     if denied_reads:
         print("[red]Read denied by hard constraints:[/red]")

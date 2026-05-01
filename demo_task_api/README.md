@@ -58,7 +58,12 @@ To reset Hedwig's local state for the demo repo:
 hw reset --yes
 hw rules constraints-clear --all
 hw rules guidelines-clear --all
+python ../scripts/seed_demo_db.py --repo-root .
 ```
+
+The seed step pre-loads 14 synthetic developer decisions so that
+`hw observe weights` shows visible coefficient drift from the first
+`hw observe weights` call. See [`DEMO_FLOW.md`](DEMO_FLOW.md) for details.
 
 The clean pre-session1 baseline does not contain `summary_handler` in
 `task_api/api.py` or `get_task_summary` in `task_api/service.py`.

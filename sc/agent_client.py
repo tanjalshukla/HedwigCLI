@@ -145,6 +145,27 @@ class ClaudeClient:
         )
         return self._response_text(response)
 
+    def _call_with_repair(
+        self,
+        session: ClaudeSession,
+        model_cls: Any,
+        max_tokens: int,
+        temperature: float = 0.0,
+    ) -> Any:
+        for attempt in range(2):
+            raw = self._call(session, max_tokens=max_tokens, temperature=temperature)
+            session.add_assistant(raw)
+            try:
+                return model_cls.model_validate_json(raw)
+            except Exception as exc:
+                if attempt == 1:
+                    raise
+                session.add_user(
+                    "Return valid JSON only matching the provided schema. "
+                    f"Previous error: {exc}"
+                )
+        raise RuntimeError(f"Failed to obtain valid {model_cls.__name__}.")
+
     def summarize_autonomy_feedback(self, feedback_text: str) -> dict[str, object] | None:
         text = " ".join(feedback_text.split()).strip()
         if not text:
@@ -219,19 +240,7 @@ class ClaudeClient:
             'Rule: "Be careful with billing logic." -> {"constraints":[],"behavioral_guidelines":["Be careful with billing logic."],"unresolved":["Be careful with billing logic."]}\n\n'
             f"Rule: {rule_text}"
         )
-        for attempt in range(2):
-            raw = self._call(session, max_tokens=max_tokens, temperature=0.0)
-            session.add_assistant(raw)
-            try:
-                return RuleCompilation.model_validate_json(raw)
-            except Exception as exc:
-                if attempt == 1:
-                    raise
-                session.add_user(
-                    "Return valid JSON only matching the provided schema. "
-                    f"Previous error: {exc}"
-                )
-        raise RuntimeError("Failed to obtain valid rule compilation.")
+        return self._call_with_repair(session, RuleCompilation, max_tokens=max_tokens)
 
     def summarize_logic_notes(
         self,
@@ -285,19 +294,7 @@ class ClaudeClient:
             "Patch excerpt:\n"
             f"{patch_excerpt}"
         )
-        for attempt in range(2):
-            raw = self._call(session, max_tokens=max_tokens, temperature=0.0)
-            session.add_assistant(raw)
-            try:
-                return LogicNoteCompilation.model_validate_json(raw)
-            except Exception as exc:
-                if attempt == 1:
-                    raise
-                session.add_user(
-                    "Return valid JSON only matching the provided schema. "
-                    f"Previous error: {exc}"
-                )
-        raise RuntimeError("Failed to obtain valid logic note compilation.")
+        return self._call_with_repair(session, LogicNoteCompilation, max_tokens=max_tokens)
 
     def generate_autonomy_rationale(
         self,
@@ -340,19 +337,7 @@ class ClaudeClient:
             + "\nRelevant prior functionality notes:\n"
             + ("\n".join(f"- {item}" for item in logic_notes) if logic_notes else "- none")
         )
-        for attempt in range(2):
-            raw = self._call(session, max_tokens=max_tokens, temperature=0.0)
-            session.add_assistant(raw)
-            try:
-                return AutonomyRationale.model_validate_json(raw)
-            except Exception as exc:
-                if attempt == 1:
-                    raise
-                session.add_user(
-                    "Return valid JSON only matching the provided schema. "
-                    f"Previous error: {exc}"
-                )
-        raise RuntimeError("Failed to obtain valid autonomy rationale.")
+        return self._call_with_repair(session, AutonomyRationale, max_tokens=max_tokens)
 
     def declare_intent(
         self,

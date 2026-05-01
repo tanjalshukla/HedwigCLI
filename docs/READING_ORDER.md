@@ -23,10 +23,11 @@ the core behavior is:
 ## 3. Policy, trust, and adaptation
 
 1. `sc/policy.py`
-2. `sc/autonomy.py`
-3. `sc/plan_gate.py`
-4. `sc/trust_db.py`
-5. `sc/prompt_builder.py`
+2. `sc/ml_policy.py`
+3. `sc/autonomy.py`
+4. `sc/plan_gate.py`
+5. `sc/trust_db.py`
+6. `sc/prompt_builder.py`
 
 ## 4. Structured model protocol
 
@@ -40,10 +41,11 @@ the core behavior is:
 
 1. `sc/constraints.py`
 2. `sc/features.py`
-3. `sc/verification.py`
-4. `sc/repo.py`
-5. `sc/config.py`
-6. `sc/cli_shared.py`
+3. `sc/patch.py`
+4. `sc/verification.py`
+5. `sc/repo.py`
+6. `sc/config.py`
+7. `sc/cli_shared.py`
 
 ## 6. Demo fixture
 
@@ -55,7 +57,8 @@ the core behavior is:
 
 ## 7. Focused tests
 
-1. `tests/test_run_history_context.py`
-2. `tests/test_run_reporting.py`
-3. `tests/test_run_ui.py`
-4. `demo_task_api/tests/test_api.py`
+1. `tests/test_ml_policy.py`
+2. `tests/test_run_history_context.py`
+3. `tests/test_run_reporting.py`
+4. `tests/test_run_ui.py`
+5. `demo_task_api/tests/test_api.py`

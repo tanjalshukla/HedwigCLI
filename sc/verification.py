@@ -29,6 +29,29 @@ class VerificationResult:
         return json.dumps(payload)
 
 
+def _run_subprocess_check(
+    name: str,
+    argv: list[str],
+    *,
+    cwd: Path,
+    timeout_sec: int,
+) -> VerificationCheck:
+    try:
+        result = subprocess.run(
+            argv,
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            timeout=max(timeout_sec, 1),
+        )
+        output = (result.stdout + result.stderr).strip()
+        return VerificationCheck(name=name, passed=result.returncode == 0, output=output or "ok")
+    except subprocess.TimeoutExpired:
+        return VerificationCheck(name=name, passed=False, output="verification timed out")
+    except Exception as exc:
+        return VerificationCheck(name=name, passed=False, output=str(exc))
+
+
 def run_verification(
     *,
     repo_root: Path,
@@ -40,90 +63,32 @@ def run_verification(
     checks: list[VerificationCheck] = []
 
     if command:
-        try:
-            argv = shlex.split(command)
-            if not argv:
-                raise ValueError("verification command is empty")
-            result = subprocess.run(
-                argv,
-                cwd=repo_root,
-                capture_output=True,
-                text=True,
-                timeout=max(timeout_sec, 1),
-            )
-            output = (result.stdout + result.stderr).strip()
-            checks.append(
-                VerificationCheck(
-                    name="custom_verification",
-                    passed=result.returncode == 0,
-                    output=output or "ok",
-                )
-            )
-        except subprocess.TimeoutExpired:
-            checks.append(
-                VerificationCheck(
-                    name="custom_verification",
-                    passed=False,
-                    output="verification command timed out",
-                )
-            )
-        except Exception as exc:
-            checks.append(
-                VerificationCheck(
-                    name="custom_verification",
-                    passed=False,
-                    output=str(exc),
-                )
-            )
+        argv = shlex.split(command)
+        if not argv:
+            checks.append(VerificationCheck(
+                name="custom_verification", passed=False, output="verification command is empty"
+            ))
+        else:
+            checks.append(_run_subprocess_check(
+                "custom_verification", argv, cwd=repo_root, timeout_sec=timeout_sec
+            ))
 
     python_files = [path for path in touched_files if path.endswith(".py")]
     if python_files:
-        cmd = [sys.executable, "-m", "py_compile", *python_files]
-        try:
-            result = subprocess.run(
-                cmd,
-                cwd=repo_root,
-                capture_output=True,
-                text=True,
-                timeout=max(timeout_sec, 1),
-            )
-            output = (result.stdout + result.stderr).strip()
-            checks.append(
-                VerificationCheck(
-                    name="python_syntax",
-                    passed=result.returncode == 0,
-                    output=output or "ok",
-                )
-            )
-        except subprocess.TimeoutExpired:
-            checks.append(
-                VerificationCheck(
-                    name="python_syntax",
-                    passed=False,
-                    output="verification timed out",
-                )
-            )
-        except Exception as exc:
-            checks.append(
-                VerificationCheck(
-                    name="python_syntax",
-                    passed=False,
-                    output=str(exc),
-                )
-            )
+        checks.append(_run_subprocess_check(
+            "python_syntax",
+            [sys.executable, "-m", "py_compile", *python_files],
+            cwd=repo_root,
+            timeout_sec=timeout_sec,
+        ))
 
     if not checks:
-        checks.append(
-            VerificationCheck(
-                name="sanity",
-                passed=True,
-                output="no language-specific checks required",
-            )
-        )
+        checks.append(VerificationCheck(
+            name="sanity", passed=True, output="no language-specific checks required"
+        ))
 
-    passed = all(check.passed for check in checks)
     return VerificationResult(
-        passed=passed,
+        passed=all(check.passed for check in checks),
         checks=tuple(checks),
         expected_behavior=expected_behavior,
     )

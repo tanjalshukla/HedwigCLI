@@ -144,6 +144,10 @@ def merge_preferences(
     current: AutonomyPreferences,
     inferred: AutonomyPreferences,
 ) -> tuple[AutonomyPreferences, list[str]]:
+    # Additive merge: OR for booleans, UNION for collections.
+    # This is intentionally monotonic so that a single interaction cannot
+    # silently erase accumulated guidance. To explicitly walk back a preference,
+    # use revoke_preferences() or `hw observe preferences-revoke`.
     combined_topics = tuple(sorted(set(current.allowed_checkin_topics) | set(inferred.allowed_checkin_topics)))
     combined_scopes = tuple(sorted(set(current.scoped_paths) | set(inferred.scoped_paths)))
     updated = AutonomyPreferences(
@@ -164,6 +168,54 @@ def merge_preferences(
     if updated.scoped_paths != current.scoped_paths and updated.scoped_paths:
         learned.append(f"scope={','.join(updated.scoped_paths)}")
     return updated, learned
+
+
+def revoke_preferences(
+    current: AutonomyPreferences,
+    *,
+    topics: tuple[str, ...] = (),
+    paths: tuple[str, ...] = (),
+    prefer_fewer_checkins: bool = False,
+    skip_low_risk_plan_checkpoint: bool = False,
+) -> tuple[AutonomyPreferences, list[str]]:
+    """Remove specific preferences from the current state.
+
+    This is the subtractive counterpart to merge_preferences().
+    Pass the fields you want to revoke:
+    - topics: check-in topics to remove from allowed_checkin_topics
+    - paths: path scopes to remove from scoped_paths
+    - prefer_fewer_checkins=True: reset that boolean to False
+    - skip_low_risk_plan_checkpoint=True: reset that boolean to False
+
+    Returns the updated preferences and a list of human-readable descriptions
+    of what was revoked.
+    """
+    new_topics = tuple(
+        t for t in current.allowed_checkin_topics if t not in set(topics)
+    )
+    new_paths = tuple(
+        p for p in current.scoped_paths if p not in set(paths)
+    )
+    updated = AutonomyPreferences(
+        prefer_fewer_checkins=False if prefer_fewer_checkins else current.prefer_fewer_checkins,
+        allowed_checkin_topics=new_topics,
+        skip_low_risk_plan_checkpoint=(
+            False if skip_low_risk_plan_checkpoint else current.skip_low_risk_plan_checkpoint
+        ),
+        scoped_paths=new_paths,
+    )
+    revoked: list[str] = []
+    if current.prefer_fewer_checkins and not updated.prefer_fewer_checkins:
+        revoked.append("revoked: prefer-fewer-check-ins")
+    removed_topics = set(current.allowed_checkin_topics) - set(updated.allowed_checkin_topics)
+    if removed_topics:
+        revoked.append(f"revoked check-in topics: {','.join(sorted(removed_topics))}")
+    if current.skip_low_risk_plan_checkpoint and not updated.skip_low_risk_plan_checkpoint:
+        revoked.append("revoked: skip-low-risk-plan-checkpoint")
+    removed_paths = set(current.scoped_paths) - set(updated.scoped_paths)
+    if removed_paths:
+        revoked.append(f"revoked scoped paths: {','.join(sorted(removed_paths))}")
+    return updated, revoked
 
 
 def adjusted_policy_thresholds(

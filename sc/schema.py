@@ -21,6 +21,20 @@ ChangeType = Literal[
 ConstraintPolicy = Literal["always_allow", "always_check_in", "always_deny"]
 
 
+def _normalize_repo_paths(paths: list[str], field_name: str) -> list[str]:
+    normalized: list[str] = []
+    for path in paths:
+        if not path or path.strip() == "":
+            raise ValueError(f"{field_name} cannot contain empty paths")
+        if Path(path).is_absolute():
+            raise ValueError(f"{field_name} must be repo-relative")
+        norm = str(Path(path))
+        if norm.startswith(".."):
+            raise ValueError(f"{field_name} must not escape repo")
+        normalized.append(norm)
+    return normalized
+
+
 class ReadRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -31,17 +45,7 @@ class ReadRequest(BaseModel):
     @field_validator("files")
     @classmethod
     def validate_files(cls, value: list[str]) -> list[str]:
-        normalized: list[str] = []
-        for path in value:
-            if not path or path.strip() == "":
-                raise ValueError("files cannot contain empty paths")
-            if Path(path).is_absolute():
-                raise ValueError("files must be repo-relative")
-            norm = str(Path(path))
-            if norm.startswith(".."):
-                raise ValueError("files must not escape repo")
-            normalized.append(norm)
-        return normalized
+        return _normalize_repo_paths(value, "files")
 
 
 class IntentDeclaration(BaseModel):
@@ -60,17 +64,7 @@ class IntentDeclaration(BaseModel):
     @field_validator("planned_files")
     @classmethod
     def validate_planned_files(cls, value: list[str]) -> list[str]:
-        normalized: list[str] = []
-        for path in value:
-            if not path or path.strip() == "":
-                raise ValueError("planned_files cannot contain empty paths")
-            if Path(path).is_absolute():
-                raise ValueError("planned_files must be repo-relative")
-            norm = str(Path(path))
-            if norm.startswith(".."):
-                raise ValueError("planned_files must not escape repo")
-            normalized.append(norm)
-        return normalized
+        return _normalize_repo_paths(value, "planned_files")
 
 
 class CheckInMessage(BaseModel):

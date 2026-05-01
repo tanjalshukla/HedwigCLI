@@ -225,8 +225,18 @@ def _render_policy_snapshot(
     files: list[str],
     histories: dict[str, PolicyHistory],
     policies: dict[str, PolicyDecision],
+    force: bool = False,
 ) -> None:
+    """Render per-file policy decisions.
+
+    Suppressed when all files are silently auto-approved (nothing for the
+    developer to act on). Pass force=True to always show (e.g. check-in paths).
+    """
     if not files:
+        return
+    actions = {policies[p].action for p in files if p in policies}
+    all_silent = actions <= {"proceed"}
+    if all_silent and not force:
         return
     print(f"\n[bold]Policy ({stage})[/bold]")
     for path in files:
@@ -236,9 +246,9 @@ def _render_policy_snapshot(
         label = _ACTION_LABELS.get(policy.action, policy.action)
         reason = _user_friendly_reason(policy)
         if reason:
-            print(f"  {path}  →  {label} ({reason})")
+            print(f"  {path}: {label} ({reason})")
         else:
-            print(f"  {path}  →  {label}")
+            print(f"  {path}: {label}")
 
 
 def _show_system_prompt(phase: WorkflowPhase, prompt_text: str) -> None:
@@ -273,6 +283,30 @@ def _render_history_context(
         else:
             summary = f"Retrieved context: {summary}"
         print(f"[dim]{summary}[/dim]")
+
+
+def _render_auto_approve_summary(
+    stage: str,
+    quantitative: str | None,
+    qualitative: str | None,
+    rationale: str | None,
+) -> None:
+    """Single compact line for auto-approved actions — replaces the two separate dim lines."""
+    parts: list[str] = []
+    if quantitative:
+        parts.append(textwrap.shorten(quantitative, width=90, placeholder="..."))
+    if qualitative:
+        qual = qualitative
+        for prefix in ("guidance: ", "feedback: ", "related note: "):
+            if qual.startswith(prefix):
+                inner = qual[len(prefix):]
+                qual = f'guidance: "{textwrap.shorten(inner, width=70, placeholder="...")}"'
+                break
+        parts.append(qual)
+    elif rationale:
+        parts.append(rationale)
+    if parts:
+        print(f"[dim]{stage}: {' -- '.join(parts[:2])}[/dim]")
 
 
 def _summarize_autonomy_rationale(

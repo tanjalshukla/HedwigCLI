@@ -12,11 +12,8 @@ from rich import print
 
 from ..agent_client import ClaudeClient
 from ..autonomy import preferences_from_model_payload
-from ..cli_shared import (
-    read_file_context as _read_file_context,
-    resolve_config as _resolve_config,
-    truncate_content as _truncate_content,
-)
+from ..cli_shared import truncate_content as _truncate_content
+from ..ml_policy import PolicyClassifier
 from ..policy import PolicyDecision, PolicyInput, decide_action
 from ..schema import IntentDeclaration
 from ..session import ClaudeSession
@@ -25,6 +22,8 @@ from ..trust_db import HardConstraint, PolicyHistory, TrustDB
 
 @dataclass(frozen=True)
 class StudyContext:
+    # Study-only scaffolding for trace annotation. Downstream deployments
+    # can pass None for all fields or remove these parameters entirely.
     participant_id: str | None = None
     study_run_id: str | None = None
     study_task_id: str | None = None
@@ -113,27 +112,38 @@ def _policy_decision_for_file(
     model_confidence_samples: int = 0,
     proceed_threshold: float,
     flag_threshold: float,
+    classifier: PolicyClassifier | None = None,
 ) -> PolicyDecision:
-    return decide_action(
-        PolicyInput(
-            prior_approvals=history.effective_approvals,
-            prior_denials=history.denials,
-            avg_response_ms=history.avg_response_ms,
-            avg_edit_distance=history.avg_edit_distance or 0.0,
-            diff_size=diff_size,
-            blast_radius=blast_radius,
-            is_new_file=is_new_file,
-            is_security_sensitive=is_security_sensitive,
-            change_pattern=change_pattern,
-            recent_denials=recent_denials,
-            files_in_action=files_in_action,
-            verification_failure_rate=verification_failure_rate,
-            model_confidence_avg=model_confidence_avg,
-            model_confidence_samples=model_confidence_samples,
-        ),
-        proceed_threshold=proceed_threshold,
-        flag_threshold=flag_threshold,
+    pi = PolicyInput(
+        prior_approvals=history.effective_approvals,
+        prior_denials=history.denials,
+        avg_response_ms=history.avg_response_ms,
+        avg_edit_distance=history.avg_edit_distance or 0.0,
+        diff_size=diff_size,
+        blast_radius=blast_radius,
+        is_new_file=is_new_file,
+        is_security_sensitive=is_security_sensitive,
+        change_pattern=change_pattern,
+        recent_denials=recent_denials,
+        files_in_action=files_in_action,
+        verification_failure_rate=verification_failure_rate,
+        model_confidence_avg=model_confidence_avg,
+        model_confidence_samples=model_confidence_samples,
     )
+    if classifier is not None and classifier.ready():
+        score = classifier.score(pi)
+        if score >= proceed_threshold:
+            action = "proceed"
+        elif score >= flag_threshold:
+            action = "proceed_flag"
+        else:
+            action = "check_in"
+        return PolicyDecision(
+            action=action,
+            score=score,
+            reasons=(f"learned-policy score {score:.3f} ({classifier.sample_count} real samples)",),
+        )
+    return decide_action(pi, proceed_threshold=proceed_threshold, flag_threshold=flag_threshold)
 
 
 def _build_patch_from_updates(

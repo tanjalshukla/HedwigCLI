@@ -47,6 +47,45 @@ class TrustDBAutonomyTests(unittest.TestCase):
             prefs = db.autonomy_preferences(repo)
             self.assertEqual(prefs.allowed_checkin_topics, ("api", "security", "signature"))
 
+    def test_revoke_autonomy_preference_boolean(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = TrustDB(Path(tmpdir) / "trust.db")
+            repo = "/tmp/repo"
+            db.merge_autonomy_preferences(
+                repo,
+                AutonomyPreferences(prefer_fewer_checkins=True),
+            )
+            self.assertTrue(db.autonomy_preferences(repo).prefer_fewer_checkins)
+            revoked = db.revoke_autonomy_preference(repo, prefer_fewer_checkins=True)
+            self.assertGreater(len(revoked), 0)
+            self.assertFalse(db.autonomy_preferences(repo).prefer_fewer_checkins)
+
+    def test_revoke_autonomy_preference_topics(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = TrustDB(Path(tmpdir) / "trust.db")
+            repo = "/tmp/repo"
+            db.merge_autonomy_preferences(
+                repo,
+                AutonomyPreferences(allowed_checkin_topics=("api", "schema", "security")),
+            )
+            db.revoke_autonomy_preference(repo, topics=("api",))
+            prefs = db.autonomy_preferences(repo)
+            self.assertNotIn("api", prefs.allowed_checkin_topics)
+            self.assertIn("schema", prefs.allowed_checkin_topics)
+            self.assertIn("security", prefs.allowed_checkin_topics)
+
+    def test_revoke_nothing_matching_is_noop(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = TrustDB(Path(tmpdir) / "trust.db")
+            repo = "/tmp/repo"
+            db.merge_autonomy_preferences(
+                repo,
+                AutonomyPreferences(prefer_fewer_checkins=True),
+            )
+            revoked = db.revoke_autonomy_preference(repo, topics=("api",))
+            self.assertEqual(revoked, [])
+            self.assertTrue(db.autonomy_preferences(repo).prefer_fewer_checkins)
+
     def test_delete_autonomy_preferences(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             db = TrustDB(Path(tmpdir) / "trust.db")

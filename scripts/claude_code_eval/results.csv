@@ -1,0 +1,15 @@
+run_id,system,persona,task,checkin_count,auto_count,total_operations,notes
+H-C,Hedwig,cautious,task1_summary_endpoint,3,3,6,policy-initiated; 60-decision seed (v2 personas, 3x replay); cautious approval rate 50% triggers no autonomy bypass
+H-C,Hedwig,cautious,task2_priority_filter,3,2,5,policy-initiated
+H-P,Hedwig,permissive,task1_summary_endpoint,2,4,6,policy-initiated; permissive approval rate 95% triggers prefer_fewer_checkins + skip_low_risk_plan_checkpoint
+H-P,Hedwig,permissive,task2_priority_filter,2,3,5,policy-initiated
+CC-C,ClaudeCode,cautious,task1_summary_endpoint,0,6,6,project AGENTS.md cautious; global hidden
+CC-C,ClaudeCode,cautious,task2_priority_filter,0,5,5,project AGENTS.md cautious; global hidden
+CC-P,ClaudeCode,permissive,task1_summary_endpoint,0,6,6,project AGENTS.md permissive; global hidden
+CC-P,ClaudeCode,permissive,task2_priority_filter,0,5,5,project AGENTS.md permissive; global hidden
+CC-B,ClaudeCode,baseline,task1_summary_endpoint,0,6,6,no config at any scope
+CC-B,ClaudeCode,baseline,task2_priority_filter,0,5,5,no config at any scope
+CC-GC,ClaudeCode,cautious,task1_summary_endpoint,1,5,6,global ~/.claude/CLAUDE.md cautious; no project config
+CC-GC,ClaudeCode,cautious,task2_priority_filter,1,4,5,global ~/.claude/CLAUDE.md cautious; no project config
+CC-GP,ClaudeCode,permissive,task1_summary_endpoint,0,6,6,global ~/.claude/CLAUDE.md permissive; no project config
+CC-GP,ClaudeCode,permissive,task2_priority_filter,0,5,5,global ~/.claude/CLAUDE.md permissive; no project config

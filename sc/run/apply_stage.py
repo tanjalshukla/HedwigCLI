@@ -17,6 +17,7 @@ from ..autonomy import (
 )
 from ..config import SAConfig, autonomy_profile
 from ..features import classify_change_pattern, estimate_blast_radius, is_security_sensitive
+from ..ml_policy import PolicyClassifier, build_warm_start_classifier
 from ..policy import PolicyDecision, within_scope_budget
 from .helpers import (
     AutonomyHistoryContext,
@@ -32,6 +33,7 @@ from .traces import _policy_checkin_initiators, _record_traces
 from .ui import (
     _prompt_approval,
     _prompt_permanent,
+    _render_auto_approve_summary,
     _render_autonomy_rationale,
     _render_file_list,
     _render_history_context,
@@ -46,6 +48,47 @@ from ..verification import run_verification
 
 
 _HIGH_RISK_CHANGE_TYPES = {"api_change", "data_model_change", "config_change", "dependency_update"}
+
+
+def _update_classifier(
+    *,
+    classifier: PolicyClassifier,
+    trust_db: TrustDB,
+    repo_root_str: str,
+    files: list[str],
+    histories: dict[str, PolicyHistory],
+    apply_change_types: dict[str, str | None],
+    apply_diff_sizes: dict[str, int | None],
+    apply_blast_radii: dict[str, int],
+    apply_security: dict[str, bool],
+    apply_new_file: dict[str, bool],
+    recent_apply_denials: int,
+    approved: bool,
+) -> None:
+    """Online-update the classifier from the developer's decision, then persist."""
+    from ..policy import PolicyInput
+
+    for path in files:
+        history = histories.get(path)
+        if history is None:
+            continue
+        raw_change = apply_change_types.get(path) or ""
+        change_pattern = raw_change.split(":", 1)[-1] if ":" in raw_change else raw_change or None
+        pi = PolicyInput(
+            prior_approvals=history.effective_approvals,
+            prior_denials=history.denials,
+            avg_response_ms=history.avg_response_ms,
+            avg_edit_distance=history.avg_edit_distance or 0.0,
+            diff_size=apply_diff_sizes.get(path) or 0,
+            blast_radius=apply_blast_radii.get(path, 1),
+            is_new_file=apply_new_file.get(path, False),
+            is_security_sensitive=apply_security.get(path, False),
+            change_pattern=change_pattern,
+            recent_denials=recent_apply_denials,
+            files_in_action=len(files),
+        )
+        classifier.update(pi, approved)
+    trust_db.save_policy_model(repo_root_str, classifier)
 
 
 def _unexpected_change_types(
@@ -139,6 +182,9 @@ def _evaluate_apply_stage(
     apply_leases: dict[str, str | None] = {}
     apply_change_types: dict[str, str | None] = {}
     apply_diff_sizes: dict[str, int | None] = {}
+    apply_blast_radii: dict[str, int] = {}
+    apply_security: dict[str, bool] = {}
+    apply_new_file: dict[str, bool] = {}
     verification_failure_rates: dict[str, float | None] = {}
     denied_apply: list[str] = []
     recent_apply_denials = trust_db.recent_denials(
@@ -153,6 +199,13 @@ def _evaluate_apply_stage(
 
     prompt_required = False
     flagged_auto_files: list[str] = []
+
+    # Load the per-repo classifier. Normally pre-built by `hw init`; fallback
+    # here only if init was skipped (e.g. in tests or manual setup).
+    classifier: PolicyClassifier | None = trust_db.load_policy_model(repo_root_str)
+    if classifier is None:
+        classifier = build_warm_start_classifier()
+        trust_db.save_policy_model(repo_root_str, classifier)
 
     # Score each touched file independently, then aggregate to one approval decision.
     for path in touched_files:
@@ -171,6 +224,9 @@ def _evaluate_apply_stage(
         blast_radius = estimate_blast_radius(repo_root, path)
         security_sensitive = is_security_sensitive(path, new_content)
         apply_change_types[path] = f"{'new_file:' if is_new_file else ''}{change_pattern}"
+        apply_blast_radii[path] = blast_radius
+        apply_security[path] = security_sensitive
+        apply_new_file[path] = is_new_file
 
         constraint = apply_constraints.get(path)
         if constraint is not None:
@@ -243,6 +299,7 @@ def _evaluate_apply_stage(
                 model_confidence_samples=confidence_stats.samples,
                 proceed_threshold=proceed_threshold,
                 flag_threshold=flag_threshold,
+                classifier=classifier,
             )
         else:
             decision = PolicyDecision(
@@ -272,6 +329,7 @@ def _evaluate_apply_stage(
         files=touched_files,
         histories=apply_histories,
         policies=apply_policies,
+        force=prompt_required or bool(denied_apply) or bool(milestone_reasons),
     )
     history_context: AutonomyHistoryContext | None = None
     rationale = None
@@ -286,20 +344,16 @@ def _evaluate_apply_stage(
             policies=apply_policies,
             client=client,
         )
-    if history_context is not None:
-        _render_history_context(
+        _render_auto_approve_summary(
             "apply",
-            history_context.quantitative,
-            history_context.qualitative,
+            history_context.quantitative if history_context else None,
+            history_context.qualitative if history_context else None,
+            rationale or _summarize_autonomy_rationale(
+                files=touched_files,
+                policies=apply_policies,
+                milestone_reasons=milestone_reasons,
+            ),
         )
-    _render_autonomy_rationale(
-        "apply",
-        rationale or _summarize_autonomy_rationale(
-            files=touched_files,
-            policies=apply_policies,
-            milestone_reasons=milestone_reasons,
-        ),
-    )
 
     if denied_apply:
         print("[red]Patch denied by hard constraints:[/red]")
@@ -418,6 +472,21 @@ def _evaluate_apply_stage(
             response_time_ms=response_time_ms,
             feedback_text=apply_feedback,
         )
+        # Update on check-in files (explicit decision) and auto-approved files (outcome known).
+        _update_classifier(
+            classifier=classifier,
+            trust_db=trust_db,
+            repo_root_str=repo_root_str,
+            files=check_in_files + (auto_files if approved else []),
+            histories=apply_histories,
+            apply_change_types=apply_change_types,
+            apply_diff_sizes=apply_diff_sizes,
+            apply_blast_radii=apply_blast_radii,
+            apply_security=apply_security,
+            apply_new_file=apply_new_file,
+            recent_apply_denials=recent_apply_denials,
+            approved=approved,
+        )
         _apply_feedback_learning(
             trust_db=trust_db,
             repo_root=repo_root_str,
@@ -499,6 +568,20 @@ def _evaluate_apply_stage(
         study_context=study_context,
     )
     feedback.note_decision(True)
+    _update_classifier(
+        classifier=classifier,
+        trust_db=trust_db,
+        repo_root_str=repo_root_str,
+        files=touched_files,
+        histories=apply_histories,
+        apply_change_types=apply_change_types,
+        apply_diff_sizes=apply_diff_sizes,
+        apply_blast_radii=apply_blast_radii,
+        apply_security=apply_security,
+        apply_new_file=apply_new_file,
+        recent_apply_denials=recent_apply_denials,
+        approved=True,
+    )
 
 
 def _apply_updates_and_verify(

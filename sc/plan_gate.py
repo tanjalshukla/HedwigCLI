@@ -9,6 +9,13 @@ from .schema import IntentDeclaration
 from .trust_db import TrustDB
 
 
+def _file_preview(files: list[str]) -> str:
+    preview = ", ".join(files[:3])
+    if len(files) > 3:
+        preview += ", ..."
+    return preview
+
+
 @dataclass(frozen=True)
 class PlanCheckpointDecision:
     required: bool
@@ -74,24 +81,15 @@ def decide_plan_checkpoint(
 
     low_trust_reason = bool(low_trust_files)
     if low_trust_reason:
-        preview = ", ".join(low_trust_files[:3])
-        if len(low_trust_files) > 3:
-            preview += ", ..."
-        reasons.append(f"low-trust files: {preview}")
+        reasons.append(f"low-trust files: {_file_preview(low_trust_files)}")
 
     constrained_reason = bool(constrained_files)
     if constrained_reason:
-        preview = ", ".join(constrained_files[:3])
-        if len(constrained_files) > 3:
-            preview += ", ..."
-        reasons.append(f"constrained files: {preview}")
+        reasons.append(f"constrained files: {_file_preview(constrained_files)}")
 
     security_reason = bool(security_files)
     if security_reason:
-        preview = ", ".join(security_files[:3])
-        if len(security_files) > 3:
-            preview += ", ..."
-        reasons.append(f"security-sensitive paths: {preview}")
+        reasons.append(f"security-sensitive paths: {_file_preview(security_files)}")
 
     verification_risk_files: list[str] = []
     for path in planned_files:
@@ -99,17 +97,11 @@ def decide_plan_checkpoint(
         if failure_rate is not None and failure_rate >= 0.34:
             verification_risk_files.append(path)
     if verification_risk_files:
-        preview = ", ".join(verification_risk_files[:3])
-        if len(verification_risk_files) > 3:
-            preview += ", ..."
-        reasons.append(f"recent verification failures in area: {preview}")
+        reasons.append(f"recent verification failures in area: {_file_preview(verification_risk_files)}")
 
     high_blast_reason = bool(high_blast_files)
     if high_blast_reason:
-        preview = ", ".join(high_blast_files[:3])
-        if len(high_blast_files) > 3:
-            preview += ", ..."
-        reasons.append(f"high import count / blast radius: {preview}")
+        reasons.append(f"high import count / blast radius: {_file_preview(high_blast_files)}")
 
     if declaration.workflow_phase == "research":
         reasons.append("declared phase is research")
@@ -117,7 +109,9 @@ def decide_plan_checkpoint(
         reasons.append("declared phase is planning with multi-file scope")
 
     if autonomy_preferences and autonomy_preferences.skip_low_risk_plan_checkpoint:
-        high_risk = any(
+        # Hard-risk signals always block the bypass (security, constrained files,
+        # low-trust history, explicit strict mode, multi-action plans).
+        hard_risk = any(
             (
                 strict,
                 multi_action_reason,
@@ -125,12 +119,14 @@ def decide_plan_checkpoint(
                 constrained_reason,
                 security_reason,
                 high_blast_reason,
-                bool(declaration.potential_deviations),
                 spec_required and not declaration.requirements_covered,
                 declaration.workflow_phase == "research",
             )
         )
-        if not high_risk and scope_reason and len(planned_files) <= max(max_auto_files, 0) + 1:
+        # Soft-risk signals (potential_deviations) can be bypassed for permissive
+        # developers who have explicitly requested fewer check-ins, since these
+        # reflect model uncertainty rather than deterministic risk.
+        if not hard_risk and scope_reason and len(planned_files) <= max(max_auto_files, 0) + 1:
             return PlanCheckpointDecision(required=False, reasons=tuple())
 
     return PlanCheckpointDecision(required=bool(reasons), reasons=tuple(reasons))

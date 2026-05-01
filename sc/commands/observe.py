@@ -9,6 +9,7 @@ import typer
 from rich import print
 from rich.table import Table
 
+from ..autonomy import adjusted_policy_thresholds
 from ..commands.shared import open_trust_db, require_repo_root
 from ..cli_shared import is_approval_decision as _is_approval_decision
 from ..config import load_config
@@ -275,15 +276,38 @@ def checkin_stats(
 def preferences(
     json_out: bool = typer.Option(False, "--json", help="Output learned autonomy preferences as JSON."),
 ):
-    """Show currently learned autonomy preferences."""
+    """Show currently learned autonomy preferences and active scoring band thresholds."""
     repo_root = require_repo_root()
     trust_db = open_trust_db(repo_root)
-    prefs = trust_db.autonomy_preferences(str(repo_root))
+    repo_root_str = str(repo_root)
+    prefs = trust_db.autonomy_preferences(repo_root_str)
+
+    config = load_config(repo_root)
+    base_proceed = getattr(config, "proceed_threshold", 0.9) if config else 0.9
+    base_flag = getattr(config, "flag_threshold", 0.2) if config else 0.2
+    model_total, model_approval_rate = trust_db.model_checkin_calibration(repo_root_str)
+    adj_proceed, adj_flag = adjusted_policy_thresholds(
+        base_proceed,
+        base_flag,
+        prefs,
+        model_checkin_approval_rate=model_approval_rate,
+        model_checkin_total=model_total,
+    )
+
     payload = {
         "prefer_fewer_checkins": prefs.prefer_fewer_checkins,
         "allowed_checkin_topics": list(prefs.allowed_checkin_topics),
         "skip_low_risk_plan_checkpoint": prefs.skip_low_risk_plan_checkpoint,
         "scoped_paths": list(prefs.scoped_paths),
+        "effective_thresholds": {
+            "proceed": round(adj_proceed, 3),
+            "flag": round(adj_flag, 3),
+            "bands": {
+                f"score >= {adj_proceed:.2f}": "auto-approve (silent)",
+                f"score >= {adj_flag:.2f} and < {adj_proceed:.2f}": "auto-approve (flagged for summary)",
+                f"score < {adj_flag:.2f}": "check-in required",
+            },
+        },
     }
 
     if json_out:
@@ -305,6 +329,98 @@ def preferences(
     table.add_row("Scoped paths", ", ".join(prefs.scoped_paths) if prefs.scoped_paths else "-")
     print(table)
 
+    # Show the effective scoring bands so the developer can see how preferences
+    # have shifted the thresholds. Gray-area behavior: the three bands are:
+    #   proceed     — auto-approve silently (score above proceed threshold)
+    #   proceed_flag — auto-approve but flag in summary (between thresholds)
+    #   check_in    — always ask the developer (score below flag threshold)
+    threshold_table = Table(title="Effective Scoring Bands (heuristic priors, see SPEC.md)")
+    threshold_table.add_column("Score Range")
+    threshold_table.add_column("Action")
+    threshold_table.add_row(f">= {adj_proceed:.2f}", "auto-approve (silent)")
+    threshold_table.add_row(
+        f">= {adj_flag:.2f} and < {adj_proceed:.2f}",
+        "auto-approve (flagged for summary)",
+    )
+    threshold_table.add_row(f"< {adj_flag:.2f}", "check-in required")
+    print(threshold_table)
+    print(
+        "[dim]To revoke a preference: hw observe preferences-revoke --fewer-checkins "
+        "| --topic <name> | --path <path>[/dim]"
+    )
+
+
+def preferences_revoke(
+    topics: list[str] = typer.Option(
+        None,
+        "--topic",
+        help=(
+            "Check-in topic to remove from allowed_checkin_topics "
+            "(api, signature, schema, security, architecture, config, test, deployment). "
+            "Repeat to remove multiple."
+        ),
+    ),
+    paths: list[str] = typer.Option(
+        None,
+        "--path",
+        help="Scoped path to remove from scoped_paths. Repeat to remove multiple.",
+    ),
+    fewer_checkins: bool = typer.Option(
+        False,
+        "--fewer-checkins/--no-fewer-checkins",
+        help="Reset the prefer-fewer-check-ins flag to False.",
+    ),
+    skip_plan: bool = typer.Option(
+        False,
+        "--skip-plan-checkpoint/--no-skip-plan-checkpoint",
+        help="Reset the skip-low-risk-plan-checkpoint flag to False.",
+    ),
+    yes: bool = typer.Option(False, "--yes", help="Skip confirmation."),
+):
+    """Revoke specific learned autonomy preferences without resetting everything.
+
+    Examples:
+
+      hw observe preferences-revoke --fewer-checkins
+      hw observe preferences-revoke --topic api --topic schema
+      hw observe preferences-revoke --path src/models
+    """
+    repo_root = require_repo_root()
+    trust_db = open_trust_db(repo_root)
+    repo_root_str = str(repo_root)
+
+    # Show current state first so the user knows what will change.
+    prefs = trust_db.autonomy_preferences(repo_root_str)
+    nothing_to_revoke = (
+        not (fewer_checkins and prefs.prefer_fewer_checkins)
+        and not (skip_plan and prefs.skip_low_risk_plan_checkpoint)
+        and not (topics and set(topics) & set(prefs.allowed_checkin_topics))
+        and not (paths and set(paths) & set(prefs.scoped_paths))
+    )
+    if nothing_to_revoke:
+        print("[yellow]No matching preferences to revoke.[/yellow]")
+        return
+
+    if not yes:
+        from rich.prompt import Prompt
+        confirmed = Prompt.ask("Revoke these preferences?", choices=["y", "n"], default="y")
+        if confirmed != "y":
+            print("[yellow]No changes made.[/yellow]")
+            raise typer.Exit(code=0)
+
+    revoked = trust_db.revoke_autonomy_preference(
+        repo_root_str,
+        topics=tuple(topics or []),
+        paths=tuple(paths or []),
+        prefer_fewer_checkins=fewer_checkins,
+        skip_low_risk_plan_checkpoint=skip_plan,
+    )
+    if revoked:
+        for item in revoked:
+            print(f"[green]{item}[/green]")
+    else:
+        print("[yellow]No changes made.[/yellow]")
+
 
 def preferences_clear(
     yes: bool = typer.Option(False, "--yes", help="Confirm deleting learned autonomy preferences."),
@@ -320,6 +436,59 @@ def preferences_clear(
         print("[green]Cleared learned autonomy preferences.[/green]")
     else:
         print("[yellow]No learned autonomy preferences found.[/yellow]")
+
+
+def weights():
+    """Show learned policy coefficients vs. heuristic priors and real sample count."""
+    from ..ml_policy import FEATURE_NAMES
+
+    repo_root = require_repo_root()
+    trust_db = open_trust_db(repo_root)
+    classifier = trust_db.load_policy_model(str(repo_root))
+
+    if classifier is None:
+        print("[yellow]No learned model found for this repo. Run `hw init` first.[/yellow]")
+        raise typer.Exit(code=0)
+
+    real_samples = classifier.sample_count
+    personalized = real_samples >= 10
+
+    title = (
+        f"Policy Weights  ({real_samples} real samples — learned model active)"
+        if personalized
+        else f"Policy Weights  (heuristic warm-start — {real_samples}/10 decisions to activate)"
+    )
+    table = Table(title=title, show_lines=False)
+    table.add_column("Feature", style="bold")
+    table.add_column("Prior (warm-start)", justify="right")
+    if personalized:
+        table.add_column("Current (learned)", justify="right")
+        table.add_column("Delta", justify="right")
+
+    current_coef = classifier.clf.coef_[0]
+    prior_coef = classifier.prior_coef
+
+    for i, name in enumerate(FEATURE_NAMES):
+        prior = prior_coef[i]
+        if personalized:
+            current = current_coef[i]
+            delta = current - prior
+            delta_str = f"{delta:+.4f}"
+            color = "green" if delta > 0.01 else ("red" if delta < -0.01 else "dim")
+            table.add_row(
+                name,
+                f"{prior:.4f}",
+                f"{current:.4f}",
+                f"[{color}]{delta_str}[/{color}]",
+            )
+        else:
+            table.add_row(name, f"{prior:.4f}")
+
+    print(table)
+    if not personalized:
+        print(
+            f"[dim]Interact with {10 - real_samples} more check-ins to activate the personalized model.[/dim]"
+        )
 
 
 def clear_traces(
@@ -489,6 +658,13 @@ def report(
             )
         print(table)
 
+    sample_count = trust_db.policy_model_sample_count(repo_root_str)
+    if sample_count >= 10:
+        print(f"\n[green]Learned policy active — {sample_count} real decisions incorporated.[/green]")
+        print("[dim]Run `hw observe weights` to inspect coefficient drift from heuristic priors.[/dim]")
+    else:
+        print(f"\n[dim]Policy: heuristic warm-start ({sample_count}/10 decisions to activate learned model).[/dim]")
+
 
 def _session_summary(rows: list[dict]) -> dict[str, object]:
     if not rows:
@@ -584,7 +760,7 @@ def export(
 def reset(
     yes: bool = typer.Option(False, "--yes", help="Confirm resetting all learned state."),
 ):
-    """Reset all learned state (history, access grants, and preferences) to cold-start."""
+    """Reset all learned state (history, access grants, preferences, and ML model) to cold-start."""
     if not yes:
         print("[red]Refusing to reset without --yes.[/red]")
         raise typer.Exit(code=1)
@@ -595,6 +771,10 @@ def reset(
     cleared_revisions = trust_db.clear_plan_revisions(repo_root_str)
     revoked_leases, revoked_decisions = trust_db.revoke(repo_root_str, file_path=None, reset_counts=True)
     cleared_prefs = trust_db.delete_autonomy_preferences(repo_root_str)
+    trust_db.delete_policy_model(repo_root_str)
+    from ..ml_policy import build_warm_start_classifier
+    classifier = build_warm_start_classifier()
+    trust_db.save_policy_model(repo_root_str, classifier)
     print(f"[green]Reset complete:[/green]")
     print(
         f"  History: cleared {cleared_traces} traces, "
@@ -602,12 +782,13 @@ def reset(
     )
     print(f"  Access: revoked {revoked_leases} leases")
     print(f"  Preferences: {'cleared' if cleared_prefs else 'none to clear'}")
+    print(f"  Policy model: reset to heuristic warm-start (0 real samples)")
 
 def revoke(
-    path: str | None = typer.Argument(None, help="Repo-relative file path to revoke."),
-    all: bool = typer.Option(False, "--all", help="Revoke all leases for this repo."),
+    path: str | None = typer.Argument(None, help="Repo-relative file path whose lease to revoke."),
+    all: bool = typer.Option(False, "--all", help="Revoke all file access leases for this repo."),
 ):
-    """Revoke leases for a file (or all)."""
+    """Revoke file access leases for a path (or all). To revoke learned preferences, use preferences-revoke."""
     if not path and not all:
         print("[red]Provide a path or --all.[/red]")
         raise typer.Exit(code=1)

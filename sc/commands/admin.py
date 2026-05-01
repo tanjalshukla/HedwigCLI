@@ -141,28 +141,16 @@ def init(
 
     config = SAConfig(model_id=model_id, aws_region=region or default_region())
     config_path = save_config(repo_root, config)
-    open_trust_db(repo_root)
+    trust_db = open_trust_db(repo_root)
+
+    # Pre-build the warm-start classifier so the first `hw run` has no startup lag.
+    from ..ml_policy import build_warm_start_classifier
+    if trust_db.load_policy_model(str(repo_root)) is None:
+        classifier = build_warm_start_classifier()
+        trust_db.save_policy_model(str(repo_root), classifier)
 
     print("[green]Initialized Hedwig config.[/green]")
     print(f"Config: {config_path}")
-
-
-def set_threshold(
-    threshold: int = typer.Argument(..., help="Approvals required for permanent auto-apply."),
-):
-    """Update the permanent approval threshold in .sc/config.json."""
-    repo_root = require_repo_root()
-
-    config = load_config(repo_root)
-    if config is None:
-        print("[red]Config not found. Run `hw init` first.[/red]")
-        raise typer.Exit(code=1)
-    if threshold < 0:
-        print("[red]Threshold must be non-negative.[/red]")
-        raise typer.Exit(code=1)
-    config.permanent_approval_threshold = threshold
-    save_config(repo_root, config)
-    print(f"[green]Updated permanent_approval_threshold to {threshold}.[/green]")
 
 
 def set_mode(
@@ -427,7 +415,7 @@ def rules_list(
         payload = {
             "rules": [
                 {
-                    "rule": f"{item.path_pattern} → {_constraint_display(item)}",
+                    "rule": f"{item.path_pattern}: {_constraint_display(item)}",
                     "enforcement": "enforced",
                     "source": item.source,
                 }
@@ -450,7 +438,7 @@ def rules_list(
     table.add_column("Source")
     for item in constraints_list:
         table.add_row(
-            f"{item.path_pattern} → {_constraint_display(item)}",
+            f"{item.path_pattern}: {_constraint_display(item)}",
             "enforced",
             item.source,
         )

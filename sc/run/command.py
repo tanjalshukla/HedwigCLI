@@ -14,6 +14,7 @@ from rich import print
 from rich.syntax import Syntax
 
 from ..agent_client import ClaudeClient
+from ..cli_shared import read_file_context as _read_file_context, resolve_config as _resolve_config
 from ..config import SAConfig, autonomy_profile, config_dir
 from ..plan_gate import decide_plan_checkpoint
 from ..policy import PolicyDecision
@@ -48,8 +49,6 @@ from .helpers import (
     StudyContext,
     _load_spec_context,
     _plan_hash,
-    _read_file_context,
-    _resolve_config,
 )
 
 
@@ -376,7 +375,6 @@ def run(
         print("[red]Only --mode pair is currently supported.[/red]")
         raise typer.Exit(code=1)
 
-    # init repo and config, db
     try:
         repo_root = get_repo_root()
     except RepoError as exc:
@@ -409,7 +407,6 @@ def run(
     except FileNotFoundError as exc:
         print(f"[red]{exc}[/red]")
         raise typer.Exit(code=1)
-    # take params and init session
     session = ClaudeSession(
         build_run_system_prompt(
             trust_db=trust_db,

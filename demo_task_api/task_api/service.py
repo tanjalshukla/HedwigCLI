@@ -16,7 +16,6 @@ def list_tasks(status: str | None = None, priority: str | None = None) -> list[T
         tasks = [task for task in tasks if task.priority == priority]
     return tasks
 
-
 def create_task(title: str, priority: str = "medium") -> Task:
     _validate_title(title)
     _validate_priority(priority)
@@ -36,6 +35,17 @@ def update_task_status(task_id: str, status: str) -> Task:
 def delete_task(task_id: str) -> None:
     _require_task(task_id)
     remove_task(task_id)
+
+
+def summarize_tasks(priority: str | None = None) -> dict[str, int]:
+    tasks = load_tasks()
+    if priority is not None:
+        _validate_priority(priority)
+        tasks = [task for task in tasks if task.priority == prioritye
+    counts = {status: 0 for status in VALID_STATUSES}
+    for task in tasks:
+        counts[task.status] += 1
+    return counts
 
 
 def _require_task(task_id: str) -> Task:

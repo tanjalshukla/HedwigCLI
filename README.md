@@ -15,10 +15,20 @@ governed.
 - Compiles freeform developer rules into either hard constraints or
   softer behavioral guidance.
 - Separates model-initiated check-ins from policy-initiated check-ins.
-- Uses interaction traces to adapt later approval behavior.
-- Retrieves relevant prior guidance back into later tasks.
+- Learns per-developer approval preferences from interaction traces via
+  an online logistic regression policy (warm-started from heuristic
+  priors, updated per decision via `partial_fit`).
+- Retrieves relevant prior guidance and corrections into later tasks.
 - Runs verification after approved changes.
 - Exports traces and session bundles for later analysis.
+
+**Policy engine:** The approval policy is a logistic regression
+classifier initialized from heuristic engineering priors and updated
+online from developer approvals and denials stored in `decision_traces`.
+Coefficients are persisted per repository and are directly inspectable
+via `hw observe weights`. A heuristic fallback is used until 10 real
+decisions have been recorded. The weights and feature definitions are
+documented in `SPEC.md`.
 
 ## Install
 

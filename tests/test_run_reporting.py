@@ -68,9 +68,14 @@ class RunReportingTests(unittest.TestCase):
             self.assertIn("Run complete", output)
             self.assertIn("Updated files:", output)
             self.assertIn("task_api/api.py", output)
-            self.assertIn("1 check-in during run.", output)
-            self.assertIn("Change patterns:", output)
-            self.assertIn("general_change", output)
+            # Check-in count now splits by initiator; no initiator set in this trace
+            # so "No check-ins" is the expected output for this fixture.
+            self.assertIn("No check-ins", output)
+            # Change patterns removed from summary (redundant with hw observe traces)
+            self.assertNotIn("Change patterns:", output)
+            self.assertNotIn("general_change", output)
+            # ML policy status line should appear
+            self.assertIn("heuristic priors", output)
             self.assertNotIn("Session id=", output)
             self.assertNotIn("rubber-stamp approvals", output)
             self.assertNotIn("Developer feedback events", output)
