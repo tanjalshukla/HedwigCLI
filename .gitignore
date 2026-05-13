@@ -33,10 +33,16 @@ Thumbs.db
 .idea/
 .vscode/settings.json
 
-# Internal paper-writing notes (not for public repo)
+# Internal research tooling and analysis (not for public repo)
+swechat_agent/
+scripts/
 FEEDBACK.md
 PAPER_CHANGES.md
 CAMERA_READY_STATUS.md
+BRAINSTORM.md
+PLAN.md
+CLAUDE.md
+.claude/
 
 # Local paper build artifacts
 paper.zip
