@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-# heuristic policy engine — scores each file action to decide
-# whether to auto-approve, flag for review, or force a check-in.
-# weights are initial guesses from spec §5.1, tuned against real data later.
+# Policy scoring. Two adapters satisfy the PolicyScorer seam:
+# - HeuristicScorer: hand-weighted linear scorer; carries cold-start behavior.
+# - PolicyClassifier (sc/ml_policy.py): online logistic regression; takes over
+#   once enough real developer decisions have been observed.
 
 from dataclasses import dataclass
-from typing import Iterable, Literal
+from typing import Iterable, Literal, Protocol
 
 
 PolicyAction = Literal["check_in", "proceed", "proceed_flag"]
@@ -35,6 +36,28 @@ class PolicyDecision:
     action: PolicyAction
     score: float
     reasons: tuple[str, ...]
+
+
+class PolicyScorer(Protocol):
+    """Seam for action-level autonomy scoring. Two adapters today: the
+    hand-weighted HeuristicScorer below, and the online PolicyClassifier in
+    sc.ml_policy. Callers select via select_scorer()."""
+
+    def score(self, pi: "PolicyInput") -> float: ...
+    def ready(self) -> bool: ...
+
+
+def select_scorer(
+    classifier: "PolicyScorer | None",
+) -> tuple["PolicyScorer", str]:
+    """Pick the scorer to use for this decision and tag which one fired.
+
+    Returns (scorer, label). The label ends up in PolicyDecision.reasons so
+    traces record which adapter made the call.
+    """
+    if classifier is not None and classifier.ready():
+        return classifier, "learned"
+    return _heuristic_scorer, "heuristic"
 
 
 def decide_action(
@@ -142,6 +165,24 @@ def decide_action(
     if score >= flag_threshold:
         return PolicyDecision("proceed_flag", score, tuple(reasons))
     return PolicyDecision("check_in", score, tuple(reasons))
+
+
+class HeuristicScorer:
+    """Hand-weighted adapter at the PolicyScorer seam. Always ready — it's
+    what the system uses before the learned scorer has enough real data."""
+
+    def score(self, pi: "PolicyInput") -> float:
+        # decide_action also computes an action label and reasons. The
+        # scoring path here discards those — callers that want them should
+        # keep calling decide_action directly. This adapter exists so that
+        # the learned and heuristic paths share one interface.
+        return decide_action(pi, proceed_threshold=0.0, flag_threshold=0.0).score
+
+    def ready(self) -> bool:
+        return True
+
+
+_heuristic_scorer = HeuristicScorer()
 
 
 def within_scope_budget(files: Iterable[str], scope_budget_files: int) -> bool:

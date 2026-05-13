@@ -1,0 +1,172 @@
+{
+  "pushback": {
+    "label": "Pushback (any)",
+    "auc_mean": 0.7765,
+    "auc_std": 0.0154,
+    "mdi_importance": {
+      "prompt_char_count": 0.28022,
+      "prompt_word_count": 0.20895,
+      "cum_turn_index": 0.13952,
+      "cum_pushback_count": 0.0994,
+      "cum_correction_count": 0.08273,
+      "prev_tool_count": 0.05833,
+      "prev_bash_count": 0.03736,
+      "prev_read_count": 0.03142,
+      "prev_write_edit_count": 0.02436,
+      "is_continuation": 0.0111
+    },
+    "perm_importance": {
+      "prompt_char_count": 0.22388,
+      "prompt_word_count": 0.21896,
+      "cum_turn_index": 0.13397,
+      "cum_pushback_count": 0.12509,
+      "cum_correction_count": 0.04922,
+      "prev_tool_count": 0.03668,
+      "prev_read_count": 0.01205,
+      "prev_bash_count": 0.00991,
+      "is_first_turn": 0.00602,
+      "prev_write_edit_count": 0.00557
+    },
+    "interaction_tests": {
+      "cum_turn_index \u00d7 cum_pushback_count": {
+        "single_auc_f1": 0.5328,
+        "pair_auc": 0.648,
+        "gain": 0.1152
+      },
+      "cum_turn_index \u00d7 cum_correction_count": {
+        "single_auc_f1": 0.5328,
+        "pair_auc": 0.6295,
+        "gain": 0.0967
+      },
+      "prompt_char_count \u00d7 prompt_word_count": {
+        "single_auc_f1": 0.6907,
+        "pair_auc": 0.7302,
+        "gain": 0.0395
+      },
+      "prompt_word_count \u00d7 cum_pushback_count": {
+        "single_auc_f1": 0.6865,
+        "pair_auc": 0.7132,
+        "gain": 0.0267
+      },
+      "prompt_char_count \u00d7 cum_pushback_count": {
+        "single_auc_f1": 0.6907,
+        "pair_auc": 0.7149,
+        "gain": 0.0242
+      },
+      "prompt_word_count \u00d7 cum_correction_count": {
+        "single_auc_f1": 0.6865,
+        "pair_auc": 0.7081,
+        "gain": 0.0216
+      },
+      "prompt_char_count \u00d7 cum_correction_count": {
+        "single_auc_f1": 0.6907,
+        "pair_auc": 0.709,
+        "gain": 0.0183
+      },
+      "prompt_word_count \u00d7 cum_turn_index": {
+        "single_auc_f1": 0.6865,
+        "pair_auc": 0.6927,
+        "gain": 0.0062
+      },
+      "prompt_char_count \u00d7 cum_turn_index": {
+        "single_auc_f1": 0.6907,
+        "pair_auc": 0.6951,
+        "gain": 0.0044
+      },
+      "cum_pushback_count \u00d7 cum_correction_count": {
+        "single_auc_f1": 0.6011,
+        "pair_auc": 0.6013,
+        "gain": 0.0002
+      }
+    }
+  },
+  "failure_report": {
+    "label": "Failure Report",
+    "auc_mean": 0.7393,
+    "auc_std": 0.0124,
+    "mdi_importance": {
+      "prompt_char_count": 0.27871,
+      "prompt_word_count": 0.18809,
+      "cum_turn_index": 0.13292,
+      "cum_pushback_count": 0.10677,
+      "cum_correction_count": 0.09236,
+      "prev_tool_count": 0.05883,
+      "prev_bash_count": 0.04316,
+      "prev_read_count": 0.03713,
+      "prev_write_edit_count": 0.0302,
+      "prev_has_ts_js": 0.00813
+    },
+    "perm_importance": {
+      "prompt_char_count": 0.15255,
+      "prompt_word_count": 0.14978,
+      "cum_pushback_count": 0.09686,
+      "cum_correction_count": 0.05146,
+      "cum_turn_index": 0.04517,
+      "prev_tool_count": 0.02102,
+      "is_first_turn": 0.01683,
+      "prev_bash_count": 0.01569,
+      "prev_write_edit_count": 0.00411,
+      "prev_has_md": 0.00181
+    },
+    "interaction_tests": {
+      "cum_pushback_count \u00d7 cum_correction_count": {
+        "single_auc_f1": 0.5345,
+        "pair_auc": 0.6389,
+        "gain": 0.1044
+      },
+      "prompt_char_count \u00d7 prompt_word_count": {
+        "single_auc_f1": 0.6096,
+        "pair_auc": 0.6735,
+        "gain": 0.0639
+      },
+      "cum_pushback_count \u00d7 cum_turn_index": {
+        "single_auc_f1": 0.5345,
+        "pair_auc": 0.5979,
+        "gain": 0.0635
+      },
+      "cum_correction_count \u00d7 cum_turn_index": {
+        "single_auc_f1": 0.5066,
+        "pair_auc": 0.5424,
+        "gain": 0.0358
+      },
+      "prompt_char_count \u00d7 cum_turn_index": {
+        "single_auc_f1": 0.6096,
+        "pair_auc": 0.6111,
+        "gain": 0.0015
+      },
+      "prompt_word_count \u00d7 cum_turn_index": {
+        "single_auc_f1": 0.6335,
+        "pair_auc": 0.6342,
+        "gain": 0.0007
+      },
+      "prompt_char_count \u00d7 cum_pushback_count": {
+        "single_auc_f1": 0.6096,
+        "pair_auc": 0.6044,
+        "gain": -0.0052
+      },
+      "prompt_word_count \u00d7 cum_pushback_count": {
+        "single_auc_f1": 0.6335,
+        "pair_auc": 0.6265,
+        "gain": -0.0071
+      },
+      "prompt_word_count \u00d7 cum_correction_count": {
+        "single_auc_f1": 0.6335,
+        "pair_auc": 0.626,
+        "gain": -0.0075
+      },
+      "prompt_char_count \u00d7 cum_correction_count": {
+        "single_auc_f1": 0.6096,
+        "pair_auc": 0.6006,
+        "gain": -0.0091
+      }
+    }
+  },
+  "comparison": {
+    "pushback_lr_auc": 0.754,
+    "pushback_rf_auc": 0.7765,
+    "pushback_delta": 0.0225,
+    "failure_lr_auc": 0.897,
+    "failure_rf_auc": 0.7393,
+    "failure_delta": -0.1577
+  }
+}

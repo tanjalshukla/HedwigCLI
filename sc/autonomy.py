@@ -4,6 +4,10 @@ from dataclasses import dataclass
 from fnmatch import fnmatch
 import json
 from pathlib import PurePosixPath
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .preferences import Preference
 
 
 _CHECKIN_TOPIC_KEYWORDS: dict[str, tuple[str, ...]] = {
@@ -158,16 +162,16 @@ def merge_preferences(
         ),
         scoped_paths=combined_scopes,
     )
-    learned: list[str] = []
+    inferred_changes: list[str] = []
     if updated.prefer_fewer_checkins and not current.prefer_fewer_checkins:
-        learned.append("prefer fewer low-risk check-ins")
+        inferred_changes.append("prefer fewer low-risk check-ins")
     if updated.allowed_checkin_topics != current.allowed_checkin_topics and updated.allowed_checkin_topics:
-        learned.append(f"check-in scope={','.join(updated.allowed_checkin_topics)}")
+        inferred_changes.append(f"check-in scope={','.join(updated.allowed_checkin_topics)}")
     if updated.skip_low_risk_plan_checkpoint and not current.skip_low_risk_plan_checkpoint:
-        learned.append("skip low-risk plan checkpoints")
+        inferred_changes.append("skip low-risk plan checkpoints")
     if updated.scoped_paths != current.scoped_paths and updated.scoped_paths:
-        learned.append(f"scope={','.join(updated.scoped_paths)}")
-    return updated, learned
+        inferred_changes.append(f"scope={','.join(updated.scoped_paths)}")
+    return updated, inferred_changes
 
 
 def revoke_preferences(
@@ -226,6 +230,8 @@ def adjusted_policy_thresholds(
     file_path: str | None = None,
     model_checkin_approval_rate: float | None = None,
     model_checkin_total: int = 0,
+    session_intensity: str | None = None,
+    coding_mode: str | None = None,
 ) -> tuple[float, float]:
     adjusted_proceed = proceed_threshold
     adjusted_flag = flag_threshold
@@ -244,8 +250,122 @@ def adjusted_policy_thresholds(
         adjusted_proceed += 0.15
         adjusted_flag += 0.15
 
+    # Session intensity modulation. Small delta so the scorer still dominates;
+    # this is a trim, not an override.
+    #   ACTIVE   → developer is deep in dialogue; tighten (more check-ins).
+    #   DELEGATING → developer is in accept-and-move mode; loosen slightly so
+    #              we don't break their rhythm on borderline auto-approve cases.
+    if session_intensity == "active":
+        adjusted_proceed += 0.08
+        adjusted_flag += 0.08
+    elif session_intensity == "delegating":
+        adjusted_proceed -= 0.05
+        adjusted_flag -= 0.05
+
+    # Coding-mode modulation. Vibe-coding (near-zero edit distance, developer
+    # has surrendered authorship to the agent) is the riskiest mode: mistakes
+    # compound silently. Tighten slightly so Hedwig stays in the loop.
+    # Human-only sessions (developer writes most code) benefit from lighter
+    # overhead — loosen slightly to not get in the way.
+    if coding_mode == "vibe":
+        adjusted_proceed += 0.06
+        adjusted_flag += 0.06
+    elif coding_mode == "human_only":
+        adjusted_proceed -= 0.04
+        adjusted_flag -= 0.04
+
     adjusted_proceed = max(adjusted_proceed, -0.5)
     adjusted_flag = max(adjusted_flag, -0.5)
     if adjusted_flag > adjusted_proceed:
         adjusted_flag = adjusted_proceed
     return adjusted_proceed, adjusted_flag
+
+
+# ---------------------------------------------------------------------------
+# Map AutonomyPreferences → equivalent Preference objects.
+# ---------------------------------------------------------------------------
+
+# Topic → CHANGE_PATTERNS entries that carry the same semantic.
+# "security" maps to no change_pattern but uses requires_security_sensitive=True.
+# Topics without a tight change_pattern match use empty tuples (broad trigger).
+_TOPIC_TO_CHANGE_PATTERNS: dict[str, tuple[str, ...]] = {
+    "api": ("api_change",),
+    "schema": ("data_model_change",),
+    "config": ("config_change",),
+    "test": ("test_generation",),
+    "security": (),          # handled via requires_security_sensitive=True
+    "signature": (),         # no fine-grained change_pattern; broad trigger is fine
+    "architecture": (),
+    "deployment": (),
+}
+
+
+def autonomy_prefs_to_preferences(prefs: "AutonomyPreferences") -> "tuple[Preference, ...]":
+    """Convert an AutonomyPreferences into equivalent Preference objects.
+
+    This is a one-way, non-destructive bridge.  AutonomyPreferences continues
+    to exist and drive the threshold-shift path; the returned Preferences feed
+    the post-scorer override path in apply_stage so both systems contribute to
+    the final forced-action decision.
+
+    Mapping rules (see instructions in CLAUDE.md):
+    - prefer_fewer_checkins=True  → AUTO_APPLY Preference, repo-scoped,
+                                    optionally narrowed by scoped_paths.
+    - allowed_checkin_topics      → one FULL_CHECKIN Preference per topic,
+                                    repo-scoped, Trigger uses change_patterns
+                                    (or requires_security_sensitive for "security").
+    - scoped_paths                → narrows the AUTO_APPLY preference via
+                                    scope=Scope(level="path", path_globs=...).
+                                    If prefer_fewer_checkins is False, no
+                                    AUTO_APPLY preference is emitted even if
+                                    scoped_paths is non-empty.
+    - skip_low_risk_plan_checkpoint → not represented here (plan-stage only).
+    """
+    from .preferences import (
+        Lifecycle,
+        Preference,
+        PreferenceAction,
+        Scope,
+        Trigger,
+        Condition,
+    )
+
+    result: list[Preference] = []
+    lc = Lifecycle(provenance="inferred", confidence=1.0)
+
+    # AUTO_APPLY: fires when prefer_fewer_checkins is set.
+    if prefs.prefer_fewer_checkins:
+        if prefs.scoped_paths:
+            scope = Scope(level="path", path_globs=prefs.scoped_paths)
+        else:
+            scope = Scope(level="repo")
+        result.append(
+            Preference(
+                trigger=Trigger(stages=("apply",)),
+                condition=Condition(),
+                action=PreferenceAction.AUTO_APPLY,
+                scope=scope,
+                lifecycle=lc,
+            )
+        )
+
+    # FULL_CHECKIN per allowed_checkin_topic.
+    for topic in prefs.allowed_checkin_topics:
+        change_patterns = _TOPIC_TO_CHANGE_PATTERNS.get(topic, ())
+        is_security = topic == "security"
+        trigger = Trigger(
+            change_patterns=change_patterns,
+            requires_security_sensitive=True if is_security else None,
+            stages=("apply",),
+        )
+        result.append(
+            Preference(
+                trigger=trigger,
+                condition=Condition(),
+                action=PreferenceAction.FULL_CHECKIN,
+                scope=Scope(level="repo"),
+                lifecycle=lc,
+            )
+        )
+
+    return tuple(result)

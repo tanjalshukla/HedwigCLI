@@ -82,46 +82,50 @@ def _handle_model_checkin(
     client: ClaudeClient | None = None,
     study_context: StudyContext | None = None,
 ) -> tuple[bool, str, str | None]:
-    print(f"\n[bold]Model check-in ({stage})[/bold]")
-    print(f"Type: {check_in.check_in_type}")
-    print(f"Reason: {check_in.reason}")
-    if check_in.assumptions:
-        assumptions = "; ".join(check_in.assumptions[:2])
-        if len(check_in.assumptions) > 2:
-            assumptions += f"; +{len(check_in.assumptions) - 2} more"
-        print(f"Assumptions: {assumptions}")
+    from ..run.theme import PALETTE
+    print()
+    print(f"[bold cyan]◉ hedwig · {stage}[/bold cyan]")
+    print(f"[dim]{check_in.reason}[/dim]")
     if check_in.recommendation:
-        print(f"Recommendation: {check_in.recommendation}")
-    compact_content = textwrap.shorten(" ".join(check_in.content.split()), width=220, placeholder="...")
-    if compact_content and not check_in.options:
-        print(f"Context: {compact_content}")
+        print(f"[dim white]{check_in.recommendation}[/dim white]")
 
     response_text = ""
     prompt_started = time.time()
     approved = False
     feedback_text: str | None = None
-    if check_in.options:
-        print("Options:")
-        for idx, option in enumerate(check_in.options, 1):
-            display_option = textwrap.shorten(" ".join(option.split()), width=140, placeholder="...")
-            print(f"  {idx}. {display_option}")
-        choices = [str(i) for i in range(1, len(check_in.options) + 1)] + ["d"]
-        pick = Prompt.ask("Select option or deny (d)", choices=choices, default=choices[0])
+
+    # Only surface options when they represent genuinely different tradeoffs.
+    # Cap at 2 options — the model sometimes generates redundant ones.
+    meaningful_options = check_in.options[:2] if check_in.options else []
+    if len(meaningful_options) >= 2:
+        print()
+        for idx, option in enumerate(meaningful_options, 1):
+            display_option = textwrap.shorten(" ".join(option.split()), width=120, placeholder="...")
+            print(f"  [{PALETTE['meta']}]{idx}.[/{PALETTE['meta']}] {display_option}")
+        choices = [str(i) for i in range(1, len(meaningful_options) + 1)] + ["d"]
+        pick = Prompt.ask(
+            f"[{PALETTE['approve_bold']}]1[/{PALETTE['approve_bold']}]-{len(meaningful_options)} choose  [{PALETTE['deny_bold']}]d[/{PALETTE['deny_bold']}] deny",
+            choices=choices,
+            default=choices[0],
+        )
         if pick == "d":
             approved = False
         else:
             approved = True
-            response_text = check_in.options[int(pick) - 1]
+            response_text = meaningful_options[int(pick) - 1]
     else:
-        pick = Prompt.ask("Proceed (a) or deny (d)", choices=["a", "d"], default="a")
+        pick = Prompt.ask(
+            f"[{PALETTE['approve_bold']}]a[/{PALETTE['approve_bold']}] proceed  [{PALETTE['deny_bold']}]d[/{PALETTE['deny_bold']}] deny",
+            choices=["a", "d"],
+            default="a",
+        )
         approved = pick != "d"
         if approved:
-            response_text = "Proceed with current approach."
+            response_text = check_in.recommendation or "Proceed with current approach."
 
-    feedback_text = Prompt.ask("Optional architectural guidance for the agent", default="").strip() or None
-    if feedback_text:
-        response_text = f"{response_text}\nDeveloper guidance: {feedback_text}".strip()
-    captured_feedback = feedback_text or (
+    # No "Optional architectural guidance" prompt — it interrupts flow and is
+    # rarely used. Developers who want to steer use the deny path.
+    captured_feedback: str | None = (
         response_text if approved and response_text != "Proceed with current approach." else None
     )
     if captured_feedback:
@@ -215,6 +219,7 @@ def _generate_updates_with_repair(
     max_model_checkins = 5
     update_attempt = 0
     model_checkins = 0
+    _last_checkin_type: str | None = None  # deduplication guard
 
     while update_attempt < max_update_attempts:
         try:
@@ -227,7 +232,17 @@ def _generate_updates_with_repair(
                 spec_digest=spec_context.digest if spec_context else None,
             )
             _refresh_session_context(session, feedback)
-            with _model_status("updates"):
+            # Open with file context — tells the viewer specifically which
+            # files Hedwig is about to edit.
+            _planned = list(declaration.planned_files or [])
+            if _planned:
+                if len(_planned) <= 2:
+                    _initial = f"drafting edits to {', '.join(_planned)}"
+                else:
+                    _initial = f"drafting edits to {_planned[0]} and {len(_planned) - 1} more"
+            else:
+                _initial = "drafting edits"
+            with _model_status("updates", initial_thought=_initial):
                 updates = client.generate_updates(
                     session,
                     declaration,
@@ -237,6 +252,27 @@ def _generate_updates_with_repair(
                     repair_hint=update_error,
                 )
         except ModelCheckInRequired as exc:
+            # Deduplicate: if the model sends the same check-in type twice in a row
+            # (e.g. two consecutive phase_transition check-ins), auto-approve the
+            # second one silently rather than prompting again.
+            if exc.message.check_in_type == _last_checkin_type:
+                _last_checkin_type = exc.message.check_in_type
+                next_phase = _infer_phase_from_checkin(exc.message, current_phase)
+                current_phase = _apply_phase_transition_with_display(
+                    session=session,
+                    trust_db=trust_db,
+                    repo_root=repo_root_str,
+                    current_phase=current_phase,
+                    next_phase=next_phase,
+                    show_system_prompt=show_system_prompt,
+                    feedback=feedback,
+                    autonomy_mode=autonomy_mode,
+                    task_text=task,
+                    spec_digest=spec_context.digest if spec_context else None,
+                )
+                session.add_user("Proceed with current approach.")
+                continue
+            _last_checkin_type = exc.message.check_in_type
             model_checkins += 1
             if model_checkins > max_model_checkins:
                 update_error = "Too many model check-ins during implementation."

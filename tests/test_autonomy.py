@@ -73,6 +73,38 @@ class AutonomyPreferenceTests(unittest.TestCase):
         self.assertEqual(proceed_overlap, 0.9)
         self.assertEqual(flag_overlap, 0.2)
 
+    def test_active_intensity_tightens_thresholds(self) -> None:
+        prefs = AutonomyPreferences()
+        base_proceed, base_flag = adjusted_policy_thresholds(0.5, 0.0, prefs)
+        tight_proceed, tight_flag = adjusted_policy_thresholds(
+            0.5, 0.0, prefs, session_intensity="active"
+        )
+        self.assertGreater(tight_proceed, base_proceed)
+        self.assertGreater(tight_flag, base_flag)
+
+    def test_delegating_intensity_loosens_thresholds(self) -> None:
+        prefs = AutonomyPreferences()
+        base_proceed, base_flag = adjusted_policy_thresholds(0.5, 0.0, prefs)
+        loose_proceed, loose_flag = adjusted_policy_thresholds(
+            0.5, 0.0, prefs, session_intensity="delegating"
+        )
+        self.assertLess(loose_proceed, base_proceed)
+        self.assertLess(loose_flag, base_flag)
+
+    def test_vibe_coding_tightens_thresholds(self) -> None:
+        prefs = AutonomyPreferences()
+        base_p, base_f = adjusted_policy_thresholds(0.5, 0.0, prefs)
+        vibe_p, vibe_f = adjusted_policy_thresholds(0.5, 0.0, prefs, coding_mode="vibe")
+        self.assertGreater(vibe_p, base_p)
+        self.assertGreater(vibe_f, base_f)
+
+    def test_human_only_coding_loosens_thresholds(self) -> None:
+        prefs = AutonomyPreferences()
+        base_p, base_f = adjusted_policy_thresholds(0.5, 0.0, prefs)
+        human_p, human_f = adjusted_policy_thresholds(0.5, 0.0, prefs, coding_mode="human_only")
+        self.assertLess(human_p, base_p)
+        self.assertLess(human_f, base_f)
+
     def test_adjusted_thresholds_never_go_below_floor(self) -> None:
         prefs = AutonomyPreferences(prefer_fewer_checkins=True)
         proceed, flag = adjusted_policy_thresholds(-5.0, -5.0, prefs)

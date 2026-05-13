@@ -21,27 +21,56 @@ from .commands.admin import (
     set_verification_cmd,
 )
 from .commands.observe import (
-    checkin_stats,
     clear_traces,
     export,
-    explain,
     leases,
+    personas,
     preferences,
     preferences_clear,
     preferences_revoke,
     report,
     reset,
     revoke,
+    rollback,
     traces,
     weights,
 )
+from .commands.learning import learning
+from .commands.status import status
 from .run.command import run
+from .run.repl import run_repl
 
-app = typer.Typer(add_completion=False)
+app = typer.Typer(
+    add_completion=False,
+    invoke_without_command=True,
+    help="Hedwig — governed coding agent. Run `hw` to start a session.",
+)
 
 config_app = typer.Typer(help="Configuration commands.")
 rules_app = typer.Typer(help="Rule management.", invoke_without_command=True)
 observe_app = typer.Typer(help="Observability commands.")
+
+
+@app.callback()
+def _app_default(
+    ctx: typer.Context,
+    model_id: str = typer.Option(None, "--model-id", help="Bedrock inference profile ID/ARN."),
+    region: str = typer.Option(None, "--region", help="AWS region."),
+    remember: bool = typer.Option(True, "--remember/--no-remember"),
+    show_intent: bool = typer.Option(False, "--show-intent"),
+    spec: str | None = typer.Option(None, "--spec"),
+    permanent_threshold: int | None = typer.Option(None, "--permanent-threshold"),
+) -> None:
+    """Start the Hedwig session REPL when no subcommand is given."""
+    if ctx.invoked_subcommand is None:
+        run_repl(
+            model_id=model_id,
+            region=region,
+            remember=remember,
+            show_intent=show_intent,
+            spec=spec,
+            permanent_threshold=permanent_threshold,
+        )
 
 
 @rules_app.callback()
@@ -55,6 +84,8 @@ app.command()(init)
 app.command()(doctor)
 app.command()(ask)
 app.command()(run)
+app.command()(status)   # developer-facing: "what does Hedwig think about this session"
+app.command()(learning) # developer-facing: "what has Hedwig learned about this repo"
 app.command()(report)
 app.command()(reset)
 
@@ -75,8 +106,6 @@ rules_app.command("guidelines-clear")(guidelines_clear)
 
 observe_app.command("leases")(leases)
 observe_app.command("traces")(traces)
-observe_app.command("explain")(explain)
-observe_app.command("checkin-stats")(checkin_stats)
 observe_app.command("preferences")(preferences)
 observe_app.command("preferences-revoke")(preferences_revoke)
 observe_app.command("preferences-clear")(preferences_clear)
@@ -86,6 +115,8 @@ observe_app.command("revoke")(revoke)
 observe_app.command("export")(export)
 observe_app.command("reset")(reset)
 observe_app.command("weights")(weights)
+observe_app.command("personas")(personas)
+observe_app.command("rollback")(rollback)
 
 app.add_typer(config_app, name="config")
 app.add_typer(rules_app, name="rules")

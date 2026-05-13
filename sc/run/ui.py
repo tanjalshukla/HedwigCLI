@@ -14,20 +14,88 @@ from rich.prompt import Prompt
 from ..policy import PolicyDecision
 from ..schema import IntentDeclaration, WorkflowPhase
 from ..trust_db import PolicyHistory
+from .theme import PALETTE, panel_title
 
 _CONSOLE = Console()
+# Phrase rotations for each model-call stage. Each stage now has enough
+# distinct beats that the reader sees Hedwig "thinking" rather than a
+# spinner stuck on one phrase. Claude-Code-inspired — one line, dim, the
+# line replaces itself every ~1.5s.
 _MODEL_STATUS_PHRASES: dict[str, tuple[str, ...]] = {
-    "intent": ("reasoning", "mapping constraints", "planning"),
-    "updates": ("drafting edits", "checking scope", "preparing patch"),
-    "rules": ("compiling rule", "classifying governance", "extracting guidance"),
-    "preferences": ("learning preferences", "updating guidance", "refining autonomy"),
+    "intent": (
+        "reading what you asked for",
+        "checking the spec",
+        "looking at which files might be in scope",
+        "weighing the plan",
+    ),
+    "updates": (
+        "thinking through the change",
+        "reading the files you approved",
+        "drafting edits",
+        "checking the patch against the plan",
+        "trimming anything out-of-scope",
+    ),
+    "rules": (
+        "parsing what you wrote",
+        "deciding if this is a hard rule or guidance",
+        "checking for path overlaps",
+        "finalizing",
+    ),
+    "preferences": (
+        "reading your feedback",
+        "looking for patterns",
+        "updating what I'm watching for",
+    ),
+    "reads": (
+        "staging reads",
+        "checking access",
+    ),
+    "rationale": (
+        "explaining the call",
+        "surfacing rationale",
+    ),
 }
+
+# Thread-local current stream so callers can push thoughts from anywhere
+# inside a `with _model_status(...):` block.
+_ACTIVE_STATUS: dict[str, object] = {"status": None}
+
+
+def push_thought(thought: str) -> None:
+    """Inject a custom thought into the active model-status spinner.
+
+    Silently no-ops if no spinner is active (e.g. called outside a
+    `_model_status` context, or during tests). Useful for emitting
+    context-specific reasoning from decision paths — "no hard constraint
+    matched", "scorer says 0.63", etc.
+    """
+    from .theme import PALETTE
+
+    status = _ACTIVE_STATUS.get("status")
+    if status is None:
+        return
+    try:
+        status.update(
+            f"[{PALETTE['info_bold']}]hedwig[/{PALETTE['info_bold']}]  "
+            f"[{PALETTE['meta_italic']}]{thought}[/{PALETTE['meta_italic']}]"
+        )
+    except Exception:
+        # Status may have been torn down between the check and the update.
+        pass
 
 
 @contextmanager
-def _model_status(stage: str):
+def _model_status(stage: str, initial_thought: str | None = None):
+    from .theme import PALETTE
+
     phrases = _MODEL_STATUS_PHRASES.get(stage, ("working",))
-    base_text = f"[cyan]Hedwig[/cyan] [dim]{phrases[0]}[/dim]"
+    # If the caller gave us a context-specific opening thought, use it for the
+    # first phrase. After it dwells, the choreography rotation takes over.
+    opening = initial_thought if initial_thought else phrases[0]
+    base_text = (
+        f"[{PALETTE['info_bold']}]hedwig[/{PALETTE['info_bold']}]  "
+        f"[{PALETTE['meta_italic']}]{opening}[/{PALETTE['meta_italic']}]"
+    )
     stop_event = threading.Event()
     try:
         status = _CONSOLE.status(base_text, spinner="dots", transient=True)
@@ -36,13 +104,21 @@ def _model_status(stage: str):
         status = _CONSOLE.status(base_text, spinner="dots")
 
     def _animate() -> None:
+        # Slower rotation gives each thought ~1.6s of dwell time, which reads
+        # as thoughtful rather than frantic. The rotation keeps going even
+        # when the call is long — so for longer Bedrock calls the whole
+        # phrase set gets exercised before looping.
         index = 1
-        while not stop_event.wait(0.8):
+        while not stop_event.wait(1.6):
             phrase = phrases[index % len(phrases)]
-            status.update(f"[cyan]Hedwig[/cyan] [dim]{phrase}[/dim]")
+            status.update(
+                f"[{PALETTE['info_bold']}]hedwig[/{PALETTE['info_bold']}]  "
+                f"[{PALETTE['meta_italic']}]{phrase}[/{PALETTE['meta_italic']}]"
+            )
             index += 1
 
     with status:
+        _ACTIVE_STATUS["status"] = status
         worker = threading.Thread(target=_animate, daemon=True)
         worker.start()
         try:
@@ -50,11 +126,12 @@ def _model_status(stage: str):
         finally:
             stop_event.set()
             worker.join(timeout=0.2)
+            _ACTIVE_STATUS["status"] = None
 
 
 def _render_file_list(files: list[str]) -> None:
     for path in files:
-        print(f"  - {path}")
+        print(f"  [dim]·[/dim] {path}")
 
 
 def _prompt_optional_feedback(prompt_text: str) -> str | None:
@@ -66,59 +143,93 @@ def _prompt_approval(
     stage: str,
     files: list[str],
     allow_remember: bool,
+    pause_reason: str | None = None,
+    diff_already_shown: bool = True,
 ) -> tuple[bool, bool, str | None]:
-    print(f"\n[bold]Approval required ({stage})[/bold]")
-    print("Agent requests to modify:")
-    _render_file_list(files)
+    # If a diff panel was already shown (the common apply-stage path), don't
+    # repeat the file list — just show the pause reason and the prompt inline.
+    # This makes the diff → prompt flow feel like one moment, not two.
+    print()
+    print(panel_title("approve_request", stage))
+    if pause_reason:
+        print(f"[{PALETTE['meta']}]Why I'm pausing:[/{PALETTE['meta']}] {pause_reason}")
+    if not diff_already_shown:
+        print(f"[{PALETTE['meta']}]Agent requests to modify:[/{PALETTE['meta']}]")
+        _render_file_list(files)
+    print()
     choices = ["a", "d"]
     if allow_remember:
         choices.insert(1, "r")
-        prompt = "Approve once (a), approve & remember (r), deny (d)"
+        prompt = (
+            f"[{PALETTE['approve_bold']}]a[/{PALETTE['approve_bold']}] approve  "
+            f"[{PALETTE['learn']}]r[/{PALETTE['learn']}] approve + remember  "
+            f"[{PALETTE['deny_bold']}]d[/{PALETTE['deny_bold']}] deny"
+        )
     else:
-        prompt = "Approve once (a), deny (d)"
+        prompt = (
+            f"[{PALETTE['approve_bold']}]a[/{PALETTE['approve_bold']}] approve  "
+            f"[{PALETTE['deny_bold']}]d[/{PALETTE['deny_bold']}] deny"
+        )
     response = Prompt.ask(prompt, choices=choices)
     if response == "a":
         return True, False, None
     if response == "r":
-        note = _prompt_optional_feedback("Optional note for future autonomy decisions")
+        note = _prompt_optional_feedback(
+            f"[{PALETTE['meta']}]Optional note for future autonomy decisions[/{PALETTE['meta']}]"
+        )
         return True, True, note
-    note = _prompt_optional_feedback("Optional reason for denial")
+    note = _prompt_optional_feedback(
+        f"[{PALETTE['meta']}]Optional reason for denial[/{PALETTE['meta']}]"
+    )
     return False, False, note
 
 
 def _prompt_read(files: list[str], reason: str | None) -> tuple[bool, bool, str | None]:
-    print("\n[bold]Read request[/bold]")
+    print()
+    print(panel_title("approve_request", "read"))
     if reason:
-        print(f"Reason: {reason}")
-    print("Agent requests to read:")
+        print(f"[{PALETTE['meta']}]Reason:[/{PALETTE['meta']}] {reason}")
+    print(f"[{PALETTE['meta']}]Agent requests to read:[/{PALETTE['meta']}]")
     _render_file_list(files)
+    print()
     response = Prompt.ask(
-        "Approve once (a), approve & remember (r), or deny (d)",
+        f"[{PALETTE['approve_bold']}]a[/{PALETTE['approve_bold']}] approve  "
+        f"[{PALETTE['learn']}]r[/{PALETTE['learn']}] approve + remember  "
+        f"[{PALETTE['deny_bold']}]d[/{PALETTE['deny_bold']}] deny",
         choices=["a", "r", "d"],
     )
     if response == "a":
         return True, False, None
     if response == "r":
         return True, True, None
-    note = _prompt_optional_feedback("Optional reason for denying this read")
+    note = _prompt_optional_feedback(
+        f"[{PALETTE['meta']}]Optional reason for denying this read[/{PALETTE['meta']}]"
+    )
     return False, False, note
 
 
 def _render_intent_summary(declaration: IntentDeclaration) -> None:
-    print("\n[bold]Intent summary[/bold]")
-    print(f"Task summary: {declaration.task_summary}")
-    print(f"Planned actions: {', '.join(declaration.planned_actions) or 'none'}")
+    print()
+    print(f"[{PALETTE['info_bold']}]Task:[/{PALETTE['info_bold']}] {declaration.task_summary}")
+    if declaration.planned_actions:
+        print(
+            f"[{PALETTE['meta']}]Planned actions:[/{PALETTE['meta']}] "
+            f"{', '.join(declaration.planned_actions)}"
+        )
     if declaration.notes:
-        print(f"Plan: {declaration.notes}")
+        print(f"[{PALETTE['meta']}]Plan:[/{PALETTE['meta']}] {declaration.notes}")
     if declaration.expected_change_types:
-        print(f"Expected change types: {', '.join(declaration.expected_change_types)}")
+        print(
+            f"[{PALETTE['meta']}]Expected change types:[/{PALETTE['meta']}] "
+            f"{', '.join(declaration.expected_change_types)}"
+        )
     if declaration.requirements_covered:
-        print("Requirements covered:")
+        print(f"[{PALETTE['meta']}]Requirements covered:[/{PALETTE['meta']}]")
         _render_file_list(declaration.requirements_covered)
     if declaration.potential_deviations:
-        print("Potential deviations:")
+        print(f"[{PALETTE['attention']}]Potential deviations:[/{PALETTE['attention']}]")
         _render_file_list(declaration.potential_deviations)
-    print("Planned files:")
+    print(f"[{PALETTE['meta']}]Planned files:[/{PALETTE['meta']}]")
     _render_file_list(declaration.planned_files)
 
 
@@ -126,28 +237,38 @@ def _prompt_plan_checkpoint(
     declaration: IntentDeclaration,
     reasons: tuple[str, ...],
 ) -> tuple[str, str | None]:
-    print("\n[bold]Plan checkpoint required[/bold]")
+    print()
+    print(panel_title("approve_request", "plan"))
     _render_intent_summary(declaration)
     if reasons:
-        print("Why this needs explicit plan approval:")
+        print()
+        print(f"[{PALETTE['meta']}]Why explicit plan approval:[/{PALETTE['meta']}]")
         for reason in reasons:
-            print(f"  - {reason}")
+            print(f"  [dim]·[/dim] {reason}")
+    print()
     decision = Prompt.ask(
-        "Approve plan (a), request revision (v), or deny task (d)",
+        f"[{PALETTE['approve_bold']}]a[/{PALETTE['approve_bold']}] approve  "
+        f"[{PALETTE['attention']}]v[/{PALETTE['attention']}] request revision  "
+        f"[{PALETTE['deny_bold']}]d[/{PALETTE['deny_bold']}] deny",
         choices=["a", "v", "d"],
     )
     if decision == "a":
         return "approve", None
     if decision == "v":
-        note = _prompt_optional_feedback("What should the plan change?")
+        note = _prompt_optional_feedback(
+            f"[{PALETTE['meta']}]What should the plan change?[/{PALETTE['meta']}]"
+        )
         return "revise", note
-    note = _prompt_optional_feedback("Optional reason for denying this task")
+    note = _prompt_optional_feedback(
+        f"[{PALETTE['meta']}]Optional reason for denying this task[/{PALETTE['meta']}]"
+    )
     return "deny", note
 
 
 def _prompt_permanent(files: list[str]) -> bool:
-    print("\n[bold]Grant permanent access?[/bold]")
-    print("You've approved these files multiple times:")
+    print()
+    print(panel_title("learn", "grant permanent access?"))
+    print(f"[{PALETTE['meta']}]You've approved these files multiple times:[/{PALETTE['meta']}]")
     _render_file_list(files)
     response = Prompt.ask("Always approve changes to these files? (y/n)", choices=["y", "n"], default="n")
     return response == "y"
@@ -238,51 +359,46 @@ def _render_policy_snapshot(
     all_silent = actions <= {"proceed"}
     if all_silent and not force:
         return
-    print(f"\n[bold]Policy ({stage})[/bold]")
+
+    action_colors = {
+        "deny": PALETTE["deny_bold"],
+        "check_in": PALETTE["attention"],
+        "proceed": PALETTE["approve"],
+        "proceed_flag": PALETTE["info"],
+    }
+    action_icons = {
+        "deny": "×",
+        "check_in": "?",
+        "proceed": "✓",
+        "proceed_flag": "~",
+    }
+
+    print()
+    print(panel_title("info", f"policy · {stage}"))
     for path in files:
         policy = policies.get(path)
         if policy is None:
             continue
         label = _ACTION_LABELS.get(policy.action, policy.action)
+        color = action_colors.get(policy.action, PALETTE["meta"])
+        icon = action_icons.get(policy.action, "·")
         reason = _user_friendly_reason(policy)
         if reason:
-            print(f"  {path}: {label} ({reason})")
+            print(
+                f"  [{color}]{icon}[/{color}] {path}  "
+                f"[{color}]{label}[/{color}]  "
+                f"[{PALETTE['meta']}]({reason})[/{PALETTE['meta']}]"
+            )
         else:
-            print(f"  {path}: {label}")
+            print(
+                f"  [{color}]{icon}[/{color}] {path}  "
+                f"[{color}]{label}[/{color}]"
+            )
 
 
 def _show_system_prompt(phase: WorkflowPhase, prompt_text: str) -> None:
     print(f"\n[bold]System prompt ({phase})[/bold]")
     print(prompt_text)
-
-
-def _render_autonomy_rationale(stage: str, rationale: str | None) -> None:
-    if not rationale:
-        return
-    print(f"[dim]Autonomy rationale ({stage}): {rationale}[/dim]")
-
-
-def _render_history_context(
-    stage: str,
-    quantitative: str | None,
-    qualitative: str | None,
-) -> None:
-    if not quantitative and not qualitative:
-        return
-    if quantitative:
-        summary = textwrap.shorten(quantitative, width=110, placeholder="...")
-        print(f"[dim]Reduced friction ({stage}): {summary}[/dim]")
-    if qualitative:
-        summary = textwrap.shorten(qualitative, width=140, placeholder="...")
-        if summary.startswith("guidance: "):
-            summary = f"Retrieved guidance: {summary.removeprefix('guidance: ')}"
-        elif summary.startswith("feedback: "):
-            summary = f"Retrieved feedback: {summary.removeprefix('feedback: ')}"
-        elif summary.startswith("related note: "):
-            summary = f"Retrieved note: {summary.removeprefix('related note: ')}"
-        else:
-            summary = f"Retrieved context: {summary}"
-        print(f"[dim]{summary}[/dim]")
 
 
 def _render_auto_approve_summary(

@@ -1,0 +1,28 @@
+{
+  "n_sessions": 5776,
+  "n_turns": 62429,
+  "skipped_no_session_meta": 115,
+  "coding_mode_distribution": {
+    "vibe": 2669,
+    "collaborative": 1472,
+    "human_only": 1635
+  },
+  "user_persona_distribution": {
+    "expert_nitpicker": 2303,
+    "vague_requester": 1892,
+    "mind_changer": 361,
+    "other": 1123,
+    "_unannotated": 97
+  },
+  "pushback_type_distribution": {
+    "correction": 18914,
+    "non_pushback": 33784,
+    "failure_report": 4373,
+    "_unannotated": 4292,
+    "rejection": 635,
+    "takeover": 430,
+    "pushback": 1
+  },
+  "edit_distance_proxy": "session-level: 1.0 - (agent_percentage / 100)",
+  "stage_proxy": "hardcoded 'apply' \u2014 SWE-chat has no stage signal"
+}

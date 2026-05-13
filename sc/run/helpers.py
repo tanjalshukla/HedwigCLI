@@ -13,8 +13,9 @@ from rich import print
 from ..agent_client import ClaudeClient
 from ..autonomy import preferences_from_model_payload
 from ..cli_shared import truncate_content as _truncate_content
+from ..features import RiskSignals
 from ..ml_policy import PolicyClassifier
-from ..policy import PolicyDecision, PolicyInput, decide_action
+from ..policy import PolicyDecision, PolicyInput, decide_action, select_scorer
 from ..schema import IntentDeclaration
 from ..session import ClaudeSession
 from ..trust_db import HardConstraint, PolicyHistory, TrustDB
@@ -100,11 +101,7 @@ def _collect_change_metrics(repo_root: Path, updates: dict[str, str]) -> dict[st
 def _policy_decision_for_file(
     *,
     history: PolicyHistory,
-    diff_size: int,
-    blast_radius: int,
-    is_new_file: bool,
-    is_security_sensitive: bool,
-    change_pattern: str | None,
+    risk: RiskSignals,
     recent_denials: int,
     files_in_action: int,
     verification_failure_rate: float | None = None,
@@ -119,31 +116,35 @@ def _policy_decision_for_file(
         prior_denials=history.denials,
         avg_response_ms=history.avg_response_ms,
         avg_edit_distance=history.avg_edit_distance or 0.0,
-        diff_size=diff_size,
-        blast_radius=blast_radius,
-        is_new_file=is_new_file,
-        is_security_sensitive=is_security_sensitive,
-        change_pattern=change_pattern,
+        diff_size=risk.diff_size,
+        blast_radius=risk.blast_radius,
+        is_new_file=risk.is_new_file,
+        is_security_sensitive=risk.is_security_sensitive,
+        change_pattern=risk.change_pattern,
         recent_denials=recent_denials,
         files_in_action=files_in_action,
         verification_failure_rate=verification_failure_rate,
         model_confidence_avg=model_confidence_avg,
         model_confidence_samples=model_confidence_samples,
     )
-    if classifier is not None and classifier.ready():
-        score = classifier.score(pi)
-        if score >= proceed_threshold:
-            action = "proceed"
-        elif score >= flag_threshold:
-            action = "proceed_flag"
-        else:
-            action = "check_in"
-        return PolicyDecision(
-            action=action,
-            score=score,
-            reasons=(f"learned-policy score {score:.3f} ({classifier.sample_count} real samples)",),
-        )
-    return decide_action(pi, proceed_threshold=proceed_threshold, flag_threshold=flag_threshold)
+    scorer, label = select_scorer(classifier)
+    if label == "heuristic":
+        # HeuristicScorer.score() loses reasons + action bucketing, so for the
+        # heuristic path we still want the richer PolicyDecision from decide_action.
+        return decide_action(pi, proceed_threshold=proceed_threshold, flag_threshold=flag_threshold)
+    score = scorer.score(pi)
+    if score >= proceed_threshold:
+        action = "proceed"
+    elif score >= flag_threshold:
+        action = "proceed_flag"
+    else:
+        action = "check_in"
+    sample_count = getattr(classifier, "sample_count", 0)
+    return PolicyDecision(
+        action=action,
+        score=score,
+        reasons=(f"learned-policy score {score:.3f} ({sample_count} real samples)",),
+    )
 
 
 def _build_patch_from_updates(

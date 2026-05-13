@@ -1,0 +1,454 @@
+{
+  "n_pushback_texts": 21875,
+  "by_pushback_type": {
+    "correction": 17389,
+    "failure_report": 4068,
+    "rejection": 418
+  },
+  "top_30_terms": [
+    [
+      "image",
+      0.0251
+    ],
+    [
+      "fix",
+      0.0229
+    ],
+    [
+      "use",
+      0.021
+    ],
+    [
+      "code",
+      0.0195
+    ],
+    [
+      "commit",
+      0.0194
+    ],
+    [
+      "agent",
+      0.0191
+    ],
+    [
+      "test",
+      0.0187
+    ],
+    [
+      "just",
+      0.0186
+    ],
+    [
+      "add",
+      0.0179
+    ],
+    [
+      "pr",
+      0.0176
+    ],
+    [
+      "file",
+      0.0174
+    ],
+    [
+      "run",
+      0.0173
+    ],
+    [
+      "let",
+      0.0171
+    ],
+    [
+      "check",
+      0.017
+    ],
+    [
+      "make",
+      0.0169
+    ],
+    [
+      "need",
+      0.0167
+    ],
+    [
+      "new",
+      0.0165
+    ],
+    [
+      "like",
+      0.0161
+    ],
+    [
+      "branch",
+      0.0161
+    ],
+    [
+      "md",
+      0.0161
+    ],
+    [
+      "claude",
+      0.0155
+    ],
+    [
+      "error",
+      0.0152
+    ],
+    [
+      "user",
+      0.0151
+    ],
+    [
+      "changes",
+      0.015
+    ],
+    [
+      "review",
+      0.0149
+    ],
+    [
+      "think",
+      0.0147
+    ],
+    [
+      "files",
+      0.0144
+    ],
+    [
+      "session",
+      0.0141
+    ],
+    [
+      "yes",
+      0.0141
+    ],
+    [
+      "issue",
+      0.014
+    ]
+  ],
+  "per_type_top_terms": {
+    "correction": [
+      [
+        "fix",
+        0.0238
+      ],
+      [
+        "use",
+        0.0226
+      ],
+      [
+        "add",
+        0.0211
+      ],
+      [
+        "commit",
+        0.0211
+      ],
+      [
+        "let",
+        0.0199
+      ],
+      [
+        "make",
+        0.0198
+      ],
+      [
+        "agent",
+        0.0198
+      ],
+      [
+        "need",
+        0.0197
+      ],
+      [
+        "just",
+        0.0197
+      ],
+      [
+        "code",
+        0.0196
+      ],
+      [
+        "pr",
+        0.0194
+      ],
+      [
+        "md",
+        0.0188
+      ],
+      [
+        "branch",
+        0.0182
+      ],
+      [
+        "like",
+        0.0175
+      ],
+      [
+        "new",
+        0.0173
+      ],
+      [
+        "test",
+        0.0171
+      ],
+      [
+        "review",
+        0.0169
+      ],
+      [
+        "changes",
+        0.0167
+      ],
+      [
+        "image",
+        0.0167
+      ],
+      [
+        "think",
+        0.0167
+      ]
+    ],
+    "failure_report": [
+      [
+        "image",
+        0.0612
+      ],
+      [
+        "error",
+        0.0481
+      ],
+      [
+        "failed",
+        0.0345
+      ],
+      [
+        "output",
+        0.0318
+      ],
+      [
+        "png",
+        0.0316
+      ],
+      [
+        "image image",
+        0.0285
+      ],
+      [
+        "task",
+        0.0283
+      ],
+      [
+        "id",
+        0.0282
+      ],
+      [
+        "image png",
+        0.0278
+      ],
+      [
+        "file",
+        0.0264
+      ],
+      [
+        "test",
+        0.0256
+      ],
+      [
+        "users",
+        0.0253
+      ],
+      [
+        "run",
+        0.0246
+      ],
+      [
+        "failing",
+        0.0233
+      ],
+      [
+        "check",
+        0.0222
+      ],
+      [
+        "status",
+        0.0218
+      ],
+      [
+        "work",
+        0.0211
+      ],
+      [
+        "fix",
+        0.0199
+      ],
+      [
+        "tests",
+        0.0199
+      ],
+      [
+        "output file",
+        0.0195
+      ]
+    ],
+    "rejection": [
+      [
+        "stop",
+        0.053
+      ],
+      [
+        "commit",
+        0.0369
+      ],
+      [
+        "just",
+        0.0364
+      ],
+      [
+        "changes",
+        0.0324
+      ],
+      [
+        "don",
+        0.0293
+      ],
+      [
+        "image",
+        0.0258
+      ],
+      [
+        "did",
+        0.0258
+      ],
+      [
+        "push",
+        0.0254
+      ],
+      [
+        "task",
+        0.0216
+      ],
+      [
+        "let",
+        0.0212
+      ],
+      [
+        "code",
+        0.0203
+      ],
+      [
+        "need",
+        0.0189
+      ],
+      [
+        "change",
+        0.018
+      ],
+      [
+        "want",
+        0.0179
+      ],
+      [
+        "pr",
+        0.0165
+      ],
+      [
+        "running",
+        0.0161
+      ],
+      [
+        "test",
+        0.0157
+      ],
+      [
+        "png",
+        0.0156
+      ],
+      [
+        "fix",
+        0.0152
+      ],
+      [
+        "command",
+        0.015
+      ]
+    ]
+  },
+  "category_distribution": {
+    "other": {
+      "count": 7259,
+      "pct": 33.2
+    },
+    "content_correction": {
+      "count": 6514,
+      "pct": 29.8
+    },
+    "failure_error": {
+      "count": 3116,
+      "pct": 14.2
+    },
+    "approach_correction": {
+      "count": 1501,
+      "pct": 6.9
+    },
+    "style_formatting": {
+      "count": 1480,
+      "pct": 6.8
+    },
+    "scope_requirements": {
+      "count": 1145,
+      "pct": 5.2
+    },
+    "timing_pacing": {
+      "count": 656,
+      "pct": 3.0
+    },
+    "clarity_understanding": {
+      "count": 204,
+      "pct": 0.9
+    }
+  },
+  "verbatim_examples": {
+    "other": [
+      "isnt there a dourth",
+      "can we have another subagent create that one?",
+      "I like it, make it so"
+    ],
+    "content_correction": [
+      "## Files to modify\n\n| File | Change |\n|------|--------|\n| `crates/agents/src/runner.rs` | Add `AutoContinue` to `RunnerEvent`, auto-continue logic in both loops, include limit in max_iterations error ",
+      "## Part B: Max Iterations Error with Continue Button\n\n### B1. Include limit in error message (`crates/agents/src/runner.rs`, ~line 865 and ~1428)\n\nChange both error returns from:\n```rust\n\"agent loop e",
+      "maybe `MAX_AUTO_CONTINUES = 2` should also be a config flag for user to change that"
+    ],
+    "failure_error": [
+      "bug report: So... I just used the yaml to do the following:  ```yaml \"1\":   name: test   pin: \"5050\"   enabled: true \"2\":   enabled: false \"3\":   enabled: false \"4\":   enabled: false \"5\":   enabled: f",
+      "we also need go pick up the bugs you mentioned earlier",
+      "CI is failing due to coverage. Once you get coverage up to snuff, go through a code review for this PR"
+    ],
+    "approach_correction": [
+      "we should avoid local, nonlocal, and global calls. We shouldn't mess with Python internals to get work done. That's a general rule",
+      "we should avoid local, nonlocal, and global calls. We shouldn't mess with Python internals to get work done unless ABSOLUTELY necessary. That's a general rule",
+      "ff and clean up"
+    ],
+    "style_formatting": [
+      "spawn shbavents to check existing PRS for review comments and address them. have the existing subagemgs do the same for these new PRs",
+      "see comments on 934",
+      "see review comment in 937"
+    ],
+    "scope_requirements": [
+      "935 just got ckmments",
+      "can the sentinel just trigger the event rather than reloading the page, which is heavy?",
+      "Now I can't focus on them at all, and also trying to click the foot note, the next and preivous page buttons take presedence"
+    ],
+    "timing_pacing": [
+      "## Part A: Auto-Continue When Model Stops Mid-Task\n\n### A1. Add `AutoContinue` variant to `RunnerEvent` (`crates/agents/src/runner.rs:464`)\n\nAdd a new event variant so the chat service can notify the ",
+      "Wait why are there only 58 tasks in the official eval? Can you double check this? So dev set v2 is different from TB-Lite?",
+      "<task-notification>\n<task-id>bw1jcpkqu</task-id>\n<tool-use-id>toolu_01QxqcVvMSsmQumkh7t2VCc9</tool-use-id>\n<output-file>REDACTED.output</output-file>\n<status>completed</status>\n<summary>Background com"
+    ],
+    "clarity_understanding": [
+      "I meant the eval command used for your 18% run",
+      "Why aren't we using the SDK? What is going on? Can we just make sure this is implemented properly?",
+      "Can we make sure that the email is properly set up with placeholders and structured ready for that? And also we have more info - so like Welcome, then need to say like, are you ready to build on the l"
+    ]
+  }
+}

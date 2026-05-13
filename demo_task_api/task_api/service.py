@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from task_api.errors import AppError
 from task_api.models import Task, TaskPriority, TaskStatus
 from task_api.store import get_task, list_tasks as load_tasks, next_task_id, remove_task, save_task
@@ -10,11 +12,12 @@ def list_tasks(status: str | None = None, priority: str | None = None) -> list[T
     tasks = load_tasks()
     if status is not None:
         _validate_status(status)
-        tasks = [task for task in tasks if task.status == status]
+        tasks = [t for t in tasks if t.status == status]
     if priority is not None:
         _validate_priority(priority)
-        tasks = [task for task in tasks if task.priority == priority]
+        tasks = [t for t in tasks if t.priority == priority]
     return tasks
+
 
 def create_task(title: str, priority: str = "medium") -> Task:
     _validate_title(title)
@@ -41,7 +44,7 @@ def summarize_tasks(priority: str | None = None) -> dict[str, int]:
     tasks = load_tasks()
     if priority is not None:
         _validate_priority(priority)
-        tasks = [task for task in tasks if task.priority == prioritye
+        tasks = [t for t in tasks if t.priority == priority]
     counts = {status: 0 for status in VALID_STATUSES}
     for task in tasks:
         counts[task.status] += 1
@@ -51,7 +54,7 @@ def summarize_tasks(priority: str | None = None) -> dict[str, int]:
 def _require_task(task_id: str) -> Task:
     task = get_task(task_id)
     if task is None:
-        raise AppError(code="task_not_found", message=f"Task '{task_id}' was not found.", status_code=404)
+        raise AppError(code="task_not_found", message=f"Task '{task_id}' not found.", status_code=404)
     return task
 
 
@@ -60,6 +63,8 @@ def _validate_title(title: str) -> None:
         raise AppError(code="invalid_title_type", message="title must be a string")
     if not title.strip():
         raise AppError(code="empty_title", message="title cannot be empty")
+    if len(title) > 200:
+        raise AppError(code="title_too_long", message="title must be 200 characters or fewer")
 
 
 def _validate_status(status: str) -> TaskStatus:

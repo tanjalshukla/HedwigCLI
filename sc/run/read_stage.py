@@ -13,6 +13,7 @@ from ..autonomy import (
     adjusted_policy_thresholds,
 )
 from ..config import SAConfig, autonomy_profile
+from ..features import RiskSignals
 from ..policy import PolicyDecision
 from .helpers import (
     AutonomyHistoryContext,
@@ -29,9 +30,7 @@ from .ui import (
     _confirm_read_missing,
     _prompt_read,
     _render_auto_approve_summary,
-    _render_autonomy_rationale,
     _render_file_list,
-    _render_history_context,
     _render_policy_snapshot,
     _summarize_autonomy_rationale,
 )
@@ -92,7 +91,8 @@ def _process_read_request(
 ) -> None:
     requested = request.files
     if not requested:
-        print("[red]Read request contained no files.[/red]")
+        from ..run.theme import PALETTE as _PAL_RE
+        print(f"[{_PAL_RE['deny_bold']}]✗ read request had no files[/{_PAL_RE['deny_bold']}]")
         raise typer.Exit(code=1)
 
     missing_reads = [path for path in requested if not (repo_root / path).exists()]
@@ -118,6 +118,14 @@ def _process_read_request(
     autonomy_preferences = trust_db.autonomy_preferences(repo_root_str)
     model_checkin_total, model_checkin_rate = trust_db.model_checkin_calibration(repo_root_str)
     profile = autonomy_profile(config)
+
+    # Session intensity — consumed by adjusted_policy_thresholds so that active
+    # sessions tighten oversight on reads too (not only writes).
+    from ..preference_inference import infer_coding_mode, infer_user_persona, summarize_session
+    _session_rows = [dict(r) for r in trust_db.session_traces(repo_root_str, run_session_id)]
+    _session_summary = summarize_session(_session_rows)
+    _session_persona = infer_user_persona(_session_summary)
+    _coding_mode = infer_coding_mode(_session_summary).value
 
     # Evaluate policy outcome per requested path.
     for path in requested:
@@ -172,14 +180,19 @@ def _process_read_request(
                 file_path=path,
                 model_checkin_approval_rate=model_checkin_rate,
                 model_checkin_total=model_checkin_total,
+                session_intensity=_session_persona.value,
+                coding_mode=_coding_mode,
+            )
+            read_risk = RiskSignals(
+                change_pattern="read",
+                blast_radius=len(requested),
+                is_security_sensitive=False,
+                is_new_file=False,
+                diff_size=0,
             )
             decision = _policy_decision_for_file(
                 history=history,
-                diff_size=0,
-                blast_radius=len(requested),
-                is_new_file=False,
-                is_security_sensitive=False,
-                change_pattern="read",
+                risk=read_risk,
                 recent_denials=recent_read_denials,
                 files_in_action=len(requested),
                 verification_failure_rate=None,
@@ -230,7 +243,8 @@ def _process_read_request(
         )
 
     if denied_reads:
-        print("[red]Read denied by hard constraints:[/red]")
+        from ..run.theme import PALETTE as _PAL_R
+        print(f"[{_PAL_R['deny_bold']}]✗ read denied by hard constraint[/{_PAL_R['deny_bold']}]")
         _render_file_list(denied_reads)
         trust_db.record_decision(
             repo_root_str,
@@ -311,7 +325,8 @@ def _process_read_request(
                     client=client,
                     guidance_prefix="Denied read request guidance",
                 )
-            print("[yellow]Read request denied.[/yellow]")
+            from ..run.theme import PALETTE as _PAL_RD
+            print(f"[{_PAL_RD['attention']}]✗ read request denied[/{_PAL_RD['attention']}]")
             raise typer.Exit(code=0)
 
         trust_db.add_permanent_read_leases(repo_root_str, auto_without_lease, source="policy_auto")
@@ -370,7 +385,8 @@ def _process_read_request(
             touched_files=requested,
         )
         if flagged_auto_reads:
-            print("[yellow]Read approved. Flagged for review:[/yellow]")
+            from ..run.theme import PALETTE as _PAL_RF
+            print(f"[{_PAL_RF['attention']}]✓ read approved · flagged for review[/{_PAL_RF['attention']}]")
             _render_file_list(flagged_auto_reads)
         trust_db.add_permanent_read_leases(repo_root_str, auto_without_lease, source="policy_auto")
         _record_auto_read_traces(

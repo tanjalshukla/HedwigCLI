@@ -3,9 +3,13 @@ from __future__ import annotations
 """Run-finalization helpers: summaries and guideline suggestion prompts."""
 
 from rich import print
+from rich.console import Console
+from rich.panel import Panel
 from rich.prompt import Prompt
+from rich.text import Text
 
 from ..trust_db import TrustDB
+from .theme import PALETTE, panel_title
 from .ui import _render_file_list
 
 
@@ -33,26 +37,74 @@ def _render_run_summary(
             if row["stage"] == "apply" and str(row["file_path"]) != "__session__"
         }
     )
-    print("\n[bold]Run complete[/bold]")
+
+    console = Console()
+    body = Text()
+
+    # Opening sentence — plain language summary.
     if apply_files:
-        print("Updated files:")
-        _render_file_list(apply_files)
-
-    checkin_parts: list[str] = []
-    if policy_checkins:
-        checkin_parts.append(f"{policy_checkins} policy-initiated")
-    if model_checkins:
-        checkin_parts.append(f"{model_checkins} model-initiated")
-    if checkin_parts:
-        print(f"Check-ins: {', '.join(checkin_parts)}.")
+        n = len(apply_files)
+        body.append(
+            f"Done — {n} file{'s' if n != 1 else ''} updated.\n\n",
+            style=PALETTE["approve_bold"],
+        )
+        for f in apply_files:
+            body.append(f"  · {f}\n", style="white")
+        body.append("\n")
     else:
-        print("No check-ins — agent operated autonomously.")
+        body.append(
+            "Done — no files changed.\n\n",
+            style="white",
+        )
 
+    # Check-in sentence. Translate "initiator" jargon.
+    if policy_checkins or model_checkins:
+        checkin_lines: list[str] = []
+        if policy_checkins:
+            checkin_lines.append(
+                f"I paused you {policy_checkins} time{'s' if policy_checkins != 1 else ''}"
+            )
+        if model_checkins:
+            checkin_lines.append(
+                f"the model paused {model_checkins} time{'s' if model_checkins != 1 else ''}"
+            )
+        body.append(" · ".join(checkin_lines) + ".\n", style=PALETTE["info"])
+    else:
+        body.append(
+            "No pauses — the run went smoothly.\n",
+            style=PALETTE["meta"],
+        )
+
+    # Learning footer — plain language.
     sample_count = trust_db.policy_model_sample_count(repo_root)
+    body.append("\n")
     if sample_count >= 10:
-        print(f"[dim]Learned policy active ({sample_count} decisions recorded this repo).[/dim]")
+        body.append(
+            f"Hedwig's learned scorer is active ({sample_count} decisions "
+            f"incorporated across this repo).",
+            style=PALETTE["learn"],
+        )
     else:
-        print(f"[dim]Policy: heuristic priors ({sample_count}/10 decisions to activate learned model).[/dim]")
+        body.append(
+            f"Hedwig is still in cold-start mode "
+            f"({sample_count}/10 decisions to activate the learned scorer).",
+            style=PALETTE["meta"],
+        )
+
+    console.print(
+        Panel(
+            body,
+            title=panel_title("info", "run complete"),
+            border_style=PALETTE["approve"],
+            padding=(1, 2),
+        )
+    )
+    print(
+        f"[{PALETTE['meta']}]Use[/{PALETTE['meta']}] hw status "
+        f"[{PALETTE['meta']}]to see what Hedwig thinks about this session, "
+        f"or[/{PALETTE['meta']}] hw observe export --html "
+        f"[{PALETTE['meta']}]for a full report.[/{PALETTE['meta']}]"
+    )
 
 
 def _maybe_prompt_guideline_suggestions(

@@ -5,8 +5,30 @@ from __future__ import annotations
 #   traces → trust scores → prompt context → model reasoning → check-in decisions
 # the model sees vague trust areas and correction patterns, never numeric scores.
 
+import os
+from pathlib import Path
+
 from .phase import WorkflowPhase
 from .trust_db import TrustDB
+
+
+def _repo_file_tree(repo_root: str, max_files: int = 60) -> str:
+    """Return a compact file tree of the repo, excluding common noise."""
+    skip_dirs = {".git", "__pycache__", ".venv", "node_modules", ".sc", ".mypy_cache", "dist", "build", ".pytest_cache"}
+    skip_exts = {".pyc", ".pyo", ".egg-info"}
+    lines: list[str] = []
+    root = Path(repo_root)
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = sorted(d for d in dirnames if d not in skip_dirs)
+        rel = Path(dirpath).relative_to(root)
+        for fname in sorted(filenames):
+            if Path(fname).suffix in skip_exts:
+                continue
+            lines.append(str(rel / fname) if str(rel) != "." else fname)
+            if len(lines) >= max_files:
+                lines.append(f"... ({max_files}+ files, showing first {max_files})")
+                return "\n".join(lines)
+    return "\n".join(lines) or "(empty repo)"
 
 
 def _bullet_lines(items: list[str], empty: str) -> str:
@@ -118,10 +140,14 @@ def build_run_system_prompt(
         "autonomous": "Developer selected autonomous mode. Keep moving on low-risk work and reserve check-ins for security, interfaces, verification failures, or high uncertainty.",
     }.get(autonomy_mode, "Developer selected balanced autonomy. Continue routine work, but pause for meaningful risk or design ambiguity.")
 
+    file_tree = _repo_file_tree(repo_root, max_files=40)
+
     return (
         "MODE: CODE\n"
         "You are a coding agent operating under strict external governance. "
         "The CLI is the enforcement authority.\n\n"
+        "Repository file tree (use these exact paths — do not invent paths):\n"
+        f"{file_tree}\n\n"
         "Response protocol:\n"
         "1) Return JSON only.\n"
         "2) Before editing, return either a read_request or an intent declaration.\n"

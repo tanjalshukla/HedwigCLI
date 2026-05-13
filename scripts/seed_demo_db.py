@@ -22,7 +22,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from sc.autonomy import AutonomyPreferences
-from sc.ml_policy import build_warm_start_classifier, featurize
+from sc.ml_policy import build_cold_classifier, featurize
 from sc.policy import PolicyInput
 from sc.trust_db import TrustDB
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -260,9 +260,9 @@ def seed(repo_root: Path, *, dry_run: bool = False, persona: str = "neutral", re
     trust_db = TrustDB(db_path)
     repo_root_str = str(repo_root)
 
-    # Always start from a fresh warm-start so the demo begins clean.
+    # Always start from a fresh cold classifier so the demo begins clean.
     trust_db.delete_policy_model(repo_root_str)
-    classifier = build_warm_start_classifier()
+    classifier = build_cold_classifier()
 
     if persona == "cautious":
         base_decisions = [(pi, approved) for pi, approved in PERSONA_CAUTIOUS]

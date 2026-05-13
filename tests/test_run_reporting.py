@@ -65,17 +65,19 @@ class RunReportingTests(unittest.TestCase):
                 )
 
             output = stream.getvalue()
-            self.assertIn("Run complete", output)
-            self.assertIn("Updated files:", output)
+            # Panel title → "run complete"
+            self.assertIn("run complete", output)
+            # Updated files list surfaces the changed file
             self.assertIn("task_api/api.py", output)
-            # Check-in count now splits by initiator; no initiator set in this trace
-            # so "No check-ins" is the expected output for this fixture.
-            self.assertIn("No check-ins", output)
-            # Change patterns removed from summary (redundant with hw observe traces)
+            # Plain-English "no pauses" language replaces initiator-style jargon
+            self.assertIn("No pauses", output)
+            # Jargon we explicitly stripped should stay out
             self.assertNotIn("Change patterns:", output)
             self.assertNotIn("general_change", output)
-            # ML policy status line should appear
-            self.assertIn("heuristic priors", output)
+            self.assertNotIn("policy-initiated", output)
+            self.assertNotIn("model-initiated", output)
+            # Cold-start messaging is still there, but in plain English now
+            self.assertIn("cold-start", output)
             self.assertNotIn("Session id=", output)
             self.assertNotIn("rubber-stamp approvals", output)
             self.assertNotIn("Developer feedback events", output)

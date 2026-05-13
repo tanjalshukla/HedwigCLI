@@ -1,0 +1,221 @@
+{
+  "n_messages": 7203,
+  "silhouette_scores": {
+    "3": {
+      "silhouette": 0.0303
+    },
+    "5": {
+      "silhouette": 0.0264
+    },
+    "7": {
+      "silhouette": 0.0338
+    },
+    "10": {
+      "silhouette": 0.0379
+    }
+  },
+  "best_k": 10,
+  "best_silhouette": 0.03788010776042938,
+  "clusters": [
+    {
+      "cluster_id": 0,
+      "size": 66,
+      "pct_of_total": 0.9,
+      "closest_to_centroid": [
+        "Continue from where you left off.",
+        "Continue from where you left off.",
+        "Continue from where you left off.",
+        "Continue from where you left off.",
+        "Continue from where you left off."
+      ],
+      "random_sample": [
+        "Continue from where you left off.",
+        "Continue from where you left off.",
+        "Continue from where you left off.",
+        "Continue from where you left off.",
+        "Continue from where you left off."
+      ],
+      "label": ""
+    },
+    {
+      "cluster_id": 1,
+      "size": 725,
+      "pct_of_total": 10.1,
+      "closest_to_centroid": [
+        "yes, commit all and generate new branch and push and raise pr and merge",
+        "merge main in this branch commit and push",
+        "merge main to this branch, solve conflicts, commit and push",
+        "yes commit these, then rebase again from main",
+        "uhh shouldn\u2019tit be git add . \n\nAnd thent he commit message?"
+      ],
+      "random_sample": [
+        "Yeah that will have to do I guess. Don't forget to switch to a fresh branch off main",
+        "yes, apply the revisions to roadmap file and relevant artifacts",
+        "great, can you create a new branch called kevin/harbor-sweb-multi and git worktree ~/marin-harbor-sweb-multi, starting from this current branch?",
+        "We have a method to link a checkpoint to a commit, we can use that",
+        "Base directory for this skill: /Users/ta93abe/.claude/skills/pr\n\n# pr\n\nPull Request\u306e\u4f5c\u6210\u30fb\u30ec\u30d3\u30e5\u30fc\u5bfe\u5fdc\u3092\u884c\u3046\u30b9\u30ad\u30eb\u3002\n\n## \u30b5\u30d6\u30b3\u30de\u30f3\u30c9\n\n### /pr create (\u30c7\u30d5\u30a9\u30eb\u30c8)\n\nPR\u3092\u4f5c\u6210\u3059\u308b\u3002\n\n**\u52d5\u4f5c:**\n1. `git status` \u3067\u73fe\u5728\u306e\u30d6\u30e9\u30f3\u30c1\u3068\u5909\u66f4\u3092\u78ba\u8a8d\n2. `git log main..HEAD` \u3067\u30b3\u30df\u30c3\u30c8\u5c65\u6b74\u3092\u78ba\u8a8d\n3. `git diff main...HEAD` \u3067\u5168\u4f53\u306e\u5909\u66f4\u3092\u78ba\u8a8d\n4. \u5909\u66f4\u5185\u5bb9\u3092\u5206\u6790\u3057\u3066PR\u306e\u8aac\u660e\u6587\u3092\u751f\u6210\n5. `gh pr create` \u3067PR"
+      ],
+      "label": ""
+    },
+    {
+      "cluster_id": 2,
+      "size": 616,
+      "pct_of_total": 8.6,
+      "closest_to_centroid": [
+        "<task-notification>\n<task-id>b3bmjfzj2</task-id>\n<tool-use-id>REDACTED</tool-use-id>\n<output-file>/private/tmp/claude-501/-Users-melagiri-Workspace-codeInsights-code-insights/cffa245f-bf48-4477-8b3b-d707ed22b65d/tasks/b3bmjfzj2.output</output-file>\n<status>completed</status>\n<summary>Background comm",
+        "<task-notification>\n<task-id>b0jbsoegd</task-id>\n<tool-use-id>REDACTED</tool-use-id>\n<output-file>/private/tmp/claude-501/-Users-penso--superset-worktrees-moltis-clever-oboe/e675b122-21db-4833-9c76-6891e02a9193/tasks/b0jbsoegd.output</output-file>\n<status>completed</status>\n<summary>Background comma",
+        "<task-notification>\n<task-id>bjv6vz0ag</task-id>\n<tool-use-id>REDACTED</tool-use-id>\n<output-file>/private/tmp/claude-501/-Users-yorrickjansen-work-claude-code-plugins/c9003741-8183-46dc-94ad-30f1d1a9c250/tasks/bjv6vz0ag.output</output-file>\n<status>completed</status>\n<summary>Background command \"Ev",
+        "<task-notification>\n<task-id>b4oki7u6l</task-id>\n<tool-use-id>REDACTED</tool-use-id>\n<output-file>/private/tmp/claude-501/-Users-melagiri-Workspace-codeInsights-code-insights/cffa245f-bf48-4477-8b3b-d707ed22b65d/tasks/b4oki7u6l.output</output-file>\n<status>completed</status>\n<summary>Background comm",
+        "<task-notification>\n<task-id>b86zn4lh9</task-id>\n<tool-use-id>REDACTED</tool-use-id>\n<output-file>/private/tmp/claude-501/-Users-penso--superset-worktrees-moltis-clever-oboe/e675b122-21db-4833-9c76-6891e02a9193/tasks/b86zn4lh9.output</output-file>\n<status>completed</status>\n<summary>Background comma"
+      ],
+      "random_sample": [
+        "## Todos\n\n1. Create `xtask/src/fetch_keypair_txs.rs`\n2. Register module, Command variant, and dispatch arm in `xtask/src/main.rs`",
+        "1. Sometimes the command completion feature is not implemented for all commands.\n2. Implement the new skill using the URL in the list as a reference.\n3. Need to set up test cases",
+        "<task-notification>\n<task-id>bmg4d2cdu</task-id>\n<tool-use-id>toolu_01DyBebmDWvU23a57ETvnEon</tool-use-id>\n<output-file>REDACTED.output</output-file>\n<status>completed</status>\n<summary>Background command \"Clarify which model scored 18% on TBLite\" completed (exit code 0)</summary>\n</task-notificatio",
+        "<task-notification>\n<task-id>bl3bdxlir</task-id>\n<tool-use-id>REDACTED</tool-use-id>\n<output-file>REDACTED.output</output-file>\n<status>completed</status>\n<summary>Background command \"Poll TBLite every 30min\" completed (exit code 0)</summary>\n</task-notification>\nRead the output file to retrieve the",
+        "Many parst work, but the awnswers are not visual or not saved?"
+      ],
+      "label": ""
+    },
+    {
+      "cluster_id": 3,
+      "size": 260,
+      "pct_of_total": 3.6,
+      "closest_to_centroid": [
+        "\u0432\u043e\u043e\u0431\u0449\u0435-\u0442\u043e \u043d\u0430 \u0441\u0430\u043c\u043e\u0439 \u0441\u0442\u0440\u0430\u043d\u0438\u0446\u0435 \u0441 \u043e\u0448\u0438\u0431\u043a\u043e\u0439 \u043e\u0431 \u043e\u0442\u043a\u0440\u044b\u0442\u0438\u0438 -- \u043a\u0430\u043a \u0440\u0430\u0437 \u0432\u0438\u0434\u0435\u043e. \u043d\u0443 \u0438 \u0447\u0442\u043e, \u0447\u0442\u043e \u044f \u0442\u0435\u0431\u0435 \u0434\u0440\u0443\u0433\u043e\u0435 \u0441\u043a\u0438\u043d\u0443\u043b. \u043f\u043e\u043a\u0430\u0437\u0430\u0442\u044c \u0445\u043e\u0442\u0435\u043b \u044d\u0442\u043e",
+        "\u0434\u0430 \u0438 \u0432 \u044d\u0442\u043e\u043c \u043a\u043b\u044e\u0447\u0435. \u0435\u0441\u043b\u0438 \u044f \u0432\u0438\u0436\u0443, \u0447\u0442\u043e \u0442\u044b \u043d\u0430\u0447\u0438\u043d\u0430\u0435\u0448\u044c \u043a\u0430\u043a \u043d\u0435 \u0432 \u0441\u0435\u0431\u044f \u0440\u0438\u0441\u043e\u043d\u0438\u0440\u043e\u0432\u0430\u0442\u044c \u043d\u0430 \u043c\u0435\u043b\u043e\u0447\u0438 -- \u0442\u043e \u043d\u0443 \u043f\u0443\u0441\u0442\u044c \u0443 \u0442\u0435\u0431\u044f \u0431\u0443\u0434\u0435\u0442 \u043d\u0430 \u0443\u0440\u043e\u0432\u043d\u0435 \u0435\u0436\u0435\u0434\u043d\u0435\u0432\u043d\u043e\u0439 \u043f\u0430\u043c\u044f\u0442\u0438 \u043d\u0435\u043a\u0438\u0439 \u0430\u0440\u0442\u0435\u0444\u0430\u043a\u0442, \u043a\u043e\u0442\u043e\u0442\u044b\u0439 \u0442\u0435\u0431\u044f \u043d\u0443 \u0445\u043e\u0440\u0442\u044f \u0431\u044b \u0440\u0430\u0437 \u0432 \u0434\u0435\u043d\u044c \u0442\u0440\u0435\u0437\u0432\u0438\u0442",
+        "\u0432\u0441\u0435 \u043f\u0440\u043e\u0442\u043e\u043a\u043e\u043b\u044b \u0430\u0433\u0435\u043d\u0442\u043e \u0441\u043b\u0435\u0434\u0443\u0435\u0442 \u0432 \u044d\u0442\u043e\u043c \u0441\u0432\u0435\u0442\u0435 \u043e\u0431\u043d\u043e\u0432\u0438\u0442\u044c. \u043d\u0435\u043a\u043e\u0442\u043e\u0440\u044b\u0435 -- \u043d\u0430 \u0440\u0443\u0441\u0441\u043a\u043e\u043c. \u0446\u0435 \u043f\u0438\u0437\u0434\u0435\u0446",
+        "\u0430 \u043d\u0430 \u0442\u043e\u043c \u0441\u043a\u0440\u0438\u043d\u0435, \u043d\u0430 \u043a\u043e\u0442\u043e\u0440\u044b\u0439 \u0432\u044b \u0441 \u0433\u0440\u043e\u043a\u043e\u043c \u0441\u043c\u043e\u0442\u0440\u0435\u043b\u0438. \u043d\u0435, \u043d\u0443 \u044f \u043f\u043e\u043d\u0438\u043c\u0430 -- \u0432\u0430\u043c \u043f\u043e\u0431\u043e\u043a\u0443. \u0442\u0430\u043c \u0447\u0435\u0440\u0435\u0437 \u0432\u0435\u0441\u044c \u044d\u043a\u0440\u0430\u043d \u043e\u0433\u0440\u043e\u043c\u043d\u044b\u0439 \u0442\u043e\u043b\u0441\u0442\u044b\u0439 \u0445\u0443\u0439 \u043b\u0435\u0436\u0438\u0442",
+        "\u043c\u043d\u0435 \u0432\u043e\u0442 \u043a\u0430\u0437\u0430\u043b\u043e\u0441\u044c, \u043c\u044b \u0431\u044b \u0441\u043f\u0440\u0430\u0432\u0438\u043b\u0438\u0441\u044c \u0441 \u0442\u0430\u043a\u043e\u0439 \u0442\u0435\u043d\u0437\u043e\u0440\u043d\u043e\u0439 \u0437\u0430\u0434\u0430\u0447\u0435\u0439 \u0441 \u0442\u0430\u043a\u0438\u043c \u043a\u043e\u043b\u0438\u0447\u0435\u0441\u0442\u0432\u043e\u043c \u0432\u0435\u043a\u0442\u043e\u0440\u043e\u0432 \u043e\u0434\u043d\u043e\u0432\u0440\u0435\u043c\u0435\u043d\u043d\u043e. \u043d\u043e \u0442\u043e\u043b\u044c\u043a\u043e, \u0435\u0441\u043b\u0438 \u0431\u044b \u043d\u0435 \u043f\u0440\u0438\u0448\u043b\u043e\u0441\u044c \u043f\u0440\u044b\u0433\u0430\u0442\u044c \u043c\u0435\u0436\u0434\u0443 \u043a\u0440\u043e\u0432\u043d\u044f\u043c\u0438 \u043a\u0430\u0436\u0434\u044b\u0439 \u0447\u0430\u0441"
+      ],
+      "random_sample": [
+        "\u041d\u0443\u0436\u0435\u043d Google Ads account timelabs.ad -- \u0440\u0435\u043a\u043b\u0430\u043c\u043d\u043e\u0435 \u0430\u0433\u0435\u043d\u0442\u0441\u0442\u0432\u043e",
+        "\u043a\u0442\u043e \u043f\u0438\u0448\u0435\u0442 \u0443\u043c\u043e\u043b\u0447\u0430\u043d\u0438\u044f \u0442\u043e\u0442 \u0438 \u0432\u043b\u0430\u0441\u0442\u044c",
+        "\u0432 \u043e\u0434\u043d\u043e\u043c \u0441\u043b\u0443\u0447\u0430\u0435 -- \u0434\u043b\u044f Opus, \u0432 \u0434\u0440\u0443\u0433\u043e\u043c -- \u0434\u043b\u044f Gemini-2.5-lite -- \u043a\u043e\u0442\u043e\u0440\u044b\u0439 \u0434\u0430\u0436\u0435 \u0432 cli \u043d\u0435 \u0443\u043c\u0435\u0435\u0442",
+        "\"\u0427\u0430\u0441\u044b     \n  \u043f\u043e\u0442\u0440\u0430\u0447\u0435\u043d\u044b. \" \u043d\u0435\u0442. \u0441\u0440\u0430\u0432\u043d\u0438 \u0438\u0445 - \u0432\u044b\u0434\u0435\u043b\u0438 \u0440\u0430\u0437\u043d\u0438\u0446\u0443. \u043f\u0440\u0438\u043d\u0435\u0441\u0438 \u043c\u043d\u0435 \u044d\u0442\u043e \u0437\u043d\u0430\u043d\u0438\u0435",
+        "\u043f\u0440\u043e\u0441\u0442\u043e \u0441\u043a\u0438\u043d\u044c \u043a\u0430\u0440\u0442\u0438\u043d\u043a\u0443 qwen; \u043a\u0440\u0430\u0442\u043a\u043e \u0443\u043a\u0430\u0436\u0438 \u043f\u0440\u0438\u0447\u0438\u043d\u0443 \u0437\u0430\u043f\u0440\u043e\u0441\u0430, \u0442\u043e \u0435\u0441\u0442\u044c \u043d\u0435 \u043f\u0440\u043e\u0441\u0442\u043e \"\u0434\u043b\u044f opus\" - \u044d\u0442\u043e \u043d\u0435 \u0441\u043e\u0434\u0435\u0440\u0436\u0430\u0442\u0435\u043b\u044c\u043d\u043e. \"\u043a\u0430\u043a \u0431\u044b \u043c\u043e\u0436\u043d\u043e \u0431\u044b\u043b\u043e \u043f\u043e\u043a\u0430\u0437\u0430\u0442\u044c \u044d\u0442\u043e \u043e\u043f\u0443\u0441\u0443 \u0437\u0430 \u043c\u0438\u043d\u0438\u043c\u0430\u043b\u044c\u043d\u043e\u0435 \u043a\u043e\u043b\u0438\u0447\u0435\u0441\u0442\u0432\u043e \u0442\u043e\u043a\u0435\u043d\u043e\u0432\""
+      ],
+      "label": ""
+    },
+    {
+      "cluster_id": 4,
+      "size": 1019,
+      "pct_of_total": 14.1,
+      "closest_to_centroid": [
+        "> now tracks the checkpoint ID for all ACTIVE sessions regardless of condensation success\n\nI feel this was added on purpose to not do it for all...",
+        "in /Users/soph/Work/entire/test/test1234 the cli now shows no checkpoints, can you check?",
+        "but that means this tests could have never worked? was it added recently?",
+        "this is new, the tests ran fine before",
+        "I don't see checkpoints still. Either session ones or branch-history."
+      ],
+      "random_sample": [
+        "harden the contract creation process. currently, it is not looking into architecture.md (which also tells a lot aboout test setups etc.). Make end-to-end tests mandatory (e.g. run playwright, detox etc.). Tests should test stuff users expect.\n\n\nat least final phases MUST implement and check e2e-test",
+        "can I do one last validation on the state machine states; are we missing any states? should we do the condensation as a discrete state or is it a transition?",
+        "also i think the upload of previous sessions can be improved with a better terminal UX, including some progress reportoer. Does `@clack` also have something for that, or do we need a more sophisticated cli ui framework?",
+        "should the tests in cmd/entire/cli/strategy/hook_managers_test.go use t.Parallel()?",
+        "since when is this using `.entire/tmp` ?"
+      ],
+      "label": ""
+    },
+    {
+      "cluster_id": 5,
+      "size": 1258,
+      "pct_of_total": 17.5,
+      "closest_to_centroid": [
+        "pull in the latest and try that again please",
+        "hmm, it's literally not showing up even after restart",
+        "ok try to access it shouldn't be able to have",
+        "I think it\u2019s because we reviewed the previous code so much that it wouldn\u2019t find anything. Otherwise, can you check the last commit and see for yourself?",
+        "hmm, I dont have access to the api console since you're running it."
+      ],
+      "random_sample": [
+        "when using k8s:\n\nsidecar container logs:\ncyyeh@ChihYuYehs-MacBook-Pro duckdb-data-agent % kubectl logs -f duckdb-agent-sidecar-pool-gxhh8\n[sidecar] Initial skills: (none)\nSidecar agent server listening on port 3000\n\nseems backend still creates new sidecar container without using pre-warmed container",
+        "okay try now. we've also gone ahead and deleted knock for good.not used.",
+        "<teammate-message teammate_id=\"neo-consolidator\" color=\"green\">\n{\"type\":\"idle_notification\",\"from\":\"neo-consolidator\",\"timestamp\":\"2026-02-15T02:54:15.480Z\",\"idleReason\":\"available\"}\n</teammate-message>",
+        "the domains will probably be the normal worker domain for the `rudel` app and also rudel.ai\nplease generate the auth secret as well as the other env variables and push them to doppler",
+        "there is @README.md here it does exist what are you smoking"
+      ],
+      "label": ""
+    },
+    {
+      "cluster_id": 6,
+      "size": 646,
+      "pct_of_total": 9.0,
+      "closest_to_centroid": [
+        "\u5c31\u5148\u9019\u6a23\u5427\n\u7136\u5f8c\u770b\u6709\u6c92\u6709\u8fa6\u6cd5\u5728\u6372\u52d5\uff0c\u4e5f\u5c31\u662f\u628a\u7576\u524d\u5716\u7247\u6372\u52d5\u5230 Viewport \u5167\u7684\u6642\u5019\uff0c\u662f\u6372\u52d5\u5230\u756b\u9762\u7684\u4e2d\u592e\u4f4d\u7f6e\u3002\n\n\u56e0\u70ba\u5b83\u73fe\u5728\u5e38\u5e38\u5c31\u662f\u6372\u52d5\u5230\u908a\u754c\u4f4d\u7f6e\u800c\u5df2\u3002\n\n\u6574\u7406\u4e00\u4e0b\uff0c\u8ddf\u6211\u8a0e\u8ad6\u4e0b\u4e00\u6b65\u52d5\u4f5c",
+        "\u589e\u52a0\u6587\u5b57\u63d0\u793a\uff1a\n1. \u96a7\u9053\u5165\u53e3\u7684\u5165\u53e3IP\u4e0d\u80fd\u624b\u52a8\u66f4\u65b0\uff0c\u6bcf\u4e00\u6b21\u4fdd\u5b58\u81ea\u52a8\u4ece\u8282\u70b9IP\u91c7\u96c6\n2. \u8282\u70b9\u7ba1\u7406 \u57df\u540d\u662f\u5fc5\u987bv4\u548cv6\u90fd\u6ca1\u6709\u7684\u60c5\u51b5\u4e0b\u624d\u80fd\u586b",
+        "\u5e95\u90e8\u589e\u52a0\u4e00\u4e2a\u5355\u72ec\u7684thoughts \u9875\u9762  \u6211\u7528\u6765\u5199\u4e00\u4e9b\u60f3\u6cd5\u548c\u788e\u788e\u5ff5\uff0c\u6211\u60f3\u901a\u8fc7telegram\u9891\u9053\u5b9e\u73b0\u6570\u636e\u53ef\u4ee5\u5b9e\u65f6\u4f20\u9001\u5230GitHub\u7684\u4ed3\u5e93\u7136\u540e\u5728\u66f4\u65b0  \u8fd9\u6837\u5c31\u53ef\u4ee5\u901a\u8fc7telegram\u7684\u8ba2\u9605\u76f4\u63a5\u63a8\u9001\u6d88\u606f\uff0c\u6211\u73b0\u5728\u6709\u4e00\u4e2a\u516c\u5f00\u7684\u7fa4\u7ec4  https://t.me/kkdemian2050",
+        "\u7b49\u4f1a\u513f\u554a\uff0c\u90a3\u8fd9\u4e2a\u63d2\u4ef6\u600e\u4e48\u5b89\u88c5\u5230 Safari \u91cc\u5462\uff1f\n\n\u5b83\u4e0d\u662f\u4e2a DMG \u5417\uff1f\u6211\u628a\u5b83\u62d6\u5230 Application \u6587\u4ef6\u5939\u91cc\uff0c\u7136\u540e\u5c31\u53ef\u4ee5\u7528\u4e86\u3002\u6211\u600e\u4e48\u5728 Safari \u7684\u90a3\u4e2a Extension \u91cc\u9762\u6ca1\u6709\u627e\u5230\u5b83\u5462\uff1f",
+        "\u4f60\u53ef\u4ee5\u770b\u4e00\u4e0b\u524d commit \u91cc\u9762\u90a3\u4e2a\u6539\u4e3b\u9898\u3001\u6362\u989c\u8272\u7684\u53d8\u52a8\uff0c\u662f\u5426\u628a\u6574\u4e2a\u9879\u76ee\u7684\u539f\u751f\u9875\u9762\u5207\u6362\u4e3b\u9898\u65f6\u7684\u6548\u679c\u4e5f\u53d8\u6210\u8fd9\u6837\u4e86\uff1f\u6211\u7684\u610f\u601d\u662f\u201c\u80fd\u5426\u201d\u800c\u4e0d\u662f\u201c\u662f\u5426\u201d\u3002\n\n\u5c31\u52a0\u4e2a\u6309\u94ae\u5427\uff0c\u5728 popup\uff08\u5f39\u7a97\uff09\u91cc\u52a0\u4e2a\u5c0f\u6309\u94ae\u5427\u3002\u8fd9\u4e2a popup \u91cc\u8fb9\u7684\u90a3\u79cd\u529f\u80fd\u53ef\u4ee5\u653e\u4e00\u5757\u513f\u3002\n\n\u8fd9\u6837\u7684\u8bdd\uff0c\u6bcf\u4e2a\u6309\u94ae\u5c31\u4e0d\u7528\u5355\u5360\u4e00\u884c\u4e86\uff0c\u53ef\u4ee5\u653e\u5728\u4e00\u4e2a\u533a\u57df\u91cc\u8fb9\uff0c\u6309\u94ae\u672c\u8eab\u6bcf\u4e2a\u4e5f\u90fd\u5c0f\u4e00\u70b9\u3002"
+      ],
+      "random_sample": [
+        "**2. `database/sql`\u306e\u307e\u3068\u3081\u8868\u306e\u7406\u7531\u304c\u4e2d\u9014\u534a\u7aef**\n\n> `database/sql\u3000\u30ec\u30d9\u30eb1\uff08\u5b8c\u5168\u62bd\u8c61\uff09\u3000go-sqlmock \u3067\u3082\u30c6\u30b9\u30c8\u53ef\u80fd\u3060\u304c\u3001\u62bd\u8c61\u5316\u306e\u6069\u6075\u304c\u5927\u304d\u3044`\n\n\u300cgo-sqlmock \u3067\u3082\u30c6\u30b9\u30c8\u53ef\u80fd\u300d\u3068\u3044\u3046\u8a18\u8ff0\u306f\u3001\u3080\u3057\u308d\u300c\u30ec\u30d9\u30eb1\u3067\u306a\u304f\u3066\u3082\u3088\u3044\u300d\u6839\u62e0\u306b\u8aad\u3081\u307e\u3059\u3002\u306a\u305c go-sqlmock \u3088\u308a interface \u304c\u512a\u308c\u3066\u3044\u308b\u306e\u304b\u3001\u305d\u306e\u5177\u4f53\u7684\u306a\u7406\u7531\u304c\u8ff0\u3079\u3089\u308c\u3066\u3044\u307e\u305b\u3093\u3002`database/sql` \u3092\u672c\u6587\u3067\u72ec\u7acb\u3057\u3066\u89e3\u8aac\u3057\u306a\u3044\u307e\u307e\u3001\u8868\u3060\u3051\u306b\u767b\u5834\u3059\u308b\u306e\u3082\u4e0d\u89aa\u5207\u3067\u3059\u3002",
+        "testei e corrigiu a questao do home; end; del etc... mas agr o backspace parou de funcionar?",
+        "olha fui testar mas quando digitei @ nao apareceu os itens que deveria! ou seja nao apareceu os arquivos disponiveis para dar o contexto com autocoplete ou select com enter! parecido com o que o claude code faz",
+        "**2. `items` \u30b9\u30e9\u30a4\u30b9\u306e\u9632\u5fa1\u7684\u30b3\u30d4\u30fc\u4e0d\u8db3**\n\n`NewOrder` \u306f\u6e21\u3055\u308c\u305f `items` \u30b9\u30e9\u30a4\u30b9\u306e\u53c2\u7167\u3092\u305d\u306e\u307e\u307e\u4fdd\u6301\u3057\u307e\u3059\u3002\n\n```go\n// \u547c\u3073\u51fa\u3057\u5143\u304c\u30b9\u30e9\u30a4\u30b9\u3092\u5909\u66f4\u3067\u304d\u3066\u3057\u307e\u3046\nitems := []model.OrderItem{item1}\norder, _ := model.NewOrder(\"id-1\", items)\nitems[0] = somethingElse  // order \u306e\u5185\u90e8\u72b6\u614b\u304c\u66f8\u304d\u63db\u308f\u308b\n```\n\n\u30b3\u30f3\u30b9\u30c8\u30e9\u30af\u30bf\u3067 `copy()` \u3059\u308b\u304b\u3001\u65b0\u3057\u3044\u30b9\u30e9\u30a4\u30b9\u3092\u751f\u6210\u3059\u3079\u304d\u3067\u3059\u3002\u300c\u4e0d\u5909\u6761\u4ef6\u3092\u5b88\u308b\u300d\u3068\u3044\u3046\u8a18\u4e8b\u306e\u30c6\u30fc\u30de\u3068\u76f4\u63a5\u77db\u76fe\u3057\u307e\u3059\u3002",
+        "CLAUDE.md \u4e5f\u6392\u9664 prittier \u68c0\u6d4b"
+      ],
+      "label": ""
+    },
+    {
+      "cluster_id": 7,
+      "size": 414,
+      "pct_of_total": 5.7,
+      "closest_to_centroid": [
+        "[Image: image/png]\nSee here:",
+        "this is what it shows\n[Image: image/png]",
+        "[Image: image/png]\nThat did not work..",
+        "[Image: image/png]\nThat did not work as expected..",
+        "still nothing\n[Image: image/png]"
+      ],
+      "random_sample": [
+        "[Image: image/png]\nStill space in between or is the CSS being cached?",
+        "I did set it before?\n[Image: image/png]",
+        "[Image: image/png]\nThere now again the much spavce between the header os the table. Can we remove that?",
+        "rename the Vuln overview into Overview (side bar)\n[Image: image/png]",
+        "I still don't see ask_user question block as I switch back to original question\n[Image: image/png]"
+      ],
+      "label": ""
+    },
+    {
+      "cluster_id": 8,
+      "size": 1716,
+      "pct_of_total": 23.8,
+      "closest_to_centroid": [
+        "1. yes 2. verify this isn't a concern. Its probably related to codex reviewer's sandbox. 3. yes, we'll need that.",
+        "make it more clear, that we have this internally and open sourcing it soon.",
+        "lets first discuss how will we handle this and the system will also become more simplified right, also lets check the code we need to remove for celan migraiton as well.",
+        "Now that I am thinking about it - can we use something on these lines to get the best of both --> https://github.com/karpathy/llm-council",
+        "do it, for searh i think we need to analyse the functionality in more details further."
+      ],
+      "random_sample": [
+        "add usage bar for session and week as see in the \"/usage\" command to statusline",
+        "we need to do the same for observations",
+        "so how do we make this more solidly accepted into neuralips, trying to reuse what we are having",
+        "diff between remember and learn",
+        "activate advanced elicitation and party mode next"
+      ],
+      "label": ""
+    },
+    {
+      "cluster_id": 9,
+      "size": 483,
+      "pct_of_total": 6.7,
+      "closest_to_centroid": [
+        "add this as instructions to app/src/server/agents/AGENTS.md so that any future subagents created have this",
+        "yes, agent type is not used anymore",
+        "got some feedback on the current code base. please check the @.agent/feedback.md file.",
+        "why was it working for other agents implementations ?",
+        "use a team of agents to work through plans 001-004"
+      ],
+      "random_sample": [
+        "but shouldnt claude automatically do the initial mapping?",
+        "are all of these projects in the prompt for grok so it knows about it too? audit everything else in the website so the agent knows about my projects and the website if applicable",
+        "lets brainstorm first use 5 agents to give different ideas",
+        "but remember that the cursor cli binary is called 'agent'",
+        "I, [2026-02-17T09:45:01.286604 #2258380]  INFO -- : Job Ai::Jobs::AgentExecutorJob took 8.91s\nI, [2026-02-17T09:45:01.286611 #2258380]  INFO -- : Completed job: Ai::Jobs::AgentExecutorJob\n[ActiveJob] [Ai::Jobs::AgentExecutorJob] [2e8ac507-5fad-43d6-8007-2f98e2a97d87] Performed Ai::Jobs::AgentExecuto"
+      ],
+      "label": ""
+    }
+  ]
+}

@@ -1,0 +1,67 @@
+{
+  "n_sessions": 5776,
+  "coding_mode": {
+    "agreement_rate": 0.5909,
+    "n_comparisons": 5776,
+    "confusion_matrix": {
+      "vibe": {
+        "vibe": 2189,
+        "collaborative": 428,
+        "human_only": 52
+      },
+      "human_only": {
+        "collaborative": 1599,
+        "human_only": 36
+      },
+      "collaborative": {
+        "collaborative": 1188,
+        "human_only": 28,
+        "vibe": 256
+      }
+    }
+  },
+  "user_persona": {
+    "agreement_rate": 0.0998,
+    "n_comparisons": 3527,
+    "confusion_matrix": {
+      "expert_nitpicker": {
+        "mind_changer": 1749
+      },
+      "mind_changer": {
+        "mind_changer": 352
+      },
+      "vague_requester": {
+        "mind_changer": 1426
+      }
+    },
+    "note": "Only sessions with >=3 turns and non-null, non-'other' persona included"
+  },
+  "pushback": {
+    "agreement_rate": 0.5962,
+    "n_comparisons": 57706,
+    "confusion_matrix": {
+      "non_pushback": {
+        "non_pushback": 14996,
+        "correction": 18788
+      },
+      "correction": {
+        "correction": 18549,
+        "failure_report": 365
+      },
+      "failure_report": {
+        "correction": 3514,
+        "failure_report": 859
+      },
+      "rejection": {
+        "correction": 613,
+        "failure_report": 22
+      }
+    },
+    "note": "pacing_complaint / takeover / requirement_change excluded (no clean Hedwig equivalent)"
+  },
+  "proxy_caveats": [
+    "edit_distance is session-level proxy (1 - agent_pct), not per-turn",
+    "stage is hardcoded to 'apply' for all turns",
+    "user_decision is derived from pushback label, creating circularity in pushback classification test \u2014 see findings note"
+  ]
+}

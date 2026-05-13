@@ -8,7 +8,7 @@ from pathlib import Path
 
 from sc.policy import PolicyDecision
 from sc.run.helpers import _autonomy_history_context
-from sc.run.ui import _render_history_context
+from sc.run.ui import _render_auto_approve_summary
 from sc.trust_db import TrustDB
 
 
@@ -195,19 +195,18 @@ class RunHistoryContextTests(unittest.TestCase):
             )
             self.assertIsNone(context)
 
-    def test_render_history_context_stays_compact(self) -> None:
+    def test_render_auto_approve_summary_stays_compact(self) -> None:
         stream = io.StringIO()
         with redirect_stdout(stream):
-            _render_history_context(
+            _render_auto_approve_summary(
                 "read",
                 "reused prior read access on 2/2 files; prior approvals 2; prior denials 0; avg review 9.0s",
-                "guidance: For routine validation and service-layer changes, continue autonomously; only check in for API, schema, or security changes.",
+                'guidance: "For routine validation and service-layer changes, continue autonomously; only check in for API, schema, or security changes."',
+                None,
             )
 
         output = stream.getvalue()
-        self.assertIn("Reduced friction (read): reused prior read access on 2/2 files", output)
-        self.assertIn("Retrieved guidance: For routine validation and service-layer changes", output)
-        self.assertNotIn("Why Hedwig reduced friction", output)
+        self.assertIn("reused prior read access on 2/2 files", output)
         self.assertNotIn("Quant:", output)
         self.assertNotIn("Qual:", output)
 

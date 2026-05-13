@@ -137,20 +137,43 @@ def init(
     region: str = typer.Option(None, "--region", help="AWS region for Bedrock."),
 ):
     """Initialize .sc config and trust DB."""
+    from ..run.theme import PALETTE, panel_title
+
     repo_root = require_repo_root()
 
     config = SAConfig(model_id=model_id, aws_region=region or default_region())
     config_path = save_config(repo_root, config)
     trust_db = open_trust_db(repo_root)
 
-    # Pre-build the warm-start classifier so the first `hw run` has no startup lag.
-    from ..ml_policy import build_warm_start_classifier
+    # Pre-build a cold classifier so the first `hw run` has no startup lag.
+    # The heuristic scorer carries behavior until real decisions accumulate.
+    from ..ml_policy import build_cold_classifier
     if trust_db.load_policy_model(str(repo_root)) is None:
-        classifier = build_warm_start_classifier()
+        classifier = build_cold_classifier()
         trust_db.save_policy_model(str(repo_root), classifier)
 
-    print("[green]Initialized Hedwig config.[/green]")
-    print(f"Config: {config_path}")
+    # Themed init output — show the owl, then a tight metadata block.
+    from ..run.banner import render_banner
+
+    short_arn = model_id.split("/")[-1] if "/" in model_id else model_id
+    if len(short_arn) > 40:
+        short_arn = short_arn[:37] + "..."
+
+    render_banner(
+        model_short=short_arn,
+        mode=None,
+        intensity=None,
+        session_turn_count=0,
+    )
+    print(f"[{PALETTE['approve_bold']}]✓ initialized[/{PALETTE['approve_bold']}]")
+    print(
+        f"  [{PALETTE['meta']}]region:[/{PALETTE['meta']}] "
+        f"[{PALETTE['info']}]{config.aws_region}[/{PALETTE['info']}]"
+    )
+    print(
+        f"  [{PALETTE['meta']}]config:[/{PALETTE['meta']}] "
+        f"[{PALETTE['meta_italic']}]{config_path}[/{PALETTE['meta_italic']}]"
+    )
 
 
 def set_mode(
@@ -253,9 +276,28 @@ def add_rule(
     yes: bool = typer.Option(False, "--yes", help="Skip confirmation."),
 ):
     """Compile a natural-language rule into enforced constraints and/or behavioral guidance."""
+    from ..run.theme import PALETTE, moment, panel_title
+    from rich.panel import Panel
+    from rich.console import Console
+
+    console = Console()
     repo_root = require_repo_root()
     trust_db = open_trust_db(repo_root)
     config = _resolve_config_or_exit(repo_root, model_id, region)
+
+    # Guard: if the config has no model_id, bail with a clear message instead
+    # of letting the downstream Bedrock call fail with a pydantic JSON error.
+    if not config.model_id:
+        print(
+            f"[{PALETTE['deny_bold']}]No inference profile configured.[/{PALETTE['deny_bold']}]"
+        )
+        print(
+            f"[{PALETTE['meta']}]Run[/{PALETTE['meta']}] "
+            f"hw init --model-id <arn> --region <region>"
+            f"[{PALETTE['meta']}] first.[/{PALETTE['meta']}]"
+        )
+        raise typer.Exit(code=1)
+
     try:
         with _model_status("rules"):
             parsed = _compile_rule_with_model(
@@ -266,39 +308,60 @@ def add_rule(
                 region=config.aws_region,
             )
     except Exception as exc:
-        print(f"[red]{exc}[/red]")
+        print(f"[{PALETTE['deny_bold']}]Could not compile rule:[/{PALETTE['deny_bold']}] {exc}")
         raise typer.Exit(code=1)
 
     if not parsed.constraints and not parsed.behavioral_guidelines:
-        print("[red]Could not compile a usable rule from that input.[/red]")
+        print(f"[{PALETTE['deny_bold']}]Could not compile a usable rule from that input.[/{PALETTE['deny_bold']}]")
         if parsed.unresolved_lines:
-            print("[yellow]The rule was too ambiguous to enforce or inject safely.[/yellow]")
+            print(f"[{PALETTE['attention']}]The rule was too ambiguous to enforce or inject safely.[/{PALETTE['attention']}]")
         raise typer.Exit(code=1)
 
-    if parsed.constraints:
-        table = Table(title="Proposed Hard Constraints")
-        table.add_column("Pattern")
-        table.add_column("Policy")
-        table.add_column("Source")
-        for item in parsed.constraints:
-            table.add_row(item.path_pattern, _constraint_display(item), item.source)
-        print(table)
-    if parsed.behavioral_guidelines:
-        table = Table(title="Proposed Behavioral Guidelines")
-        table.add_column("Guideline")
-        table.add_column("Source")
-        for guideline in parsed.behavioral_guidelines:
-            table.add_row(guideline, source)
-        print(table)
+    # Theme-aware rule-compilation panels. Hard constraint → red/■,
+    # behavioral guideline → yellow/▢. Reading top-down shows how one input
+    # rule splits into two governance layers.
+    from rich.text import Text
+
+    for item in parsed.constraints:
+        style = moment("rule_hard")
+        body = Text()
+        body.append(item.path_pattern + "\n", style="bold blue")
+        body.append(_constraint_display(item), style=PALETTE["meta"])
+        console.print(
+            Panel(
+                body,
+                title=panel_title("rule_hard"),
+                border_style=style.border,
+                padding=(0, 2),
+            )
+        )
+
+    for guideline in parsed.behavioral_guidelines:
+        style = moment("rule_soft")
+        body = Text()
+        body.append(guideline, style="white")
+        console.print(
+            Panel(
+                body,
+                title=panel_title("rule_soft"),
+                border_style=style.border,
+                padding=(0, 2),
+            )
+        )
+
     if parsed.unresolved_lines:
-        print("[yellow]Unresolved portions (not persisted):[/yellow]")
+        print(f"[{PALETTE['attention']}]Unresolved portions (not persisted):[/{PALETTE['attention']}]")
         for line in parsed.unresolved_lines:
-            print(f"[yellow]- {line}[/yellow]")
+            print(f"[{PALETTE['attention']}]  - {line}[/{PALETTE['attention']}]")
 
     if not yes:
-        confirmed = Prompt.ask("Add these compiled rules", choices=["y", "n"], default="y")
+        confirmed = Prompt.ask(
+            f"[{PALETTE['info_bold']}]Add these compiled rules?[/{PALETTE['info_bold']}]",
+            choices=["y", "n"],
+            default="y",
+        )
         if confirmed != "y":
-            print("[yellow]No rules added.[/yellow]")
+            print(f"[{PALETTE['attention']}]No rules added.[/{PALETTE['attention']}]")
             raise typer.Exit(code=0)
 
     inserted = trust_db.add_constraints(str(repo_root), parsed.constraints)
@@ -315,10 +378,23 @@ def add_rule(
             model_id=config.model_id,
             region=config.aws_region,
         )
-    print(f"[green]Added {inserted} hard constraint(s).[/green]")
-    print(f"[green]Added {guideline_count} behavioral guideline(s).[/green]")
+
+    # Final summary line, consistent with other done moments.
+    summary_parts = []
+    if inserted:
+        summary_parts.append(
+            f"[blue]■ {inserted} hard constraint{'s' if inserted != 1 else ''}[/blue]"
+        )
+    if guideline_count:
+        summary_parts.append(
+            f"[{PALETTE['attention']}]▢ {guideline_count} behavioral guideline{'s' if guideline_count != 1 else ''}[/{PALETTE['attention']}]"
+        )
+    if summary_parts:
+        print("  ·  ".join(summary_parts))
     if learned_preferences:
-        print(f"[green]Updated adaptive guidance:[/green] {', '.join(learned_preferences)}")
+        print(
+            f"[{PALETTE['learn']}]✦ updated adaptive guidance:[/{PALETTE['learn']}] {', '.join(learned_preferences)}"
+        )
 
 
 def _repo_inventory(repo_root: Path, *, limit: int = 80) -> list[str]:

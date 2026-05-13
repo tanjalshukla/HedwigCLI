@@ -1,7 +1,33 @@
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 from pathlib import Path
+
+
+@dataclass(frozen=True)
+class RiskSignals:
+    """Raw risk signals for one action. Consumers weight as they see fit."""
+
+    change_pattern: str
+    blast_radius: int
+    is_security_sensitive: bool
+    is_new_file: bool
+    diff_size: int
+
+
+# Canonical change-pattern vocabulary. Scorers derive their weights from these;
+# features.py is the single source of truth for what the categories are.
+CHANGE_PATTERNS: tuple[str, ...] = (
+    "api_change",
+    "data_model_change",
+    "config_change",
+    "dependency_update",
+    "error_handling",
+    "test_generation",
+    "documentation",
+    "general_change",
+)
 
 
 _SECURITY_PATH_HINTS = (
@@ -55,6 +81,32 @@ def classify_change_pattern(file_path: str, old_content: str, new_content: str) 
     if "import " in new_lower and "import " not in old_lower:
         return "dependency_update"
     return "general_change"
+
+
+def change_type_label(risk: RiskSignals) -> str:
+    """Stable string form used in traces and milestone checks. Preserves the
+    legacy ``new_file:`` prefix so persisted decision_traces stay parseable."""
+    prefix = "new_file:" if risk.is_new_file else ""
+    return f"{prefix}{risk.change_pattern}"
+
+
+def assess_risk(
+    *,
+    repo_root: Path,
+    file_path: str,
+    old_content: str,
+    new_content: str,
+    is_new_file: bool,
+    diff_size: int,
+) -> RiskSignals:
+    """Single entry point for assessing one action's risk."""
+    return RiskSignals(
+        change_pattern=classify_change_pattern(file_path, old_content, new_content),
+        blast_radius=estimate_blast_radius(repo_root, file_path),
+        is_security_sensitive=is_security_sensitive(file_path, new_content),
+        is_new_file=is_new_file,
+        diff_size=diff_size,
+    )
 
 
 def estimate_blast_radius(repo_root: Path, file_path: str) -> int:

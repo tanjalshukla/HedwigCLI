@@ -5,21 +5,33 @@ __pycache__/
 *.pyo
 *.pyd
 .pytest_cache/
+**/.pytest_cache/
 .coverage
 htmlcov/
+*.egg-info/
+dist/
+build/
 
 # Virtualenv
 .venv/
 
-# Local runtime state
+# Local runtime state — never commit trust.db or config (contains credentials/paths)
 .sc/
-.sc/exports/
+demo_task_api/.sc/
+
+# Exported reports
+exports/
+**/exports/
 
 # OS
 .DS_Store
+**/.DS_Store
+Thumbs.db
 
-# Editor workspaces
+# Editor
 *.code-workspace
+.idea/
+.vscode/settings.json
 
 # Internal paper-writing notes (not for public repo)
 FEEDBACK.md
@@ -39,3 +51,9 @@ paper/*.out
 paper/*.pdf
 paper/*.run.xml
 paper/*.synctex.gz
+
+# Temporary files
+*.tmp
+*.bak
+*.swp
+*~

@@ -1,0 +1,116 @@
+{
+  "q1_any_pushback": {
+    "lr_auc_mean": 0.754,
+    "lr_auc_std": 0.003,
+    "dt_auc_mean": 0.7508,
+    "base_rate": 0.4113,
+    "n_samples": 58245,
+    "top_lr_features": {
+      "cum_pushback_count": 2.7654,
+      "cum_correction_count": -1.8267,
+      "prompt_word_count": -0.6773,
+      "prompt_char_count": 0.5971,
+      "intent_debug": 0.5225,
+      "cum_turn_index": -0.4228,
+      "turn_index": -0.4228,
+      "intent_other": -0.3573,
+      "intent_refactor": 0.3318,
+      "prev_resp_word_count": 0.265,
+      "is_first_turn": -0.2591,
+      "intent_git": -0.1926,
+      "intent_understand": -0.1452,
+      "cum_distinct_files": 0.1395,
+      "prev_tool_count": -0.1266,
+      "prev_has_go": 0.0953,
+      "cum_failure_count": -0.0795,
+      "intent_test": -0.0734,
+      "prev_has_ts_js": 0.0631,
+      "intent_connect": 0.0603
+    },
+    "top_dt_features": {
+      "intent_debug": 0.3514,
+      "intent_refactor": 0.2266,
+      "cum_pushback_count": 0.1363,
+      "prompt_word_count": 0.1056,
+      "prev_resp_word_count": 0.0629,
+      "cum_distinct_files": 0.0375,
+      "time_since_prev_s": 0.0367,
+      "cum_correction_count": 0.0199,
+      "prompt_char_count": 0.0119,
+      "cum_turn_index": 0.0051,
+      "session_position_frac": 0.0049,
+      "cum_failure_count": 0.0013,
+      "turn_index": 0.0,
+      "intent_connect": 0.0,
+      "intent_git": 0.0,
+      "intent_other": 0.0,
+      "intent_test": 0.0,
+      "intent_create new code": 0.0,
+      "prev_has_md": 0.0,
+      "prev_has_test": 0.0
+    }
+  },
+  "q2_failure_report": {
+    "lr_auc_mean": 0.8972,
+    "lr_auc_std": 0.008,
+    "base_rate": 0.0752,
+    "n_failure_reports": 4382,
+    "top_lr_features": {
+      "cum_pushback_count": 2.871,
+      "cum_correction_count": -2.3434,
+      "prompt_char_count": 1.2352,
+      "intent_debug": 1.0513,
+      "prompt_word_count": -0.9393,
+      "intent_create new code": -0.5645,
+      "turn_index": -0.4506,
+      "cum_turn_index": -0.4506,
+      "cum_failure_count": 0.3495,
+      "intent_refactor": -0.3139,
+      "intent_connect": -0.1553,
+      "intent_other": -0.1336,
+      "prev_resp_word_count": -0.1248,
+      "session_position_frac": -0.1132,
+      "prev_has_md": -0.1119,
+      "prev_bash_count": 0.0982,
+      "intent_git": -0.0791,
+      "prev_write_edit_count": -0.0732,
+      "intent_test": 0.0651,
+      "prev_has_ts_js": 0.0625
+    },
+    "prev_bash_cat_dist": {
+      "git": 0.36063884595569295,
+      "other": 0.3204533745492014,
+      "file ops": 0.18031942297784648,
+      "package manager": 0.10097887686759402,
+      "test/build": 0.03760947964966512
+    },
+    "intent_dist": {
+      "debug": 0.7482884527612962,
+      "understand": 0.0896850753080785,
+      "other": 0.06937471474212688,
+      "git": 0.04746691008671839,
+      "test": 0.022364217252396165,
+      "refactor": 0.011866727521679598,
+      "create new code": 0.009812870835235053,
+      "connect": 0.0011410314924691922
+    },
+    "prev_tool_means": {
+      "prev_bash_count": {
+        "fr": 2.287,
+        "all": 1.573
+      },
+      "prev_write_edit_count": {
+        "fr": 1.173,
+        "all": 0.987
+      },
+      "prev_read_count": {
+        "fr": 1.828,
+        "all": 1.332
+      },
+      "prev_tool_count": {
+        "fr": 5.933,
+        "all": 4.642
+      }
+    }
+  }
+}

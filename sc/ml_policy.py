@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import numpy as np
+from sklearn.isotonic import IsotonicRegression
 from sklearn.linear_model import SGDClassifier
 from sklearn.preprocessing import StandardScaler
 
@@ -34,8 +35,10 @@ FEATURE_NAMES: list[str] = [
     "change_pattern_risk",
 ]
 
-# Risk weight per change_pattern, mirroring the additive scores in policy.py
-# so synthetic warm-start labels match the heuristic exactly.
+# Risk weight per change_pattern. Fed into featurize() so the learned scorer
+# sees change-pattern risk on the same scale as the heuristic. Categories
+# themselves are owned by features.CHANGE_PATTERNS — this table only maps
+# known categories to scorer-specific weights.
 _PATTERN_RISK: dict[str | None, float] = {
     "api_change": -0.8,
     "data_model_change": -0.8,
@@ -75,30 +78,66 @@ def featurize(pi: "PolicyInput") -> np.ndarray:
     )
 
 
+# Minimum samples needed before we refit the isotonic calibrator. Below this
+# threshold, raw SGD probabilities are used (they'll be near-saturated but
+# still directionally correct for threshold comparisons).
+_CALIBRATION_MIN_SAMPLES: int = 20
+
+
 @dataclass
 class PolicyClassifier:
     clf: SGDClassifier
     scaler: StandardScaler
     sample_count: int
-    prior_coef: np.ndarray  # coefficients at warm-start, used for delta display
+    prior_coef: np.ndarray  # coefficients at cold-seed time, used for delta display
+    # Isotonic regression calibrator. Fitted incrementally on (raw_prob, label)
+    # pairs accumulated in _calib_X / _calib_y. Replaces raw predict_proba
+    # output once _CALIBRATION_MIN_SAMPLES decisions have accumulated.
+    _calibrator: IsotonicRegression | None = None
+    _calib_X: list[float] = None  # type: ignore[assignment]
+    _calib_y: list[int] = None    # type: ignore[assignment]
+
+    def __post_init__(self) -> None:
+        if self._calib_X is None:
+            self._calib_X = []
+        if self._calib_y is None:
+            self._calib_y = []
 
     def update(self, pi: "PolicyInput", approved: bool) -> None:
         """Online update from a single developer decision."""
         x = self.scaler.transform(featurize(pi).reshape(1, -1))
-        self.clf.partial_fit(x, np.array([1 if approved else 0]), classes=np.array([0, 1]))
+        label = 1 if approved else 0
+        self.clf.partial_fit(x, np.array([label]), classes=np.array([0, 1]))
         self.sample_count += 1
+        # Accumulate raw probability + true label for calibrator.
+        raw_prob = float(self.clf.predict_proba(x)[0, 1])
+        self._calib_X.append(raw_prob)
+        self._calib_y.append(label)
+        # Refit calibrator once we have enough samples.
+        if len(self._calib_X) >= _CALIBRATION_MIN_SAMPLES:
+            cal = IsotonicRegression(out_of_bounds="clip")
+            cal.fit(np.array(self._calib_X), np.array(self._calib_y))
+            self._calibrator = cal
 
     def score(self, pi: "PolicyInput") -> float:
-        """Return approval probability in [0, 1]."""
+        """Return calibrated approval probability in [0, 1].
+
+        Uses isotonic regression calibration once enough decisions have
+        accumulated, giving probabilities that actually live between 0 and 1
+        rather than saturating near the extremes.
+        """
         x = self.scaler.transform(featurize(pi).reshape(1, -1))
-        return float(self.clf.predict_proba(x)[0, 1])
+        raw = float(self.clf.predict_proba(x)[0, 1])
+        if self._calibrator is not None:
+            return float(self._calibrator.predict([raw])[0])
+        return raw
 
     def ready(self) -> bool:
         """True once enough real decisions have been incorporated."""
         return self.sample_count >= MIN_SAMPLES_FOR_LEARNED
 
     def coef_delta(self) -> dict[str, float]:
-        """Signed drift of each coefficient relative to warm-start priors."""
+        """Signed drift of each coefficient relative to the cold-seed state."""
         current = self.clf.coef_[0]
         return {
             name: float(current[i] - self.prior_coef[i])
@@ -113,60 +152,38 @@ class PolicyClassifier:
         return pickle.loads(data)  # noqa: S301 — first-party SQLite blob only
 
 
-def _build_warm_start_data(n: int) -> tuple[np.ndarray, np.ndarray]:
-    from .policy import PolicyInput, decide_action
-
-    rng = np.random.default_rng(42)
-
-    prior_approvals = rng.uniform(0, 8, n)
-    prior_denials = rng.integers(0, 5, n).astype(float)
-    avg_response_ms = np.where(rng.random(n) < 0.2, None, rng.uniform(1_000, 40_000, n))
-    avg_edit_distance = rng.uniform(0, 1, n)
-    diff_sizes = rng.integers(0, 300, n)
-    blast_radii = rng.integers(1, 8, n)
-    is_new_file = rng.random(n) < 0.25
-    is_security_sensitive = rng.random(n) < 0.1
-    change_patterns = rng.choice(list(_PATTERN_RISK.keys()), n)  # type: ignore[arg-type]
-    recent_denials = rng.integers(0, 4, n)
-    files_in_action = rng.integers(1, 6, n)
-    verification_failure_rates = np.where(rng.random(n) < 0.3, rng.uniform(0, 1, n), None)
-    model_confidence = np.where(rng.random(n) < 0.4, rng.uniform(0.2, 1.0, n), None)
-
-    X: list[np.ndarray] = []
-    y: list[int] = []
-    for i in range(n):
-        pi = PolicyInput(
-            prior_approvals=float(prior_approvals[i]),
-            prior_denials=int(prior_denials[i]),
-            avg_response_ms=float(avg_response_ms[i]) if avg_response_ms[i] is not None else None,
-            avg_edit_distance=float(avg_edit_distance[i]),
-            diff_size=int(diff_sizes[i]),
-            blast_radius=int(blast_radii[i]),
-            is_new_file=bool(is_new_file[i]),
-            is_security_sensitive=bool(is_security_sensitive[i]),
-            change_pattern=change_patterns[i],
-            recent_denials=int(recent_denials[i]),
-            files_in_action=int(files_in_action[i]),
-            verification_failure_rate=float(verification_failure_rates[i]) if verification_failure_rates[i] is not None else None,
-            model_confidence_avg=float(model_confidence[i]) if model_confidence[i] is not None else None,
-            model_confidence_samples=3 if model_confidence[i] is not None else 0,
-        )
-        score = float(decide_action(pi, proceed_threshold=0.9, flag_threshold=0.2).score)
-        X.append(featurize(pi))
-        y.append(1 if score >= 0.2 else 0)
-
-    return np.array(X), np.array(y)
-
-
-def build_warm_start_classifier(n_synthetic: int = 500) -> PolicyClassifier:
-    """Build a classifier pre-trained on synthetic heuristic data so cold-start behavior is stable."""
-    X, y = _build_warm_start_data(n_synthetic)
-
+def build_cold_classifier() -> PolicyClassifier:
+    """Build an uninitialized classifier. Contains no learned priors — the
+    heuristic scorer in policy.py carries cold-start behavior until real
+    developer decisions accumulate (see MIN_SAMPLES_FOR_LEARNED). The scaler
+    is fit on a minimal prototype set (zeros + ones in each feature's bounded
+    range) so the first update() call doesn't raise NotFittedError.
+    """
+    n_features = len(FEATURE_NAMES)
     scaler = StandardScaler()
-    X_scaled = scaler.fit_transform(X)
+    scaler.fit(np.array([np.zeros(n_features), np.ones(n_features)]))
 
-    clf = SGDClassifier(loss="log_loss", penalty="l2", alpha=0.001, max_iter=1, warm_start=True, random_state=42)
-    for _ in range(20):
-        clf.partial_fit(X_scaled, y, classes=np.array([0, 1]))
+    clf = SGDClassifier(
+        loss="log_loss",
+        penalty="l2",
+        alpha=0.001,
+        max_iter=1,
+        warm_start=True,
+        random_state=42,
+    )
+    # Seed the classifier with a single zero+one pair so partial_fit has seen
+    # both classes; this state is replaced by real data as it arrives.
+    seed_X = scaler.transform(np.array([np.zeros(n_features), np.ones(n_features)]))
+    clf.partial_fit(seed_X, np.array([0, 1]), classes=np.array([0, 1]))
 
-    return PolicyClassifier(clf=clf, scaler=scaler, sample_count=0, prior_coef=clf.coef_[0].copy())
+    return PolicyClassifier(
+        clf=clf,
+        scaler=scaler,
+        sample_count=0,
+        prior_coef=clf.coef_[0].copy(),
+        _calibrator=None,
+        _calib_X=[],
+        _calib_y=[],
+    )
+
+

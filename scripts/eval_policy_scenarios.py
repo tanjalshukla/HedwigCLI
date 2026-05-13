@@ -20,7 +20,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from sc.ml_policy import FEATURE_NAMES, build_warm_start_classifier, featurize
+from sc.ml_policy import FEATURE_NAMES, build_cold_classifier, featurize
 from sc.policy import PolicyInput
 
 
@@ -156,8 +156,8 @@ PERSONAS: dict[str, list[tuple[PolicyInput, bool]]] = {
 
 
 def train_persona(decisions: list[tuple[PolicyInput, bool]]) -> dict:
-    """Train a fresh warm-start classifier on a persona's decision history."""
-    clf = build_warm_start_classifier()
+    """Train a fresh cold classifier on a persona's decision history."""
+    clf = build_cold_classifier()
     for pi, approved in decisions:
         clf.update(pi, approved=approved)
     return {

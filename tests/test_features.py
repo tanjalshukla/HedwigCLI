@@ -4,7 +4,15 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from sc.features import classify_change_pattern, estimate_blast_radius, is_security_sensitive
+from sc.features import (
+    CHANGE_PATTERNS,
+    RiskSignals,
+    assess_risk,
+    change_type_label,
+    classify_change_pattern,
+    estimate_blast_radius,
+    is_security_sensitive,
+)
 
 
 class FeatureTests(unittest.TestCase):
@@ -36,6 +44,54 @@ class FeatureTests(unittest.TestCase):
             (root / "pkg" / "c.py").write_text("import pkg.a\n")
             radius = estimate_blast_radius(root, "pkg/a.py")
             self.assertGreaterEqual(radius, 2)
+
+
+class AssessRiskTests(unittest.TestCase):
+    def test_assess_risk_aggregates_all_signals(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "api").mkdir()
+            (root / "api" / "routes.py").write_text("def handler(): pass\n")
+            signals = assess_risk(
+                repo_root=root,
+                file_path="api/routes.py",
+                old_content="def handler(): pass\n",
+                new_content="def handler(): return 1\n",
+                is_new_file=False,
+                diff_size=12,
+            )
+        self.assertIsInstance(signals, RiskSignals)
+        self.assertEqual(signals.change_pattern, "api_change")
+        self.assertEqual(signals.diff_size, 12)
+        self.assertFalse(signals.is_new_file)
+
+    def test_change_type_label_prefixes_new_file(self) -> None:
+        new = RiskSignals(
+            change_pattern="general_change", blast_radius=1,
+            is_security_sensitive=False, is_new_file=True, diff_size=5,
+        )
+        existing = RiskSignals(
+            change_pattern="general_change", blast_radius=1,
+            is_security_sensitive=False, is_new_file=False, diff_size=5,
+        )
+        self.assertEqual(change_type_label(new), "new_file:general_change")
+        self.assertEqual(change_type_label(existing), "general_change")
+
+    def test_all_classifier_outputs_in_canonical_vocabulary(self) -> None:
+        # Any pattern returned by classify_change_pattern must be known to
+        # features.CHANGE_PATTERNS — downstream scorers rely on this.
+        for path, old, new in [
+            ("tests/test_x.py", "", "def test(): pass"),
+            ("settings.yaml", "", "k: 1"),
+            ("src/api/routes.py", "", "def h(): pass"),
+            ("src/models.py", "", "class M: pass"),
+            ("src/util.py", "x", "try:\n    x\nexcept Exception:\n    pass"),
+            ("src/util.py", "x", "import foo\nx"),
+            ("docs/readme.md", "", "# hi"),
+            ("src/util.py", "", "def f(): pass"),
+        ]:
+            pat = classify_change_pattern(path, old, new)
+            self.assertIn(pat, CHANGE_PATTERNS)
 
 
 if __name__ == "__main__":

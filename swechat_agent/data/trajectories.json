@@ -1,0 +1,53 @@
+{
+  "within_session": {
+    "pushback_is_any": {
+      "early": 0.3717,
+      "mid": 0.4016,
+      "late": 0.4026,
+      "p_early_vs_late": 0.0,
+      "significant": "**"
+    },
+    "is_failure_report": {
+      "early": 0.0645,
+      "mid": 0.0724,
+      "late": 0.0679,
+      "p_early_vs_late": 0.182672,
+      "significant": "ns"
+    },
+    "prompt_word_count": {
+      "early": 202.1248,
+      "mid": 152.4476,
+      "late": 159.2007,
+      "p_early_vs_late": 0.0,
+      "significant": "**"
+    },
+    "prev_tool_count": {
+      "early": 5.4021,
+      "mid": 4.5686,
+      "late": 4.6108,
+      "p_early_vs_late": 0.0,
+      "significant": "**"
+    },
+    "prev_bash_count": {
+      "early": 1.6284,
+      "mid": 1.6661,
+      "late": 1.7429,
+      "p_early_vs_late": 0.0,
+      "significant": "**"
+    },
+    "prev_write_edit_count": {
+      "early": 1.0179,
+      "mid": 0.9747,
+      "late": 0.9949,
+      "p_early_vs_late": 0.0,
+      "significant": "**"
+    }
+  },
+  "cross_session": {
+    "n_users_with_3plus_sessions": 128,
+    "icc": 0.2488,
+    "between_user_var": 0.0244,
+    "within_user_var": 0.0736,
+    "interpretation": "low"
+  }
+}

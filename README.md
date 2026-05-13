@@ -1,34 +1,16 @@
 # Hedwig
 
-Hedwig (`hw`) is a governance-first coding agent CLI. The model can
-read, plan, ask for guidance, and propose code changes. The local CLI
-decides what is actually allowed, what requires review, and what gets
-verified.
+Hedwig (`hw`) is a **governance layer that wraps a coding agent** (e.g. Claude via AWS Bedrock). The agent reads, plans, and proposes code changes. Hedwig decides, for each action, whether to proceed autonomously or pause for developer review — and calibrates that decision from observed interaction traces instead of static configuration.
 
-The point of the project is not full autonomy. It is selective,
-inspectable reduction in friction: routine work should get smoother as
-the system learns from prior interaction, while risky work remains
-governed.
+The system is not trying to outperform Claude Code at code generation. It sits above it and adds selective, inspectable oversight. Routine, repeatedly-approved work gets smoother; risky or novel work stays governed.
 
-## What Hedwig Does
+## What Hedwig does
 
-- Compiles freeform developer rules into either hard constraints or
-  softer behavioral guidance.
-- Separates model-initiated check-ins from policy-initiated check-ins.
-- Learns per-developer approval preferences from interaction traces via
-  an online logistic regression policy (warm-started from heuristic
-  priors, updated per decision via `partial_fit`).
-- Retrieves relevant prior guidance and corrections into later tasks.
-- Runs verification after approved changes.
-- Exports traces and session bundles for later analysis.
-
-**Policy engine:** The approval policy is a logistic regression
-classifier initialized from heuristic engineering priors and updated
-online from developer approvals and denials stored in `decision_traces`.
-Coefficients are persisted per repository and are directly inspectable
-via `hw observe weights`. A heuristic fallback is used until 10 real
-decisions have been recorded. The weights and feature definitions are
-documented in `SPEC.md`.
+- Compiles freeform developer rules into either **hard constraints** (CLI-enforced) or **behavioral guidelines** (retrieved into the prompt).
+- Evaluates every agent-proposed action through an approval cascade: hard constraint → active lease → policy scorer.
+- Scores actions with a `PolicyScorer` seam that has two adapters: a hand-weighted **heuristic** (`sc/policy.py`) carrying cold-start behavior, and an **online logistic regression** (`sc/ml_policy.py`, SGD, log-loss) that takes over once ≥ 10 real developer decisions have accumulated.
+- Separates **model-initiated** check-ins (the agent asked) from **policy-initiated** check-ins (Hedwig decided) and logs which fired.
+- Records every decision as an inspectable trace; `hw observe` surfaces history, weights, preferences, and exports.
 
 ## Install
 
@@ -47,16 +29,7 @@ python -m pip install --upgrade pip setuptools wheel
 pip install --no-build-isolation -e .
 ```
 
-The primary CLI entry point is:
-
-```bash
-hw
-```
-
-All public docs use `hw`. The older `sc` command remains available as a
-compatibility alias.
-
-## Quick Start
+## Quick start
 
 ```bash
 aws sso login --profile <PROFILE>
@@ -65,12 +38,9 @@ hw doctor --model-id <inference-profile-arn> --region us-east-1
 hw run "Add a small unit test for function X in foo.py" --show-intent
 ```
 
-Local Hedwig state lives in:
+Local state lives in `.sc/config.json` and `.sc/trust.db`.
 
-- `.sc/config.json`
-- `.sc/trust.db`
-
-## Core Commands
+## Core commands
 
 ```bash
 hw run "Update foo.py and add tests" --show-intent
@@ -82,40 +52,18 @@ hw observe traces --limit 20
 hw observe export --out .sc/exports
 ```
 
-## Demo Video Reproduction
+## Demo
 
 The public demo fixture lives in [`demo_task_api/`](demo_task_api).
 
-Start here:
+- [`demo_task_api/DEMO_FLOW.md`](demo_task_api/DEMO_FLOW.md) — steps to reproduce the filmed two-session demo
+- [`demo_task_api/README.md`](demo_task_api/README.md) — what the fixture contains
 
-- [`demo_task_api/DEMO_FLOW.md`](demo_task_api/DEMO_FLOW.md) — exact
-  steps to reproduce the filmed two-session demo
-- [`demo_task_api/README.md`](demo_task_api/README.md) — what the demo
-  fixture contains
+The demo shows: freeform rule compilation, a model-initiated architectural check-in in session 1, reduced friction + retrieved prior guidance in session 2, and exportable observability via `hw observe report`.
 
-The demo shows:
+## Architecture
 
-1. Freeform rule compilation into hard constraints vs. behavioral
-   guidance.
-2. A model-initiated architectural check-in during session 1.
-3. Reduced friction plus retrieved prior guidance during session 2.
-4. Exportable observability through `hw observe report`.
-
-## Repository Layout
-
-- [`sc/`](sc) — Hedwig CLI implementation, policy logic, prompts, and
-  runtime orchestration
-- [`demo_task_api/`](demo_task_api) — the small reproducible fixture used
-  in the public demo
-- [`docs/READING_ORDER.md`](docs/READING_ORDER.md) — fastest path
-  through the codebase
-- [`SPEC.md`](SPEC.md) — architecture notes, policy details, and
-  research framing
-
-## Architecture Notes
-
-For implementation details, policy logic, and the research-oriented
-architecture notes, see [`SPEC.md`](SPEC.md).
+For the runtime, policy, and data model, see [`SPEC.md`](SPEC.md). For the domain vocabulary this project uses consistently (Action, Stage, Check-in, PolicyScorer, RiskSignals, etc.), see [`CONTEXT.md`](CONTEXT.md). For parked research ideas and follow-ups, see [`BRAINSTORM.md`](BRAINSTORM.md).
 
 ## Testing
 

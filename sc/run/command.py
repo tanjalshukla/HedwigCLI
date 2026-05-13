@@ -11,7 +11,6 @@ from uuid import uuid4
 
 import typer
 from rich import print
-from rich.syntax import Syntax
 
 from ..agent_client import ClaudeClient
 from ..cli_shared import read_file_context as _read_file_context, resolve_config as _resolve_config
@@ -92,7 +91,13 @@ def _resolve_intent_declaration(
                 spec_digest=spec_context.digest if spec_context else None,
             )
             _refresh_session_context(session, feedback)
-            with _model_status("intent"):
+            # Open with a context-specific thought — a short preview of the
+            # task itself — so the spinner's first beat is grounded.
+            _task_preview = task if len(task) <= 60 else task[:57] + "…"
+            with _model_status(
+                "intent",
+                initial_thought=f'reading: "{_task_preview}"',
+            ):
                 response = client.declare_intent(
                     session,
                     task=task,
@@ -396,7 +401,30 @@ def run(
         study_task_id=task_id,
         autonomy_mode=profile.mode,
     )
-    print(f"[bold]Session mode[/bold] {profile.mode}")
+    from .banner import render_session_start_banner
+    from ..preference_inference import summarize_session
+
+    # Gather trace rows from all prior sessions to show whether Hedwig has
+    # a running read on this developer. Empty on first use; populated as
+    # real traces accumulate.
+    with trust_db._connect() as _conn:
+        _prior_rows = _conn.execute(
+            """
+            SELECT session_id, user_decision, edit_distance, user_feedback_text,
+                   task, pushback_type, created_at
+            FROM decision_traces
+            WHERE repo_root = ?
+            ORDER BY created_at DESC
+            LIMIT 100
+            """,
+            (repo_root_str,),
+        ).fetchall()
+    _prior_summary = summarize_session([dict(r) for r in _prior_rows]) if _prior_rows else None
+    render_session_start_banner(
+        config_model_id=config.model_id,
+        profile_mode=profile.mode,
+        prior_session_summary=_prior_summary,
+    )
     run_session_id = uuid4().hex
     threshold = permanent_threshold if permanent_threshold is not None else config.permanent_approval_threshold
     client = ClaudeClient(model_id=config.model_id, region=config.aws_region)
@@ -484,9 +512,6 @@ def run(
         print(f"[red]{exc}[/red]")
         raise typer.Exit(code=1)
 
-    print("\n[bold]Proposed patch[/bold]")
-    print(Syntax(patch_text, "diff", theme="ansi_dark", word_wrap=False))
-
     new_files = [path for path in touched_files if not (repo_root / path).exists()]
     if new_files and not _confirm_create_files(new_files):
         print("[yellow]Patch denied.[/yellow]")
@@ -534,17 +559,25 @@ def run(
         file_hashes=file_hashes,
     )
 
-    _capture_logic_notes(
-        trust_db=trust_db,
-        repo_root=repo_root_str,
-        session_id=run_session_id,
-        task=task,
-        declaration=declaration,
-        touched_files=touched_files,
-        patch_text=patch_text,
-        spec_context=spec_context,
-        client=client,
-    )
+    # Logic notes are captured in a background thread so they don't add
+    # latency to the developer's main flow. Failures are silently swallowed —
+    # this is best-effort context enrichment, not a critical path.
+    import threading
+    threading.Thread(
+        target=_capture_logic_notes,
+        kwargs=dict(
+            trust_db=trust_db,
+            repo_root=repo_root_str,
+            session_id=run_session_id,
+            task=task,
+            declaration=declaration,
+            touched_files=touched_files,
+            patch_text=patch_text,
+            spec_context=spec_context,
+            client=client,
+        ),
+        daemon=True,
+    ).start()
 
     print("[green]Patch applied successfully.[/green]")
     _finalize_run(

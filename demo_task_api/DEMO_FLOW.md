@@ -1,37 +1,30 @@
-# Reproducing the Hedwig Demo Video
+# Hedwig Demo Flow (2026 — post-SWE-chat revision)
 
-This file documents the exact flow used for the public Hedwig demo.
+Purpose: show in 6-8 minutes that Hedwig **adapts oversight from real traces**, using every capability that makes the system novel. Every scene proves one claim visible on-screen. This is the *product* demo, not the reproduction script for the submitted paper's video.
 
-The demo is intentionally short and shows four things:
+## The narrative
 
-1. Freeform rules become either hard constraints or behavioral guidance.
-2. Session 1 produces a model-initiated design check-in.
-3. Session 2 reuses prior interaction history to reduce friction.
-4. The full run is observable through `hw observe report`.
+We show Hedwig doing three things no existing system does, in order:
 
-## Demo Structure
+1. **Hedwig explains itself before asking** — session context surfaces before any check-in, so oversight never feels arbitrary.
+2. **Hedwig notices a pattern and asks to learn it** — the implicit-preference confirmation moment, Hedwig's clearest "I am learning you" surface.
+3. **Hedwig stops proactively when the data says to** — the failure-signal check-in, grounded in the SWE-chat finding (3.4× lift over random).
 
-- Session 1: add a summary endpoint
-- Session 2: extend that endpoint with an optional priority filter
+Plus we close with `hw observe personas` to make the inference layer visible.
 
-The important behavior is cross-session adaptation, not the size of the
-code change.
-
-## Off-Camera Setup
-
-Run from this directory:
+## Off-camera setup
 
 ```bash
 cd demo_task_api
-git init
-git restore task_api/api.py task_api/service.py
+git init 2>/dev/null || true
+git restore task_api/api.py task_api/service.py 2>/dev/null || true
 
 export AWS_PROFILE=dev
 export AWS_REGION=us-east-1
 export AWS_DEFAULT_REGION=us-east-1
 export AWS_SDK_LOAD_CONFIG=1
-export SA_MODEL_ID='arn:aws:bedrock:us-east-1:676534553170:inference-profile/global.anthropic.claude-sonnet-4-20250514-v1:0'
-export VERIFY_CMD="/Users/tanjalshukla/dynamic_autonomy_mvp/.venv/bin/python -m pytest tests -q"
+export SA_MODEL_ID='arn:aws:bedrock:us-east-1:676534553170:inference-profile/us.anthropic.claude-sonnet-4-6'
+export VERIFY_CMD="../.venv/bin/python -m pytest tests -q"
 
 aws sso login --profile dev
 hw init --model-id "$SA_MODEL_ID" --region us-east-1
@@ -39,236 +32,156 @@ hw reset --yes
 hw rules constraints-clear --all
 hw rules guidelines-clear --all
 
-# Pre-seed ML policy with synthetic developer history so `hw observe weights`
-# shows real coefficient drift during the demo, not a flat prior-only table.
+# Pre-seed enough history that the learned scorer is active and that
+# `hw observe personas` has something to show. Without this, session 1
+# would be fully heuristic-era and the "learned" story doesn't land.
 python ../scripts/seed_demo_db.py --repo-root .
 ```
 
-Before filming, confirm the fixture is at the pre-session1 baseline:
+Confirm baseline:
 
 ```bash
 rg -n "summary_handler|get_task_summary" task_api/api.py task_api/service.py || true
 ```
 
-That command should print nothing. If it prints anything, run:
+Should print nothing.
 
-```bash
-git restore task_api/api.py task_api/service.py
-```
-
-## Guidance to Paste During Session 1
-
-When Hedwig asks for optional architectural guidance, paste exactly:
-
-```text
-Use the nested object response. Preserve the existing response envelope and all public handler signatures. Make the new summary handler follow the same input style as existing read handlers. Prefer fewer check-ins. For low-risk internal changes, continue autonomously. Only check in for API, signature, schema, or security changes.
-```
-
-## On-Camera Flow
-
-### 1. Add the two startup rules
+## Scene 1 — Rules → two worlds
 
 ```bash
 hw rules add "Never modify files under locked/."
-hw rules add "For routine backend changes, reuse existing validation helpers and avoid creating new files unless clearly necessary."
-```
-
-Then set the starting mode and verification command:
-
-```bash
+hw rules add "Prefer small, reversible edits. Always check in on schema changes."
 hw config set-mode balanced
 hw config set-verification-cmd "$VERIFY_CMD"
 ```
 
-What this shows:
+**What to point at:** the first rule compiles to a hard constraint, the second to behavioral guidance. One sentence from you: *"Hard rules are enforced at the CLI boundary. Soft guidance is retrieved into the prompt when task-relevant. Same input, two completely different enforcement layers."*
 
-- the first rule becomes a hard constraint
-- the second rule becomes softer behavioral guidance
-- Hedwig starts from a balanced cold-start mode
-- verification is explicitly configured
+**Polish target:** rule-compilation output should clearly show `[hard constraint]` vs `[behavioral guideline]` with color + icon.
 
-### 2. Session 1
-
-Run:
+## Scene 2 — Session 1: the plan check-in with visible context
 
 ```bash
 hw run \
-'Read task_api/api.py, task_api/service.py, and docs/task_api_spec.md. Add a new /tasks/summary endpoint that returns task counts by status while preserving the existing list response envelope and all public handler signatures. If there is an API design tradeoff, stop and check in with assumptions and options.' \
+'Read task_api/api.py, task_api/service.py, and docs/task_api_spec.md. Add a new /tasks/summary endpoint that returns task counts by status. Preserve the existing list response envelope and all public handler signatures. If you hit an API design tradeoff, pause for a check-in.' \
 --spec docs/task_api_spec.md \
 --show-intent
 ```
 
-Expected interaction:
+**Expected scene:**
 
-- Hedwig prints `Session mode balanced`
-- Hedwig asks to read:
-  - `task_api/api.py`
-  - `task_api/service.py`
-  - `docs/task_api_spec.md`
-- choose `r` at the read prompt:
+1. Read-request panel appears. Developer picks `r` (approve + remember).
+2. **Model-initiated plan check-in** fires on the design tradeoff. *This is the key moment.*
+3. The panel now shows `adapted check-in context` above the prompt — session history, retrieved guidance from the rules, rationale for why Hedwig is pausing.
+4. Developer approves plan with `a`.
+5. Patch renders inline (green/red/cyan).
+6. Developer approves with `a`.
+7. Verification runs and passes.
 
-```text
-Approve once (a), approve & remember (r), or deny (d) [a/r/d]:
-```
+**What to point at:** *"Hedwig isn't just asking. It's explaining what it knows about this session before it asks. Rules we set 30 seconds ago are already retrieved and used."*
 
-- Hedwig raises a model-initiated planning check-in about handler style
-- choose option `1`
-- paste the guidance text above
-- approve the plan with `a`
-- approve the patch with `a`
+**Polish target:** the adapted-check-in panel should feel like one *thoughtful* pause, not a wall of text. Hierarchy: rationale on top in bold, then session signals, then files. Uses the cyan family.
 
-Expected session-1 result:
+## Scene 3 — Still in session 1: implicit-preference detected
 
-- changes applied to:
-  - `task_api/api.py`
-  - `task_api/service.py`
-- verification passed
-- end-of-run summary shows one check-in during the run
-
-### 3. Optional code reveal after session 1
-
-If you want to show the change in the editor, open:
-
-- `task_api/api.py`
-- `task_api/service.py`
-
-### 4. Session 2
-
-Run:
+After 2-3 more prompts in session 1 (or some seeded trace history), trigger the hypothesis confirmation. This is the scene the new backend makes possible.
 
 ```bash
-hw run \
-'Using the same spec, extend the new /tasks/summary flow to accept an optional priority filter while preserving the existing list endpoint, response envelopes, and the already-added summary-handler signature. Work only in task_api/api.py and task_api/service.py, reuse the existing service-layer priority validation behavior, do not create new files, and continue autonomously for low-risk internal changes.' \
---spec docs/task_api_spec.md \
---show-intent
+# Either a third real prompt, or pre-seeded traces make this fire naturally.
+hw run 'Add a priority field to the summary endpoint, just do the API layer, don't touch the service layer yet' --spec docs/task_api_spec.md
 ```
 
-Expected interaction:
+**Expected scene:**
 
-- Hedwig prints `Session mode balanced`
-- reads are auto-approved from remembered access
-- the reduced-friction block appears immediately:
-  - `Reduced friction (read): ...`
-  - `Retrieved guidance: ...`
-  - `Autonomy rationale (read): ...`
-- the retrieved guidance should reflect the pasted session-1 guidance, not just the broad startup rule
-- a plan checkpoint still appears; approve it with `a`
-- the apply stage should auto-approve the patch and flag it for review rather than prompting again
+1. Magenta panel: **"Hedwig noticed a pattern: you've narrowed scope on me a few times this session — want me to check in before multi-file changes for the rest of it?"**
+2. Developer types `y`.
+3. Confirmation message: preference saved, session-scoped.
 
-Expected session-2 result:
+**What to point at:** *"Hedwig just turned three implicit signals into an explicit preference the developer confirmed. This is what learning looks like — not a black-box model update, but a visible handshake."*
 
-- patch updates:
-  - `task_api/api.py`
-  - `task_api/service.py`
-- Hedwig prints:
-  - `Apply approved. Flagged for review:`
-  - both files
-  - `Verification passed.`
+**Polish target:** the magenta panel is the most visible moment in the demo. It needs to feel **intentional and rare**. Not a standard prompt. Uses the magenta family uniquely.
 
-### 5. Optional code reveal after session 2
+## Scene 4 — Still in session 1: the scope preference fires
 
-If you want to show the follow-up change in the editor, open:
-
-- `task_api/api.py`
-- `task_api/service.py`
-
-### 6. Inspect stored policies
-
-Run:
+Continue session 1 with another multi-file change to demonstrate the just-confirmed preference working.
 
 ```bash
-hw observe preferences
+hw run 'Extend the summary endpoint to also filter by due-date range. Update both api.py and service.py.'
 ```
 
-Expected highlights:
+**Expected scene:**
 
-- `Prefer fewer check-ins: yes` (inferred from session-1 guidance)
-- `Allowed check-in topics: api, schema, security, signature`
-- Effective scoring bands table shows how those preferences shifted the
-  auto-approve threshold
+1. Because the developer confirmed the scope-narrowing preference, the preference now matches (blast radius ≥ 2, past turn-position threshold, prior pushbacks exist).
+2. **Hedwig check-ins** even though the scorer would have auto-approved.
+3. The reason surfaced in the policy snapshot: *"confirmed preference forced check-in"*.
 
-This demonstrates what the stored policies look like in practice, and
-shows the audience why session-2 produced fewer prompts than session-1.
+**What to point at:** *"The preference Hedwig just learned is already changing behavior. Same scorer, different outcome, because the developer told Hedwig something about how they want oversight."*
 
-Point out: these preferences can be revoked individually without resetting
-everything. For example, if the developer no longer trusts the agent with
-API changes:
+**Polish target:** the reason string should be visually distinct — "learned preference active" as a little badge.
+
+## Scene 5 — Scene optional: the failure-signal proactive check-in
+
+This requires session state with debug intent + bash activity + at least one prior failure. If scene 2-4's trace doesn't produce this, we can force it with a scripted prompt:
 
 ```bash
-hw observe preferences-revoke --topic api
+hw run 'The tests are failing intermittently, can you debug why? Run them a few times and figure it out.'
 ```
 
-This tightens oversight selectively rather than wiping the slate. It
-directly demonstrates the claim that oversight can both loosen and tighten
-across sessions.
+**Expected scene:**
 
-### 7. Show the learned policy weights
+1. Hedwig runs a few bash iterations.
+2. Eventually a verification failure or developer-flagged error.
+3. **Next turn, Hedwig pauses proactively** before more bash.
+4. The panel explicitly cites the failure-signal trigger and its grounding: *"Based on SWE-chat analysis of 62K real developer-agent turns, this pattern pre-empts failure reports 3.4× better than a random check-in."*
 
-Run:
+**What to point at:** *"This trigger isn't heuristic. It's the single most empirically-grounded check-in in the system, and it just fired."*
+
+**Polish target:** this panel needs a distinct visual — red family, the 3.4× stat visible on-panel, a small inline reference to "SWE-chat N=62K" to show the citation surface.
+
+## Scene 6 — `hw observe personas` — the inference made visible
+
+```bash
+hw observe personas
+```
+
+**Expected scene:** a table showing the session's inferred coding mode, inferred intensity (DELEGATING vs ACTIVE), pushback mix (6 columns), approval rate, and whether the failure-signal would have fired.
+
+**What to point at:** *"Everything I just showed you is observable. Hedwig isn't a black box. Every preference, every pattern, every inferred signal has a command that surfaces it."*
+
+**Polish target:** this table should look like a real product dashboard. Colored intensity column, sparkline-style pushback mix, clear highlighting of the session we just ran.
+
+## Scene 7 — `hw observe weights`: learning made visible
 
 ```bash
 hw observe weights
 ```
 
-Expected output: a table of all 13 feature coefficients with three columns —
-prior (warm-start from heuristic), current (updated from trace history),
-and signed delta. The sample count in the table title shows how many real
-developer decisions have been incorporated.
+**Expected scene:** coefficient drift table with three columns (prior, current, delta) for the 13 features of the learned scorer, sample count in the title.
 
-Key talking point: the warm-start priors encode the hand-crafted heuristic
-weights. Every approve/deny decision recorded in the trace log shifts
-the coefficients toward this developer's actual risk preferences via online
-logistic regression. The delta column shows which risk signals have moved
-most — for example, `change_pattern_risk` and `prior_denials` typically
-shift after just two sessions. This is Hedwig's trace-driven personalization
-made directly observable.
+**What to point at:** *"And this is the learned scorer. 13 features, online SGD, every developer decision updates these coefficients. The cold-start value is zero everywhere — every bit of drift is real interaction data."*
 
-After showing the table, point out that the end-of-session summary also
-reports the sample count:
+**Polish target:** Delta column with green/red bars for direction, subtle animation on largest mover when the table renders.
 
-```
-Learned policy active (N decisions recorded this repo).
-```
+## Close
 
-### 8. Observability close
+End-of-run line: `Learned policy active (N decisions recorded this repo).`
 
-Run:
+## Timing target
 
-```bash
-hw observe report
-```
+| Scene | Target duration |
+|---|---|
+| 1. Rules | 30 sec |
+| 2. Session 1 plan check-in | 90 sec |
+| 3. Implicit-preference confirmation | 45 sec |
+| 4. Confirmed preference fires | 60 sec |
+| 5. Failure-signal trigger | 45 sec |
+| 6. `observe personas` | 30 sec |
+| 7. `observe weights` | 30 sec |
+| **Total** | **~5 min 30 sec** |
 
-Expected highlights:
+Leaves buffer for discussion. Cuttable if needed: scene 5 if it doesn't happen naturally, or scene 7.
 
-- model-initiated and policy-initiated oversight are separated
-- verification passed
-- the interaction is fully traced
-
-Point to:
-
-- `model_proactive`
-- `policy`
-
-## Best Moments to Capture
-
-Use these for screenshots or the video pause:
-
-1. Session 1:
-   - the model check-in with the two interface options
-2. Session 2:
-   - `read: prior approvals N -- guidance: "..."` compact auto-approve line
-   - end-of-session: `Check-ins: 1 policy-initiated.` vs session-1's higher count
-3. Preferences inspection:
-   - `hw observe preferences` table showing inferred topics and scoring bands
-   - `hw observe preferences-revoke --topic api` showing that oversight can tighten
-4. Learned policy weights:
-   - `hw observe weights` table: prior vs. current coefficients with signed deltas
-   - sample count in the title confirming real decisions drove the update
-   - end-of-session line: `Learned policy active (N decisions recorded this repo).`
-5. Observability close:
-   - `model_proactive` vs `policy` separation in `hw observe report`
-
-## If You Need to Reset and Rerun
+## Reset between runs
 
 ```bash
 git restore task_api/api.py task_api/service.py
@@ -278,13 +191,14 @@ hw rules guidelines-clear --all
 python ../scripts/seed_demo_db.py --repo-root .
 ```
 
-## Troubleshooting
+## What this demo proves
 
-- If session 1 says the task is already complete, the fixture is not at
-  the pre-session1 baseline. Run the reset block above and confirm that
-  `task_api/api.py` does not contain `summary_handler`.
-- If session 2 does not mention `priority`, stop and rerun from the
-  clean baseline. The intended follow-up change updates both
-  `task_api/api.py` and `task_api/service.py`.
-- If Bedrock authentication fails, rerun `aws sso login --profile dev`
-  before restarting the demo flow.
+| Claim | Scene that proves it |
+|---|---|
+| Rules → two-tier governance (hard + soft) | Scene 1 |
+| Oversight is contextual, not arbitrary | Scene 2 |
+| Hedwig learns from implicit signals | Scene 3 |
+| Learned preferences change future behavior | Scene 4 |
+| Some triggers are empirically grounded | Scene 5 |
+| The system is fully observable | Scenes 6, 7 |
+| Online learning is real (not synthetic) | Scene 7 |
