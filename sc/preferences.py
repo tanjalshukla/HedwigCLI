@@ -286,7 +286,7 @@ DEFAULT_PREFERENCES: tuple[Preference, ...] = (
 # ---------------------------------------------------------------------------
 
 
-def preference_to_dict(pref: Preference) -> dict:
+def preference_to_dict(pref: Preference) -> dict[str, object]:
     """Serialize a Preference to a plain dict suitable for JSON encoding."""
     return {
         "trigger": {
@@ -333,7 +333,7 @@ def preference_to_dict(pref: Preference) -> dict:
     }
 
 
-def preference_from_dict(data: dict) -> Preference:
+def preference_from_dict(data: dict[str, object]) -> Preference:
     """Deserialize a Preference from preference_to_dict output."""
     t = data.get("trigger", {})
     c = data.get("condition", {})

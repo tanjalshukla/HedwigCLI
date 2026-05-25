@@ -8,6 +8,10 @@ Constant: _SNAPSHOT_RETENTION.
 """
 
 import time
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from ..ml_policy import PolicyClassifier
 
 
 class ModelStoreMixin:
@@ -17,7 +21,7 @@ class ModelStoreMixin:
     # session without letting the DB grow unbounded.
     _SNAPSHOT_RETENTION = 20
 
-    def load_policy_model(self, repo_root: str):
+    def load_policy_model(self, repo_root: str) -> "PolicyClassifier | None":
         """Return the persisted PolicyClassifier for repo_root, or None if absent."""
         from ..ml_policy import PolicyClassifier  # local import to keep trust_db lean
 
@@ -33,7 +37,7 @@ class ModelStoreMixin:
         except Exception:
             return None
 
-    def save_policy_model(self, repo_root: str, model) -> None:
+    def save_policy_model(self, repo_root: str, model: "PolicyClassifier") -> None:
         """Persist a PolicyClassifier for repo_root.
 
         Takes a snapshot of the *prior* model blob (if any) before writing

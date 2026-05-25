@@ -13,8 +13,10 @@ and can be recalibrated from real Hedwig traces over time.
 
 import sqlite3
 from dataclasses import dataclass
+from typing import Sequence
 
 from .preferences import CodingMode, PushbackType, TaskIntent, TurnPurpose, UserPersona
+from .store.types import DecisionTraceRow
 
 
 # Thresholds are documented priors, not tuned values. Rebalance from trace data.
@@ -113,7 +115,7 @@ class SessionSummary:
         return (self.n_denials + self.n_interruptions) / self.n_turns if self.n_turns else 0.0
 
 
-def summarize_session(rows: list[sqlite3.Row] | list[dict]) -> SessionSummary:
+def summarize_session(rows: Sequence[sqlite3.Row] | Sequence[DecisionTraceRow]) -> SessionSummary:
     """Build a SessionSummary from decision_traces rows for one session.
 
     Turn-purpose awareness: turns classified as context_provision,
@@ -486,7 +488,7 @@ def hypothesize_from_session(
     return None
 
 
-def pushback_counts_from_rows(rows: list[dict]) -> dict[str, int]:
+def pushback_counts_from_rows(rows: Sequence[DecisionTraceRow]) -> dict[str, int]:
     """Compute pushback type counts from decision_traces rows."""
     counter: Counter[str] = Counter()
     for row in rows:

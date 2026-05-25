@@ -23,6 +23,8 @@ from .helpers import (
     _append_file_context,
     _auto_read_user_decision,
     _constraint_index,
+    _hard_constraint_decision,
+    _lease_decision,
     _policy_decision_for_file,
 )
 from .traces import _policy_checkin_initiators, _record_traces
@@ -146,41 +148,22 @@ def _process_read_request(
 
         constraint = trust_db.strongest_constraint(repo_root_str, path, access_type="read")
         if constraint is not None:
-            read_policy = constraint.policy_for("read")
-            read_leases[path] = read_policy
-            if read_policy == "always_deny":
-                read_policies[path] = PolicyDecision(
-                    action="check_in",
-                    score=-1000.0,
-                    reasons=("hard constraint: always_deny",),
-                )
-                denied_reads.append(path)
-                continue
-            if read_policy == "always_check_in":
-                read_policies[path] = PolicyDecision(
-                    action="check_in",
-                    score=-500.0,
-                    reasons=("hard constraint: always_check_in",),
-                )
-                needs_prompt.append(path)
-                continue
-            if read_policy == "always_allow":
-                read_policies[path] = PolicyDecision(
-                    action="proceed",
-                    score=900.0,
-                    reasons=("hard constraint: always_allow",),
-                )
-                auto_reads.append(path)
+            decision, lease_label, outcome = _hard_constraint_decision(constraint, "read")
+            if outcome != "passthrough":
+                read_leases[path] = lease_label
+                read_policies[path] = decision
+                if outcome == "deny":
+                    denied_reads.append(path)
+                elif outcome == "check_in":
+                    needs_prompt.append(path)
+                elif outcome == "allow":
+                    auto_reads.append(path)
                 continue
 
         lease = active_reads.get(path)
         read_leases[path] = lease.lease_type if lease else None
         if lease is not None:
-            read_policies[path] = PolicyDecision(
-                action="proceed",
-                score=1000.0,
-                reasons=("active read lease",),
-            )
+            read_policies[path] = _lease_decision(lease, "read")
             auto_reads.append(path)
             continue
 

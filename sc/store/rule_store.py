@@ -14,7 +14,10 @@ import json
 import re
 import time
 from fnmatch import fnmatch
-from typing import Iterable
+from typing import TYPE_CHECKING, Iterable
+
+if TYPE_CHECKING:
+    from ..trust_db import BehavioralGuideline, HardConstraint, LogicNote
 
 _RETRIEVAL_STOPWORDS = {
     "a", "an", "and", "are", "as", "at", "be", "before", "by", "do", "for",
@@ -149,7 +152,7 @@ class RuleStoreMixin:
             )
         return len(pending)
 
-    def list_constraints(self, repo_root: str) -> list:
+    def list_constraints(self, repo_root: str) -> list["HardConstraint"]:
         from ..trust_db import HardConstraint
         with self._connect() as conn:
             rows = conn.execute(
@@ -173,11 +176,17 @@ class RuleStoreMixin:
             for row in rows
         ]
 
-    def matching_constraints(self, repo_root: str, file_path: str) -> list:
+    def matching_constraints(self, repo_root: str, file_path: str) -> list["HardConstraint"]:
         all_constraints = self.list_constraints(repo_root)
         return [constraint for constraint in all_constraints if fnmatch(file_path, constraint.path_pattern)]
 
-    def strongest_constraint(self, repo_root: str, file_path: str, *, access_type: str = "write"):
+    def strongest_constraint(
+        self,
+        repo_root: str,
+        file_path: str,
+        *,
+        access_type: str = "write",
+    ) -> "HardConstraint | None":
         priority = {"always_deny": 3, "always_check_in": 2, "always_allow": 1}
         matched = self.matching_constraints(repo_root, file_path)
         if not matched:

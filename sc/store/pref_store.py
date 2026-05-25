@@ -10,13 +10,18 @@ get_pending_hypothesis_candidates, update_hypothesis_evidence,
 set_hypothesis_status, candidate_driver_exists.
 """
 
+import sqlite3
 import time
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from ..autonomy import AutonomyPreferences
 
 
 class PrefStoreMixin:
     # _connect and autonomy imports are provided by TrustDB.
 
-    def autonomy_preferences(self, repo_root: str):
+    def autonomy_preferences(self, repo_root: str) -> "AutonomyPreferences":
         from ..autonomy import AutonomyPreferences
         with self._connect() as conn:
             row = conn.execute(
@@ -34,7 +39,7 @@ class PrefStoreMixin:
     def merge_autonomy_preferences(
         self,
         repo_root: str,
-        inferred,
+        inferred: "AutonomyPreferences",
     ) -> list[str]:
         from ..autonomy import merge_preferences
         current = self.autonomy_preferences(repo_root)
@@ -72,7 +77,7 @@ class PrefStoreMixin:
         self._save_autonomy_preferences(repo_root, updated)
         return revoked
 
-    def _save_autonomy_preferences(self, repo_root: str, preferences) -> None:
+    def _save_autonomy_preferences(self, repo_root: str, preferences: "AutonomyPreferences") -> None:
         now = int(time.time())
         with self._connect() as conn:
             conn.execute(
@@ -144,7 +149,7 @@ class PrefStoreMixin:
 
     def confirmed_preferences_for_repo(
         self, repo_root: str, *, limit: int = 20
-    ) -> list:
+    ) -> list[sqlite3.Row]:
         """All accepted confirmed preferences for this repo, newest first."""
         with self._connect() as conn:
             rows = conn.execute(
@@ -159,7 +164,7 @@ class PrefStoreMixin:
 
     def confirmed_preferences_for_session(
         self, repo_root: str, session_id: str
-    ) -> list:
+    ) -> list[sqlite3.Row]:
         with self._connect() as conn:
             rows = conn.execute(
                 "SELECT preference_json, driver, created_at "
@@ -197,7 +202,7 @@ class PrefStoreMixin:
 
     def get_pending_hypothesis_candidates(
         self, repo_root: str, session_id: str
-    ) -> list:
+    ) -> list[sqlite3.Row]:
         with self._connect() as conn:
             return conn.execute(
                 """

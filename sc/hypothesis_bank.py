@@ -40,6 +40,7 @@ from .preferences import (
     UserPersona,
     preference_to_dict,
 )
+from .store.types import DecisionTraceRow
 from .trust_db import TrustDB
 
 
@@ -56,7 +57,7 @@ MIN_EVIDENCE       = 3
 LLM_GENERATION_INTERVAL = 10
 
 
-def _context_weight(driver: str, trace: dict) -> float:
+def _context_weight(driver: str, trace: DecisionTraceRow) -> float:
     """Context similarity weight for evidence (0.5–1.5).
 
     Inspired by CIPHER (Gao et al., NeurIPS 2024): traces in contexts that
@@ -97,7 +98,7 @@ def _context_weight(driver: str, trace: dict) -> float:
     return 1.0
 
 
-def _evidence_for_trace(driver: str, trace: dict) -> tuple[int, int]:
+def _evidence_for_trace(driver: str, trace: DecisionTraceRow) -> tuple[int, int]:
     """Return (delta_for, delta_against) for a trace against a given driver."""
     pushback = trace.get("pushback_type") or ""
     decision = (trace.get("user_decision") or "").lower()

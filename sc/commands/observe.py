@@ -13,6 +13,7 @@ from ..autonomy import adjusted_policy_thresholds
 from ..commands.shared import open_trust_db, require_repo_root
 from ..cli_shared import is_approval_decision as _is_approval_decision
 from ..config import load_config
+from ..store.types import DecisionTraceRow
 
 def _format_expiry(expires_at: int | None) -> str:
     if expires_at is None:
@@ -1023,7 +1024,7 @@ def report(
         )
 
 
-def _session_summary(rows: list[dict]) -> dict[str, object]:
+def _session_summary(rows: list[DecisionTraceRow]) -> dict[str, object]:
     if not rows:
         return {
             "trace_rows": 0,

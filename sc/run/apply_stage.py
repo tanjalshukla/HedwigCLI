@@ -9,6 +9,7 @@ import tempfile
 import threading
 from dataclasses import dataclass
 from pathlib import Path
+from typing import cast
 
 import typer
 from rich import print
@@ -29,6 +30,8 @@ from .helpers import (
     _apply_feedback_learning,
     _collect_change_metrics,
     _constraint_index,
+    _hard_constraint_decision,
+    _lease_decision,
     _normalize_new_content,
     _policy_decision_for_file,
 )
@@ -49,15 +52,16 @@ from ..preference_inference import (
     summarize_session,
 )
 from ..preferences import (
+    Preference,
     PreferenceAction,
     TaskIntent,
     UserPersona,
     force_action_from_preferences,
-    match_confirmed_preferences,
     match_default_preferences,
     preference_from_dict,
     preference_to_dict,
 )
+from ..store.types import DecisionTraceRow
 from .apply_ui import (
     maybe_offer_permanent_lease,
     render_apply_auto_approved,
@@ -69,6 +73,7 @@ from .apply_ui import (
     render_soft_checkin_gate,
 )
 from .hypothesis_ui import render_hypothesis_confirmation
+from .preference_coordinator import PreferenceCoordinator
 from .traces import _policy_checkin_initiators, _record_traces
 from ..schema import IntentDeclaration
 from ..session import ClaudeSession
@@ -269,21 +274,21 @@ class _SessionContext:
     All fields are read-only after construction.
     """
 
-    session_row_dicts: list[dict]           # all traces for this session (all stages)
-    apply_row_dicts: list[dict]             # apply-stage rows only — use for inference and regret
-    session_summary: "SessionSummary"       # from preference_inference
-    session_persona: "UserPersona"          # inferred
+    session_row_dicts: list[DecisionTraceRow]
+    apply_row_dicts: list[DecisionTraceRow]
+    session_summary: SessionSummary
+    session_persona: UserPersona
     effective_intensity: str               # "active" | "delegating" | "unknown" (possibly pinned)
-    effective_persona: "UserPersona"        # effective — may differ from inferred when pinned
+    effective_persona: UserPersona
     coding_mode: str
-    current_task_intent: "TaskIntent"
+    current_task_intent: TaskIntent
     current_turn_purpose: str
     recent_verif_failures: int
-    matched_defaults: tuple                 # tuple[Preference, ...]
-    autonomy_derived_prefs: tuple           # tuple[Preference, ...] from AutonomyPreferences
-    confirmed_prefs: list                   # list[Preference] confirmed this session
+    matched_defaults: tuple[Preference, ...]
+    autonomy_derived_prefs: tuple[Preference, ...]
+    confirmed_prefs: list[Preference]
     session_position: float
-    forced_action: "PreferenceAction | None"
+    forced_action: PreferenceAction | None
     pushback_counts: dict[str, int]
 
 
@@ -308,7 +313,11 @@ def _build_session_context(
     from ..preferences import UserPersona as _UP
 
     all_trace_rows = trust_db.session_traces(repo_root_str, run_session_id)
-    all_row_dicts = [dict(r) for r in all_trace_rows]
+    # sqlite3.Row exposes the same string-keyed access as our TypedDict, and
+    # column names from session_traces() are a subset of DecisionTraceRow.
+    all_row_dicts: list[DecisionTraceRow] = [
+        cast(DecisionTraceRow, dict(r)) for r in all_trace_rows
+    ]
 
     # Filter to apply-stage rows for behavioral signal inference.
     # Read-stage traces don't carry approval/denial signals meaningful for
@@ -564,6 +573,18 @@ def _evaluate_apply_stage(
     )
 
 
+    preference_coordinator = PreferenceCoordinator(
+        confirmed_prefs=ctx.confirmed_prefs,
+        autonomy_derived_prefs=ctx.autonomy_derived_prefs,
+        matched_defaults=ctx.matched_defaults,
+        session_summary=ctx.session_summary,
+        current_task_intent=ctx.current_task_intent,
+        current_turn_purpose=ctx.current_turn_purpose,
+        recent_verification_failures=ctx.recent_verif_failures,
+        session_position=ctx.session_position,
+        session_id=run_session_id,
+    )
+
     # Score each touched file independently, then aggregate to one approval decision.
     for path in touched_files:
         history = trust_db.policy_history(repo_root_str, path, stage="apply")
@@ -588,40 +609,24 @@ def _evaluate_apply_stage(
 
         constraint = apply_constraints.get(path)
         if constraint is not None:
-            write_policy = constraint.policy_for("write")
-            apply_leases[path] = write_policy
-            if write_policy == "always_deny":
-                apply_policies[path] = PolicyDecision(
-                    action="check_in",
-                    score=-1000.0,
-                    reasons=("hard constraint: always_deny",),
-                )
-                denied_apply.append(path)
-                continue
-            if write_policy == "always_check_in":
-                apply_policies[path] = PolicyDecision(
-                    action="check_in",
-                    score=-500.0,
-                    reasons=("hard constraint: always_check_in",),
-                )
-                prompt_required = True
-                continue
-            if write_policy == "always_allow":
-                apply_policies[path] = PolicyDecision(
-                    action="proceed",
-                    score=900.0,
-                    reasons=("hard constraint: always_allow",),
-                )
+            decision, lease_label, outcome = _hard_constraint_decision(constraint, "write")
+            if outcome != "passthrough":
+                apply_leases[path] = lease_label
+                apply_policies[path] = decision
+                if outcome == "deny":
+                    denied_apply.append(path)
+                elif outcome == "check_in":
+                    prompt_required = True
+                # outcome == "allow" needs no per-file side effect at the apply
+                # stage: the decision itself (proceed @ score 900) is enough,
+                # and there is no symmetric "auto_apply" list (writes are always
+                # rendered through render_apply_auto_approved later).
                 continue
 
         lease = active_apply.get(path)
         apply_leases[path] = lease.lease_type if lease else None
         if lease is not None:
-            apply_policies[path] = PolicyDecision(
-                action="proceed",
-                score=1000.0,
-                reasons=("active write lease",),
-            )
+            apply_policies[path] = _lease_decision(lease, "write")
             continue
 
         if config.adaptive_policy_enabled:
@@ -663,81 +668,15 @@ def _evaluate_apply_stage(
                 score=0.0,
                 reasons=("adaptive policy disabled",),
             )
-        # Confirmed preferences: per-file, evaluate every user-confirmed
-        # preference against this action's risk + session state. Matched ones
-        # combine with the default-preference matches to determine the final
-        # forced action.
-        _matched_confirmed = match_confirmed_preferences(
-            tuple(ctx.confirmed_prefs),
-            risk=risk,
-            session_summary=ctx.session_summary,
-            current_task_intent=ctx.current_task_intent,
-            stage="apply",
+        # Per-file preference resolution: tighten or loosen the scorer's
+        # decision against built-in defaults, AutonomyPreferences-derived
+        # preferences, and session-confirmed preferences. Hard constraints
+        # never reach this point (they `continue` above with score -1000/-500).
+        decision = preference_coordinator.apply_to_decision(
+            decision=decision,
             file_path=path,
-            session_position=ctx.session_position,
-            session_id=run_session_id,
-            current_turn_purpose=ctx.current_turn_purpose,
-            recent_verification_failures=ctx.recent_verif_failures,
-        )
-        _matched_autonomy = match_confirmed_preferences(
-            ctx.autonomy_derived_prefs,
             risk=risk,
-            session_summary=ctx.session_summary,
-            current_task_intent=ctx.current_task_intent,
-            stage="apply",
-            file_path=path,
-            session_position=ctx.session_position,
-            session_id=run_session_id,
-            current_turn_purpose=ctx.current_turn_purpose,
-            recent_verification_failures=ctx.recent_verif_failures,
-        )
-        _all_matched = ctx.matched_defaults + _matched_confirmed + _matched_autonomy
-        _file_forced_action = force_action_from_preferences(_all_matched)
-
-        # Preferences can tighten or loosen the scorer's action.
-        # Asymmetry: tightening always applies; loosening (auto_apply) only
-        # applies if the scorer didn't already decide to check_in.
-        #
-        # Reason-string discipline: only append the reason for the action that
-        # actually wins. When AUTO_APPLY and FULL_CHECKIN both match (e.g.
-        # prefer_fewer_checkins=True but a confirmed scope_constraint preference
-        # also fires), FULL_CHECKIN wins via force_action_from_preferences, and
-        # only the FULL_CHECKIN reason is appended. Appending the AUTO_APPLY
-        # reason too would produce contradictory trace strings.
-        if _file_forced_action is not None:
-            if _file_forced_action.value == "full_checkin" and decision.action != "check_in":
-                from_confirmed = any(
-                    p.lifecycle.provenance == "inferred_user_confirmed"
-                    for p in _matched_confirmed
-                    if p.action.value == "full_checkin"
-                )
-                reason = (
-                    "confirmed preference forced check-in"
-                    if from_confirmed
-                    else "failure-signal trigger: debug intent + prior failure this session"
-                )
-                decision = PolicyDecision(
-                    action="check_in",
-                    score=decision.score,
-                    reasons=decision.reasons + (reason,),
-                )
-            elif _file_forced_action.value == "soft_checkin" and decision.action != "check_in":
-                decision = PolicyDecision(
-                    action="proceed_flag",
-                    score=decision.score,
-                    reasons=decision.reasons + ("soft-checkin trigger matched",),
-                )
-            elif _file_forced_action.value == "auto_apply" and decision.action == "check_in":
-                # AUTO_APPLY from AutonomyPreferences (prefer_fewer_checkins).
-                # Only loosens when the scorer decided to check_in — never bypasses
-                # hard constraints (those set score to -1000 or -500 and skip this path).
-                # Only append this reason when auto_apply actually wins (i.e. no
-                # higher-strictness preference also matched this file).
-                decision = PolicyDecision(
-                    action="proceed",
-                    score=decision.score,
-                    reasons=decision.reasons + ("autonomy preference: proceed autonomously",),
-                )
+        ).decision
 
         apply_policies[path] = decision
         if decision.action == "check_in":

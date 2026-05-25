@@ -7,6 +7,7 @@ import hashlib
 import json
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal
 
 from rich import print
 
@@ -18,7 +19,10 @@ from ..ml_policy import PolicyClassifier
 from ..policy import PolicyDecision, PolicyInput, decide_action, select_scorer
 from ..schema import IntentDeclaration
 from ..session import ClaudeSession
-from ..trust_db import HardConstraint, PolicyHistory, TrustDB
+from ..trust_db import HardConstraint, Lease, PolicyHistory, TrustDB
+
+AccessType = Literal["read", "write"]
+HardConstraintOutcome = Literal["deny", "check_in", "allow", "passthrough"]
 
 
 @dataclass(frozen=True)
@@ -209,12 +213,77 @@ def _constraint_index(
     repo_root: str,
     files: list[str],
     *,
-    access_type: str = "write",
+    access_type: AccessType = "write",
 ) -> dict[str, HardConstraint | None]:
     return {
         path: trust_db.strongest_constraint(repo_root, path, access_type=access_type)
         for path in files
     }
+
+
+def _lease_decision(
+    lease: Lease,
+    access_type: AccessType,
+) -> PolicyDecision:
+    """Build the PolicyDecision for an active lease grant.
+
+    Identical for read and write modulo the reason string. ``lease`` is a
+    ``Lease`` row (read or write) — only its presence matters here.
+    """
+    reason = "active read lease" if access_type == "read" else "active write lease"
+    return PolicyDecision(
+        action="proceed",
+        score=1000.0,
+        reasons=(reason,),
+    )
+
+
+def _hard_constraint_decision(
+    constraint: HardConstraint,
+    access_type: AccessType,
+) -> tuple[PolicyDecision, str, HardConstraintOutcome]:
+    """Translate a hard constraint into a PolicyDecision.
+
+    Returns (decision, lease_label, outcome) where outcome is one of
+    "deny" / "check_in" / "allow" so callers can dispatch their stage-specific
+    side effects (which list to append to, prompt flags, etc.).
+    """
+    policy = constraint.policy_for(access_type)
+    if policy == "always_deny":
+        return (
+            PolicyDecision(
+                action="check_in",
+                score=-1000.0,
+                reasons=("hard constraint: always_deny",),
+            ),
+            policy,
+            "deny",
+        )
+    if policy == "always_check_in":
+        return (
+            PolicyDecision(
+                action="check_in",
+                score=-500.0,
+                reasons=("hard constraint: always_check_in",),
+            ),
+            policy,
+            "check_in",
+        )
+    if policy == "always_allow":
+        return (
+            PolicyDecision(
+                action="proceed",
+                score=900.0,
+                reasons=("hard constraint: always_allow",),
+            ),
+            policy,
+            "allow",
+        )
+    return (
+        PolicyDecision(action="proceed", score=0.0, reasons=()),
+        policy,
+        "passthrough",
+    )
 
 
 def _auto_read_user_decision(

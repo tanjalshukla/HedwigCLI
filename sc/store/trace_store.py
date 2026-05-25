@@ -12,9 +12,23 @@ access_stats, checkin_calibration, model_checkin_calibration, trust_summary.
 """
 
 import json
+import sqlite3
 import time
 from pathlib import Path
-from typing import Iterable
+from typing import TYPE_CHECKING, Iterable
+
+from .types import DecisionTraceRow, PlanRevisionRow  # noqa: F401  (re-exported)
+
+if TYPE_CHECKING:
+    from ..trust_db import (
+        AccessStats,
+        CheckInCalibration,
+        CheckInUsefulnessSummary,
+        ModelConfidenceStats,
+        PlanRevisionSummary,
+        PolicyHistory,
+        TrustSummary,
+    )
 
 
 class TraceStoreMixin:
@@ -161,7 +175,7 @@ class TraceStoreMixin:
                 ),
             )
 
-    def policy_history(self, repo_root: str, file_path: str, stage: str):
+    def policy_history(self, repo_root: str, file_path: str, stage: str) -> "PolicyHistory":
         from ..trust_db import PolicyHistory
         with self._connect() as conn:
             rows = conn.execute(
@@ -279,7 +293,7 @@ class TraceStoreMixin:
         *,
         file_path: str | None = None,
         limit: int = 50,
-    ):
+    ) -> "ModelConfidenceStats":
         from ..trust_db import ModelConfidenceStats
         where = ["repo_root = ?", "model_confidence_self_report IS NOT NULL"]
         params: list[object] = [repo_root]
@@ -299,7 +313,7 @@ class TraceStoreMixin:
         values = [float(row["model_confidence_self_report"]) for row in rows]
         return ModelConfidenceStats(average=(sum(values) / len(values)), samples=len(values))
 
-    def list_traces(self, repo_root: str, limit: int = 50) -> list:
+    def list_traces(self, repo_root: str, limit: int = 50) -> list[sqlite3.Row]:
         with self._connect() as conn:
             rows = conn.execute(
                 """
@@ -330,7 +344,7 @@ class TraceStoreMixin:
             return 0
         return int(row["c"] or 0)
 
-    def trace_by_id(self, repo_root: str, trace_id: int):
+    def trace_by_id(self, repo_root: str, trace_id: int) -> sqlite3.Row | None:
         with self._connect() as conn:
             row = conn.execute(
                 """
@@ -342,7 +356,7 @@ class TraceStoreMixin:
             ).fetchone()
         return row
 
-    def session_traces(self, repo_root: str, session_id: str) -> list:
+    def session_traces(self, repo_root: str, session_id: str) -> list[sqlite3.Row]:
         with self._connect() as conn:
             rows = conn.execute(
                 """
@@ -444,7 +458,7 @@ class TraceStoreMixin:
             ).fetchone()
         return None if row is None else str(row["session_id"])
 
-    def session_plan_revisions(self, repo_root: str, session_id: str) -> list:
+    def session_plan_revisions(self, repo_root: str, session_id: str) -> list[sqlite3.Row]:
         with self._connect() as conn:
             rows = conn.execute(
                 """
@@ -460,7 +474,7 @@ class TraceStoreMixin:
             ).fetchall()
         return rows
 
-    def plan_revision_summary(self, repo_root: str):
+    def plan_revision_summary(self, repo_root: str) -> "PlanRevisionSummary":
         from ..trust_db import PlanRevisionSummary
         with self._connect() as conn:
             row = conn.execute(
@@ -565,7 +579,7 @@ class TraceStoreMixin:
         repo_root: str,
         *,
         quick_approve_ms: int = 5000,
-    ) -> list:
+    ) -> list["CheckInUsefulnessSummary"]:
         from ..trust_db import CheckInUsefulnessSummary
         with self._connect() as conn:
             rows = conn.execute(
@@ -617,7 +631,7 @@ class TraceStoreMixin:
             for initiator, values in sorted(by_initiator.items())
         ]
 
-    def access_stats(self, repo_root: str, limit: int = 200):
+    def access_stats(self, repo_root: str, limit: int = 200) -> "AccessStats":
         from ..trust_db import AccessStats
         with self._connect() as conn:
             rows = conn.execute(
@@ -662,7 +676,7 @@ class TraceStoreMixin:
             multi_file_write_actions=multi_file_write_actions,
         )
 
-    def checkin_calibration(self, repo_root: str) -> list:
+    def checkin_calibration(self, repo_root: str) -> list["CheckInCalibration"]:
         """Aggregate check-in outcomes by initiator/stage for calibration analysis."""
         from ..trust_db import CheckInCalibration
         with self._connect() as conn:
@@ -715,7 +729,7 @@ class TraceStoreMixin:
             return 0, None
         return total, approvals / total
 
-    def trust_summary(self, repo_root: str):
+    def trust_summary(self, repo_root: str) -> "TrustSummary":
         from ..trust_db import TrustSummary
         approve_values = {
             "approve",

@@ -8,14 +8,18 @@ Helpers: _best_lease_map, _dedupe_lease_rows.
 """
 
 import json
+import sqlite3
 import time
-from typing import Iterable
+from typing import TYPE_CHECKING, Iterable
+
+if TYPE_CHECKING:
+    from ..trust_db import Lease
 
 
 class LeaseStoreMixin:
     # _connect and dataclasses (Lease) are provided by TrustDB
 
-    def _dedupe_lease_rows(self, conn, *, table: str) -> None:
+    def _dedupe_lease_rows(self, conn: sqlite3.Connection, *, table: str) -> None:
         duplicate_keys = conn.execute(
             f"""
             SELECT repo_root, file_path
@@ -54,8 +58,12 @@ class LeaseStoreMixin:
                 (repo_root, file_path, int(keep["id"])),
             )
 
-    def _best_lease_map(self, rows: Iterable, lease_type: str) -> dict:
-        best: dict = {}
+    def _best_lease_map(
+        self,
+        rows: Iterable[sqlite3.Row],
+        lease_type: str,
+    ) -> dict[str, "Lease"]:
+        best: dict[str, "Lease"] = {}
         for row in rows:
             file_path = str(row["file_path"])
             expires_at = row["expires_at"]
@@ -74,7 +82,7 @@ class LeaseStoreMixin:
                 best[file_path] = candidate
         return best
 
-    def active_leases(self, repo_root: str, files: Iterable[str]) -> dict:
+    def active_leases(self, repo_root: str, files: Iterable[str]) -> dict[str, "Lease"]:
         files_list = list(files)
         if not files_list:
             return {}
@@ -89,7 +97,7 @@ class LeaseStoreMixin:
             rows = conn.execute(query, params).fetchall()
         return self._best_lease_map(rows, "write")
 
-    def active_read_leases(self, repo_root: str, files: Iterable[str]) -> dict:
+    def active_read_leases(self, repo_root: str, files: Iterable[str]) -> dict[str, "Lease"]:
         files_list = list(files)
         if not files_list:
             return {}
@@ -104,7 +112,7 @@ class LeaseStoreMixin:
             rows = conn.execute(query, params).fetchall()
         return self._best_lease_map(rows, "read")
 
-    def list_active_leases(self, repo_root: str) -> list:
+    def list_active_leases(self, repo_root: str) -> list["Lease"]:
         now = int(time.time())
         with self._connect() as conn:
             rows = conn.execute(
