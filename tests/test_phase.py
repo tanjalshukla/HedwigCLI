@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from sc.phase import evaluate_write_phase_gate
+from sc.plan_gate import evaluate_write_phase_gate, PhaseGateResult
 
 
 class PhaseGateTests(unittest.TestCase):

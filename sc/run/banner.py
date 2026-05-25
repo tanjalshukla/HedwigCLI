@@ -15,6 +15,8 @@ from rich.console import Console
 from ..preference_inference import SessionSummary
 from .theme import PALETTE
 
+_CONSOLE = Console()
+
 
 # Compact owl. Four lines, narrow. Sized so it sits comfortably next to
 # a single metadata line without dominating the terminal.
@@ -36,7 +38,7 @@ def render_banner(
     confirmed_pref_count: int = 0,
 ) -> None:
     """Render the Hedwig owl plus session context to the right."""
-    console = Console()
+    console = _CONSOLE
 
     right_lines: list[str] = []
     right_lines.append(f"[{PALETTE['info_bold']}]hedwig[/{PALETTE['info_bold']}]")
@@ -51,9 +53,8 @@ def render_banner(
     # Show intensity — pinned takes precedence over inferred, marked with ⊙
     effective = pinned_intensity or intensity
     if effective and effective != "unknown":
-        from .intensity_toggle import _label_from_intensity
-        # Translate internal intensity value to user-facing oversight label.
-        label = _label_from_intensity(effective) if effective in (None, "active", "delegating") else effective
+        from .oversight_toggle import _label_from_intensity
+        label = _label_from_intensity(effective)
         color = PALETTE["learn"] if effective == "active" else PALETTE["info"]
         pin_marker = f"[{PALETTE['meta']}] ⊙[/{PALETTE['meta']}]" if pinned_intensity else ""
         right_lines.append(
@@ -62,14 +63,20 @@ def render_banner(
         )
 
     if confirmed_pref_count > 0:
+        pref_label = f"{'s' if confirmed_pref_count != 1 else ''}"
         right_lines.append(
-            f"[{PALETTE['learn']}]✦ {confirmed_pref_count} preference"
-            f"{'s' if confirmed_pref_count != 1 else ''} active[/{PALETTE['learn']}]"
+            f"[{PALETTE['learn']}]✦ {confirmed_pref_count} preference{pref_label} active[/{PALETTE['learn']}]"
         )
-    elif session_turn_count > 0:
+    if session_turn_count > 0:
         right_lines.append(
-            f"[{PALETTE['meta']}]prior turns:[/{PALETTE['meta']}] "
-            f"[{PALETTE['info']}]{session_turn_count}[/{PALETTE['info']}]"
+            f"[{PALETTE['meta']}]{session_turn_count} turns in this repo[/{PALETTE['meta']}]"
+        )
+
+    # Cold-start: when there's no prior history and no confirmed prefs, add a
+    # brief note so the empty right-side doesn't look like a rendering glitch.
+    if session_turn_count == 0 and confirmed_pref_count == 0:
+        right_lines.append(
+            "[dim]no prior sessions in this repo · starting fresh[/dim]"
         )
 
     while len(right_lines) < len(OWL_LINES):
@@ -93,8 +100,11 @@ def render_session_start_banner(
     """Session-start variant — shows mode, inferred/pinned intensity, and
     confirmed preference count so the learning story lands immediately."""
     model_short = config_model_id.split("/")[-1] if "/" in config_model_id else config_model_id
-    if len(model_short) > 40:
-        model_short = model_short[:37] + "..."
+    # Strip "global.anthropic." prefix from Bedrock inference profile names
+    if model_short.startswith("global.anthropic."):
+        model_short = model_short[len("global.anthropic."):]
+    if len(model_short) > 30:
+        model_short = model_short[:27] + "..."
 
     intensity = None
     turns = 0

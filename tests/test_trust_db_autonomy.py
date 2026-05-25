@@ -186,5 +186,111 @@ class TrustDBAutonomyTests(unittest.TestCase):
             self.assertEqual(session_rows[0]["autonomy_mode"], "balanced")
 
 
+class BuildSessionContextTests(unittest.TestCase):
+    """Verify that _build_session_context uses apply-stage traces only for n_turns.
+
+    A session with many read-stage traces but few (or zero) apply-stage traces
+    must NOT trigger ACTIVE persona or hypothesis thresholds based on read-stage
+    volume alone. This is the n_turns fix documented in the docstring.
+    """
+
+    def _record(
+        self,
+        db: TrustDB,
+        repo: str,
+        session_id: str,
+        stage: str,
+        user_decision: str = "approve",
+    ) -> None:
+        db.record_trace(
+            repo_root=repo,
+            session_id=session_id,
+            task="task",
+            stage=stage,
+            action_type="read_request" if stage == "read" else "write_request",
+            file_path="src/foo.py",
+            change_type="general_change",
+            diff_size=5,
+            blast_radius=1,
+            existing_lease=False,
+            lease_type=None,
+            prior_approvals=0,
+            prior_denials=0,
+            policy_action="proceed",
+            policy_score=0.8,
+            user_decision=user_decision,
+            participant_id=None,
+            study_run_id=None,
+            study_task_id=None,
+            autonomy_mode="balanced",
+        )
+
+    def test_read_stage_traces_do_not_inflate_n_turns(self) -> None:
+        """15 read-stage traces + 1 apply trace → n_turns == 1, not 16.
+
+        ACTIVE persona threshold is 10 (MIN_TURNS=10 in preference_inference).
+        If read-stage traces were counted, this session would appear ACTIVE and
+        prematurely surface hypotheses.
+        """
+        from sc.run.apply_stage import _build_session_context
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = TrustDB(Path(tmpdir) / "trust.db")
+            repo = "/tmp/repo"
+            sid = "session-read-inflation"
+
+            # 15 read-stage traces.
+            for _ in range(15):
+                self._record(db, repo, sid, stage="read")
+            # 1 apply-stage trace (well below ACTIVE threshold).
+            self._record(db, repo, sid, stage="apply")
+
+            ctx = _build_session_context(
+                trust_db=db,
+                repo_root_str=repo,
+                run_session_id=sid,
+                task="add a field",
+                autonomy_preferences=AutonomyPreferences(),
+                session_intensity_override=None,
+            )
+
+        # n_turns counts only apply-stage rows.
+        self.assertEqual(
+            ctx.session_summary.n_turns,
+            1,
+            "n_turns must reflect apply-stage traces only; read-stage must not be counted",
+        )
+        # With just 1 apply-stage turn the persona must not be ACTIVE.
+        from sc.preferences import UserPersona
+        self.assertNotEqual(
+            ctx.session_persona,
+            UserPersona.ACTIVE,
+            "ACTIVE persona must not fire from read-stage trace inflation",
+        )
+
+    def test_all_read_stage_session_has_zero_n_turns(self) -> None:
+        """A pure read-only session (no apply traces) should produce n_turns == 0."""
+        from sc.run.apply_stage import _build_session_context
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = TrustDB(Path(tmpdir) / "trust.db")
+            repo = "/tmp/repo"
+            sid = "session-read-only"
+
+            for _ in range(20):
+                self._record(db, repo, sid, stage="read")
+
+            ctx = _build_session_context(
+                trust_db=db,
+                repo_root_str=repo,
+                run_session_id=sid,
+                task="explore",
+                autonomy_preferences=AutonomyPreferences(),
+                session_intensity_override=None,
+            )
+
+        self.assertEqual(ctx.session_summary.n_turns, 0)
+
+
 if __name__ == "__main__":
     unittest.main()

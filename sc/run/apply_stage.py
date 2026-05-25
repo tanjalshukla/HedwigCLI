@@ -3,9 +3,11 @@ from __future__ import annotations
 """Apply-stage policy decisions and write/verification execution for `hw run`."""
 
 import hashlib
+import json
 import os
 import tempfile
-import time
+import threading
+from dataclasses import dataclass
 from pathlib import Path
 
 import typer
@@ -19,7 +21,7 @@ from ..autonomy import (
 from ..config import SAConfig, autonomy_profile
 from ..features import RiskSignals, assess_risk, change_type_label
 from ..ml_policy import PolicyClassifier, build_cold_classifier
-from ..policy import PolicyDecision, within_scope_budget
+from ..policy import PolicyDecision
 from .helpers import (
     AutonomyHistoryContext,
     StudyContext,
@@ -30,10 +32,15 @@ from .helpers import (
     _normalize_new_content,
     _policy_decision_for_file,
 )
-import json
-
+from ..hypothesis_bank import (
+    get_ready_hypothesis,
+    mark_candidate_surfaced,
+    seed_candidates_from_session,
+    update_evidence,
+    maybe_generate_llm_hypotheses,
+)
 from ..preference_inference import (
-    hypothesize_from_session,
+    SessionSummary,
     infer_coding_mode,
     infer_task_intent,
     infer_turn_purpose,
@@ -42,6 +49,9 @@ from ..preference_inference import (
     summarize_session,
 )
 from ..preferences import (
+    PreferenceAction,
+    TaskIntent,
+    UserPersona,
     force_action_from_preferences,
     match_confirmed_preferences,
     match_default_preferences,
@@ -60,7 +70,6 @@ from .apply_ui import (
 )
 from .hypothesis_ui import render_hypothesis_confirmation
 from .traces import _policy_checkin_initiators, _record_traces
-from .ui import _render_file_list
 from ..schema import IntentDeclaration
 from ..session import ClaudeSession
 from ..session_feedback import SessionFeedback
@@ -95,17 +104,22 @@ def _apply_regret_corrections(
 
     corrections = 0
     for event in events:
+        # Skip regrets already applied to this classifier instance. Without
+        # this guard, every call re-applies all prior regrets, producing O(N)
+        # spurious negative signals that can fully reverse real approval history.
+        regret_key = event.auto_approve_trace_id
+        if regret_key in classifier._corrected_regret_ids:
+            continue
+
         # Reconstruct a PolicyInput from the auto-approve trace that caused
-        # the regret. Look up file history at the time; use what we have.
-        history = trust_db.policy_history(repo_root_str, event.file_path, stage="apply")
-        # We don't have the exact RiskSignals from the original trace, but
-        # diff_size and blast_radius are stored.
+        # the regret. diff_size and blast_radius are stored in decision_traces.
         regret_row = next(
             (r for r in session_row_dicts if r.get("id") == event.auto_approve_trace_id),
             None,
         )
         if regret_row is None:
             continue
+        history = trust_db.policy_history(repo_root_str, event.file_path, stage="apply")
         pi = PolicyInput(
             prior_approvals=max(0.0, history.effective_approvals - 1),
             prior_denials=history.denials,
@@ -120,6 +134,7 @@ def _apply_regret_corrections(
             files_in_action=1,
         )
         classifier.update(pi, approved=False)
+        classifier._corrected_regret_ids.add(regret_key)
         corrections += 1
 
     if corrections:
@@ -176,8 +191,10 @@ def _update_classifier(
             files_in_action=len(files),
         )
         if is_rubber_stamp:
+            # Rubber-stamp half-weight: one approve + one deny, net zero push.
+            # count_sample=False on the second call so this counts as 1 decision.
             classifier.update(pi, True)
-            classifier.update(pi, False)
+            classifier.update(pi, False, count_sample=False)
         else:
             classifier.update(pi, approved)
     trust_db.save_policy_model(repo_root_str, classifier)
@@ -243,6 +260,221 @@ def _apply_milestone_reasons(
     return tuple(dict.fromkeys(reasons))
 
 
+@dataclass
+class _SessionContext:
+    """Pre-computed session state threaded through the apply-stage pipeline.
+
+    Extracted from _evaluate_apply_stage to make that function testable in
+    isolation and to keep the session-inference logic auditable as a unit.
+    All fields are read-only after construction.
+    """
+
+    session_row_dicts: list[dict]           # all traces for this session (all stages)
+    apply_row_dicts: list[dict]             # apply-stage rows only — use for inference and regret
+    session_summary: "SessionSummary"       # from preference_inference
+    session_persona: "UserPersona"          # inferred
+    effective_intensity: str               # "active" | "delegating" | "unknown" (possibly pinned)
+    effective_persona: "UserPersona"        # effective — may differ from inferred when pinned
+    coding_mode: str
+    current_task_intent: "TaskIntent"
+    current_turn_purpose: str
+    recent_verif_failures: int
+    matched_defaults: tuple                 # tuple[Preference, ...]
+    autonomy_derived_prefs: tuple           # tuple[Preference, ...] from AutonomyPreferences
+    confirmed_prefs: list                   # list[Preference] confirmed this session
+    session_position: float
+    forced_action: "PreferenceAction | None"
+    pushback_counts: dict[str, int]
+
+
+def _build_session_context(
+    *,
+    trust_db: TrustDB,
+    repo_root_str: str,
+    run_session_id: str,
+    task: str,
+    autonomy_preferences,
+    session_intensity_override: str | None,
+) -> _SessionContext:
+    """Build all session-level signals in one place.
+
+    Isolating this from the per-file scoring loop makes both halves testable
+    independently and keeps the inference logic easy to audit.
+
+    n_turns note: we summarize only apply-stage traces so that read-stage
+    traces don't inflate persona/hypothesis thresholds. A session with 10
+    reads but 0 writes should not trigger ACTIVE persona or hypothesis seeding.
+    """
+    from ..preferences import UserPersona as _UP
+
+    all_trace_rows = trust_db.session_traces(repo_root_str, run_session_id)
+    all_row_dicts = [dict(r) for r in all_trace_rows]
+
+    # Filter to apply-stage rows for behavioral signal inference.
+    # Read-stage traces don't carry approval/denial signals meaningful for
+    # persona inference or hypothesis thresholds.
+    apply_row_dicts = [r for r in all_row_dicts if r.get("stage") == "apply"]
+    session_summary = summarize_session(apply_row_dicts)
+
+    session_persona = infer_user_persona(session_summary)
+    coding_mode = infer_coding_mode(session_summary).value
+    effective_intensity = session_intensity_override or session_persona.value
+    effective_persona = (
+        _UP(effective_intensity)
+        if effective_intensity in ("active", "delegating", "unknown")
+        else session_persona
+    )
+    current_task_intent = infer_task_intent(task)
+    current_turn_purpose = infer_turn_purpose(task).value
+    recent_verif_failures = sum(
+        1 for row in apply_row_dicts if row.get("verification_passed") == 0
+    )
+    matched_defaults = match_default_preferences(
+        session_summary=session_summary,
+        current_task_intent=current_task_intent,
+        stage="apply",
+        recent_verification_failures=recent_verif_failures,
+    )
+    autonomy_derived_prefs = autonomy_prefs_to_preferences(autonomy_preferences)
+
+    confirmed_prefs: list = []
+    for row in trust_db.confirmed_preferences_for_session(repo_root_str, run_session_id):
+        try:
+            payload = json.loads(row["preference_json"])
+        except (json.JSONDecodeError, KeyError, ValueError):
+            continue
+        if not payload.get("accepted"):
+            continue
+        pref_dict = payload.get("preference")
+        if pref_dict is None:
+            continue
+        try:
+            confirmed_prefs.append(preference_from_dict(pref_dict))
+        except (TypeError, ValueError, KeyError):
+            continue
+
+    # Session position over apply-stage turns only (consistent with n_turns).
+    session_position = min(session_summary.n_turns / 20.0, 1.0)
+    forced_action = force_action_from_preferences(matched_defaults)
+    pushback_counts = pushback_counts_from_rows(apply_row_dicts)
+
+    return _SessionContext(
+        session_row_dicts=all_row_dicts,
+        apply_row_dicts=apply_row_dicts,
+        session_summary=session_summary,
+        session_persona=session_persona,
+        effective_intensity=effective_intensity,
+        effective_persona=effective_persona,
+        coding_mode=coding_mode,
+        current_task_intent=current_task_intent,
+        current_turn_purpose=current_turn_purpose,
+        recent_verif_failures=recent_verif_failures,
+        matched_defaults=matched_defaults,
+        autonomy_derived_prefs=autonomy_derived_prefs,
+        confirmed_prefs=confirmed_prefs,
+        session_position=session_position,
+        forced_action=forced_action,
+        pushback_counts=pushback_counts,
+    )
+
+
+def _run_hypothesis_pipeline(
+    *,
+    ctx: _SessionContext,
+    trust_db: TrustDB,
+    repo_root_str: str,
+    run_session_id: str,
+    client: ClaudeClient | None,
+) -> None:
+    """Hypothesis bank pipeline (Trial-Error-Explain loop).
+
+    1. Seed new rule-based candidates (don't surface yet — evidence needed).
+    2. Score the latest apply-stage trace against pending candidates.
+    3. Surface the highest-confidence candidate if threshold reached.
+    4. Every LLM_GENERATION_INTERVAL turns, ask Claude for novel candidates
+       (runs in a background thread so it never adds latency).
+    """
+    seed_candidates_from_session(
+        trust_db=trust_db,
+        repo_root=repo_root_str,
+        session_id=run_session_id,
+        session_summary=ctx.session_summary,
+        pushback_counts=ctx.pushback_counts,
+        recent_verification_failures=ctx.recent_verif_failures,
+        inferred_persona=ctx.effective_persona,
+    )
+
+    # Score the most recent apply-stage trace.
+    if ctx.apply_row_dicts:
+        update_evidence(
+            trust_db=trust_db,
+            repo_root=repo_root_str,
+            session_id=run_session_id,
+            trace=ctx.apply_row_dicts[-1],
+        )
+
+    # Background LLM generation — daemon so it never blocks the main path.
+    threading.Thread(
+        target=maybe_generate_llm_hypotheses,
+        kwargs=dict(
+            trust_db=trust_db,
+            repo_root=repo_root_str,
+            session_id=run_session_id,
+            session_summary=ctx.session_summary,
+            turn_count=ctx.session_summary.n_turns,
+            client=client,
+        ),
+        daemon=True,
+    ).start()
+
+    # Surface the highest-confidence ready candidate — gated on intensity
+    # (delegating sessions don't get interrupted; evidence still accumulates).
+    if ctx.effective_persona.value == "delegating":
+        return
+
+    hypothesis = get_ready_hypothesis(
+        trust_db=trust_db, repo_root=repo_root_str, session_id=run_session_id
+    )
+    if hypothesis is None:
+        return
+    if trust_db.session_has_confirmed_hypothesis(
+        repo_root_str, run_session_id, driver=hypothesis.driver
+    ):
+        return
+
+    # Brief pause before the hypothesis panel so it lands as a distinct moment
+    # rather than scrolling past with the preceding output. Lives here rather
+    # than inside render_hypothesis_confirmation so the render function stays
+    # side-effect-free and testable without timing concerns.
+    import sys as _sys
+    if _sys.stdin.isatty():
+        import time as _time
+        _time.sleep(0.5)
+    confirmation = render_hypothesis_confirmation(hypothesis)
+    mark_candidate_surfaced(
+        trust_db=trust_db,
+        repo_root=repo_root_str,
+        session_id=run_session_id,
+        driver=hypothesis.driver,
+        confirmed=confirmation.confirmed,
+    )
+    payload = (
+        {
+            "accepted": True,
+            "driver": hypothesis.driver,
+            "preference": preference_to_dict(hypothesis.proposed_preference),
+        }
+        if confirmation.confirmed
+        else {"accepted": False, "driver": hypothesis.driver}
+    )
+    trust_db.save_confirmed_preference(
+        repo_root=repo_root_str,
+        session_id=run_session_id,
+        preference_json=json.dumps(payload),
+        driver=hypothesis.driver,
+    )
+
+
 def _evaluate_apply_stage(
     *,
     repo_root: Path,
@@ -295,123 +527,42 @@ def _evaluate_apply_stage(
 
     # Load the per-repo classifier. Normally pre-built by `hw init`; fallback
     # here only if init was skipped (e.g. in tests or manual setup).
-    classifier: PolicyClassifier | None = trust_db.load_policy_model(repo_root_str)
-    if classifier is None:
-        classifier = build_cold_classifier()
+    _loaded = trust_db.load_policy_model(repo_root_str)
+    classifier: PolicyClassifier = _loaded if _loaded is not None else build_cold_classifier()
+    if _loaded is None:
         trust_db.save_policy_model(repo_root_str, classifier)
 
-    # Pre-compute session state for built-in default-preference matching
-    # (e.g. FAILURE_SIGNAL_CHECKIN). Signals are Hedwig-native: current
-    # task intent, turn purpose, prior developer-reported failures, and
-    # recent verification failures. Together they're the Hedwig equivalent
-    # of the SWE-chat failure-report predictor.
-    _session_trace_rows = trust_db.session_traces(repo_root_str, run_session_id)
-    _session_row_dicts = [dict(r) for r in _session_trace_rows]
-    _session_summary = summarize_session(_session_row_dicts)
-    _session_persona = infer_user_persona(_session_summary)
-    _coding_mode = infer_coding_mode(_session_summary).value
-    # REPL intensity override: /intensity active|delegating pins the value
-    # so the developer's explicit choice takes precedence over inference.
-    _effective_intensity = session_intensity_override or _session_persona.value
-    _current_task_intent = infer_task_intent(task)
-    _current_turn_purpose = infer_turn_purpose(task).value
-    _recent_verif_failures = sum(
-        1 for row in _session_row_dicts
-        if row.get("verification_passed") == 0
-    )
-    _matched_defaults = match_default_preferences(
-        session_summary=_session_summary,
-        current_task_intent=_current_task_intent,
-        stage="apply",
-        recent_verification_failures=_recent_verif_failures,
+    # --- Phase 1: session context ---
+    # All session-level signals computed once, before any per-file work.
+    ctx = _build_session_context(
+        trust_db=trust_db,
+        repo_root_str=repo_root_str,
+        run_session_id=run_session_id,
+        task=task,
+        autonomy_preferences=autonomy_preferences,
+        session_intensity_override=session_intensity_override,
     )
 
-    # Convert AutonomyPreferences coarse toggles into equivalent Preference
-    # objects so both systems contribute to force_action_from_preferences.
-    # These are evaluated per-file inside the loop (path-scoped preferences
-    # and change_pattern predicates require per-file RiskSignals/file_path).
-    _autonomy_derived_prefs = autonomy_prefs_to_preferences(autonomy_preferences)
+    # --- Phase 2: regret corrections ---
+    # Regret detection is only meaningful over apply-stage decisions.
+    _apply_regret_corrections(
+        classifier=classifier,
+        trust_db=trust_db,
+        repo_root_str=repo_root_str,
+        session_row_dicts=ctx.apply_row_dicts,
+        recent_apply_denials=recent_apply_denials,
+    )
 
-    # Load any preferences the developer has explicitly confirmed earlier in
-    # this session. Each is a full Preference (trigger + condition + action +
-    # scope + lifecycle) we persisted when they said yes to a hypothesis.
-    # These will be matched per-file below so their conditions (e.g.
-    # min_blast_radius) evaluate against each action's RiskSignals.
-    _confirmed_prefs: list = []
-    for row in trust_db.confirmed_preferences_for_session(
-        repo_root_str, run_session_id
-    ):
-        try:
-            payload = json.loads(row["preference_json"])
-        except Exception:
-            continue
-        if not payload.get("accepted"):
-            continue
-        pref_dict = payload.get("preference")
-        if pref_dict is None:
-            continue
-        try:
-            _confirmed_prefs.append(preference_from_dict(pref_dict))
-        except Exception:
-            # Skip malformed entries — defensive; schema may evolve.
-            continue
+    # --- Phase 3: hypothesis bank ---
+    # Seed, score evidence, surface if confident, kick off LLM generation.
+    _run_hypothesis_pipeline(
+        ctx=ctx,
+        trust_db=trust_db,
+        repo_root_str=repo_root_str,
+        run_session_id=run_session_id,
+        client=client,
+    )
 
-    # Session position is turn_count / estimated_total. We don't know the
-    # total, so estimate 20 turns (near the V2 "active" cluster center).
-    # Over-estimates compress the position but still let late-session
-    # preferences fire correctly since the ratio stays monotonic.
-    _session_position = min(_session_summary.n_turns / 20.0, 1.0)
-
-    _forced_action = force_action_from_preferences(_matched_defaults)
-
-    # Regret corrections: if prior auto-approvals were later pushed back on,
-    # correct the classifier before this decision so it already incorporates
-    # the signal. Only fires when the classifier is active.
-    if classifier is not None:
-        _apply_regret_corrections(
-            classifier=classifier,
-            trust_db=trust_db,
-            repo_root_str=repo_root_str,
-            session_row_dicts=_session_row_dicts,
-            recent_apply_denials=recent_apply_denials,
-        )
-
-    # Implicit-preference hypothesis: at most one per session. If the session
-    # has enough trace history and a clear behavioral pattern, surface it
-    # immediately so the developer can confirm or decline. Confirmed ones are
-    # persisted with provenance="inferred_user_confirmed".
-    if not trust_db.session_has_confirmed_hypothesis(repo_root_str, run_session_id):
-        _pushback_counts = pushback_counts_from_rows(_session_row_dicts)
-        from ..preferences import UserPersona as _UP
-        _effective_persona = (
-            _UP(_effective_intensity) if _effective_intensity in ("active", "delegating", "unknown")
-            else _session_persona
-        )
-        _hypothesis = hypothesize_from_session(
-            _session_summary,
-            _pushback_counts,
-            inferred_persona=_effective_persona,
-            recent_verification_failures=_recent_verif_failures,
-        )
-        if _hypothesis is not None:
-            _confirmation = render_hypothesis_confirmation(_hypothesis)
-            # Persist the hypothesis outcome. On confirm we serialize the
-            # full Preference (so future turns can match against it).
-            # On decline we save a marker so we don't re-ask this session.
-            if _confirmation.confirmed:
-                _payload = {
-                    "accepted": True,
-                    "driver": _hypothesis.driver,
-                    "preference": preference_to_dict(_hypothesis.proposed_preference),
-                }
-            else:
-                _payload = {"accepted": False, "driver": _hypothesis.driver}
-            trust_db.save_confirmed_preference(
-                repo_root=repo_root_str,
-                session_id=run_session_id,
-                preference_json=json.dumps(_payload),
-                driver=_hypothesis.driver,
-            )
 
     # Score each touched file independently, then aggregate to one approval decision.
     for path in touched_files:
@@ -422,7 +573,7 @@ def _evaluate_apply_stage(
         file_path = repo_root / path
         try:
             old_content = file_path.read_text()
-        except Exception:
+        except (FileNotFoundError, IsADirectoryError, OSError):
             old_content = ""
         new_content = updates.get(path, "")
         risk = assess_risk(
@@ -481,8 +632,8 @@ def _evaluate_apply_stage(
                 file_path=path,
                 model_checkin_approval_rate=model_checkin_rate,
                 model_checkin_total=model_checkin_total,
-                session_intensity=_effective_intensity,
-                coding_mode=_coding_mode,
+                session_intensity=ctx.effective_intensity,
+                coding_mode=ctx.coding_mode,
             )
             verification_failure_rate = trust_db.verification_failure_rate(
                 repo_root_str,
@@ -517,39 +668,42 @@ def _evaluate_apply_stage(
         # combine with the default-preference matches to determine the final
         # forced action.
         _matched_confirmed = match_confirmed_preferences(
-            tuple(_confirmed_prefs),
+            tuple(ctx.confirmed_prefs),
             risk=risk,
-            session_summary=_session_summary,
-            current_task_intent=_current_task_intent,
+            session_summary=ctx.session_summary,
+            current_task_intent=ctx.current_task_intent,
             stage="apply",
             file_path=path,
-            session_position=_session_position,
+            session_position=ctx.session_position,
             session_id=run_session_id,
-            current_turn_purpose=_current_turn_purpose,
-            recent_verification_failures=_recent_verif_failures,
+            current_turn_purpose=ctx.current_turn_purpose,
+            recent_verification_failures=ctx.recent_verif_failures,
         )
-        # AutonomyPreferences-derived Preferences: match per-file so that
-        # path-scoped AUTO_APPLY and topic-scoped FULL_CHECKIN preferences
-        # both feed force_action_from_preferences alongside the built-in
-        # defaults and developer-confirmed preferences.
         _matched_autonomy = match_confirmed_preferences(
-            _autonomy_derived_prefs,
+            ctx.autonomy_derived_prefs,
             risk=risk,
-            session_summary=_session_summary,
-            current_task_intent=_current_task_intent,
+            session_summary=ctx.session_summary,
+            current_task_intent=ctx.current_task_intent,
             stage="apply",
             file_path=path,
-            session_position=_session_position,
+            session_position=ctx.session_position,
             session_id=run_session_id,
-            current_turn_purpose=_current_turn_purpose,
-            recent_verification_failures=_recent_verif_failures,
+            current_turn_purpose=ctx.current_turn_purpose,
+            recent_verification_failures=ctx.recent_verif_failures,
         )
-        _all_matched = _matched_defaults + _matched_confirmed + _matched_autonomy
+        _all_matched = ctx.matched_defaults + _matched_confirmed + _matched_autonomy
         _file_forced_action = force_action_from_preferences(_all_matched)
 
         # Preferences can tighten or loosen the scorer's action.
         # Asymmetry: tightening always applies; loosening (auto_apply) only
         # applies if the scorer didn't already decide to check_in.
+        #
+        # Reason-string discipline: only append the reason for the action that
+        # actually wins. When AUTO_APPLY and FULL_CHECKIN both match (e.g.
+        # prefer_fewer_checkins=True but a confirmed scope_constraint preference
+        # also fires), FULL_CHECKIN wins via force_action_from_preferences, and
+        # only the FULL_CHECKIN reason is appended. Appending the AUTO_APPLY
+        # reason too would produce contradictory trace strings.
         if _file_forced_action is not None:
             if _file_forced_action.value == "full_checkin" and decision.action != "check_in":
                 from_confirmed = any(
@@ -567,7 +721,7 @@ def _evaluate_apply_stage(
                     score=decision.score,
                     reasons=decision.reasons + (reason,),
                 )
-            elif _file_forced_action.value == "soft_checkin" and decision.action not in ("check_in",):
+            elif _file_forced_action.value == "soft_checkin" and decision.action != "check_in":
                 decision = PolicyDecision(
                     action="proceed_flag",
                     score=decision.score,
@@ -577,6 +731,8 @@ def _evaluate_apply_stage(
                 # AUTO_APPLY from AutonomyPreferences (prefer_fewer_checkins).
                 # Only loosens when the scorer decided to check_in — never bypasses
                 # hard constraints (those set score to -1000 or -500 and skip this path).
+                # Only append this reason when auto_apply actually wins (i.e. no
+                # higher-strictness preference also matched this file).
                 decision = PolicyDecision(
                     action="proceed",
                     score=decision.score,
@@ -683,7 +839,7 @@ def _evaluate_apply_stage(
             auto_files=auto_files,
             apply_policies=apply_policies,
             apply_risk=apply_risk,
-            session_row_dicts=_session_row_dicts,
+            session_row_dicts=ctx.session_row_dicts,
             verification_failure_rates=verification_failure_rates,
             remember=remember,
             scope_budget_files=config.scope_budget_files,
@@ -789,9 +945,15 @@ def _evaluate_apply_stage(
         )
         return
 
-    # If a default Preference triggered a soft check-in, render the
-    # non-blocking panel and give the developer a window to intervene.
-    if _forced_action is not None and _forced_action.value == "soft_checkin":
+    # If any preference (default or per-file confirmed) triggered a soft
+    # check-in, render the non-blocking panel. _forced_action is the session-
+    # level default check; also gate on flagged_auto_files (which are set when
+    # a per-file SOFT_CHECKIN preference upgraded a proceed to proceed_flag).
+    _any_soft_checkin = (
+        (ctx.forced_action is not None and ctx.forced_action.value == "soft_checkin")
+        or bool(flagged_auto_files)
+    )
+    if _any_soft_checkin:
         outcome = render_soft_checkin_gate(
             touched_files=touched_files,
             apply_policies=apply_policies,
@@ -869,7 +1031,7 @@ def _apply_updates_and_verify(
         file_path = repo_root / path
         try:
             current = file_path.read_text()
-        except Exception:
+        except (FileNotFoundError, IsADirectoryError, OSError):
             current = ""
         current_hash = hashlib.sha256(current.encode("utf-8")).hexdigest()
         if current_hash != file_hashes.get(path):
@@ -924,7 +1086,7 @@ def _write_updates_atomically(
             file_path.parent.mkdir(parents=True, exist_ok=True)
             try:
                 current = file_path.read_text()
-            except Exception:
+            except (FileNotFoundError, IsADirectoryError, OSError):
                 current = ""
             normalized = _normalize_new_content(current, content)
             with tempfile.NamedTemporaryFile(
@@ -951,5 +1113,5 @@ def _write_updates_atomically(
         for temp_path in temp_paths.values():
             try:
                 temp_path.unlink(missing_ok=True)
-            except Exception:
+            except OSError:
                 pass

@@ -17,6 +17,8 @@ from rich.text import Text
 from ..preference_inference import PreferenceHypothesis
 from .theme import PALETTE, moment, panel_title
 
+_CONSOLE = Console()
+
 
 @dataclass(frozen=True)
 class HypothesisConfirmation:
@@ -29,32 +31,50 @@ class HypothesisConfirmation:
 def render_hypothesis_confirmation(
     hypothesis: PreferenceHypothesis,
 ) -> HypothesisConfirmation:
-    """Surface a single implicit-preference hypothesis and capture the
-    developer's yes/no. Blocking by design — this is a small, rare moment
-    and we want the developer's attention for it."""
-    console = Console()
+    """Surface a hypothesis with evidence and capture yes/no.
+
+    A brief pause before rendering makes this feel like a deliberate moment
+    rather than something that scrolls past. This is the most important UI
+    beat in the whole demo.
+    """
     style = moment("learn")
 
     body = Text()
-    body.append("I noticed a pattern.\n\n", style=PALETTE["learn_bold"])
-    body.append(hypothesis.prompt + "\n\n", style="white")
-    body.append(hypothesis.rationale + "\n", style=PALETTE["meta_italic"])
+    body.append("\n", style="white")
+    body.append(hypothesis.prompt, style="bold white")
+    body.append("\n\n", style="white")
+    body.append(hypothesis.rationale, style="white")
+    body.append("\n", style="white")
 
-    console.print(
+    # Extra blank line gives the panel breathing room so it doesn't scroll past.
+    _CONSOLE.print()
+    _CONSOLE.print()
+    _CONSOLE.print(
         Panel(
             body,
-            title=panel_title("learn", "pattern detected"),
+            title=panel_title("learn", "I noticed a pattern"),
             border_style=style.border,
             padding=(1, 2),
         )
     )
 
-    response = Prompt.ask(
-        f"[{PALETTE['learn_bold']}]Accept for the rest of this session?[/{PALETTE['learn_bold']}] (y/n)",
-        choices=["y", "n"],
-        default="n",
+    _CONSOLE.print(
+        f"  [{PALETTE['meta']}](You can review or remove saved preferences with /prefs)[/{PALETTE['meta']}]"
     )
+    try:
+        response = Prompt.ask(
+            f"[{PALETTE['learn_bold']}]Save this as a rule for future sessions?[/{PALETTE['learn_bold']}] (y/n)",
+            choices=["y", "n"],
+            default="y",
+        )
+    except (KeyboardInterrupt, EOFError):
+        # Ctrl-C or pipe close → treat as dismissed, not a crash.
+        _CONSOLE.print(f"[{PALETTE['meta']}](dismissed)[/{PALETTE['meta']}]")
+        return HypothesisConfirmation(confirmed=False, explicit_denial=False)
+
     confirmed = response == "y"
+    if confirmed:
+        _CONSOLE.print(f"[{PALETTE['learn_bold']}]✦ preference saved[/{PALETTE['learn_bold']}]")
     return HypothesisConfirmation(
         confirmed=confirmed,
         explicit_denial=not confirmed,

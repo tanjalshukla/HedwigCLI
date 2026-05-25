@@ -26,10 +26,10 @@ def _summary(
         n_feedback=n_feedback,
         n_failures=0,
         mean_edit_distance=mean_edit_distance,
-        mean_prev_tools=2.0,
         mean_review_seconds=mean_review_seconds,
         distinct_tasks=1,
         n_interruptions=0,
+        n_auto_approvals=0,
     )
 
 

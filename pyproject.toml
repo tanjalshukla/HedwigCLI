@@ -24,3 +24,33 @@ sc = "sc.cli:app"
 
 [tool.setuptools.packages.find]
 include = ["sc*"]
+
+# ---------------------------------------------------------------------------
+# Static analysis — run before every commit and in CI.
+#
+# ruff catches undefined names (F821), unused imports (F401), and dead
+# assignments (F841) — the class of bug that broke soft check-in silently.
+# These checks take <1s and require no type stubs.
+#
+# How to run manually:
+#   .venv/bin/python -m ruff check sc/ --select F
+#   PYTHONPATH=. .venv/bin/python -m pytest tests -q
+# ---------------------------------------------------------------------------
+
+[tool.ruff]
+target-version = "py311"
+
+[tool.ruff.lint]
+# F4xx = import errors (unused, missing, circular)
+# F8xx = undefined names, unused variables
+# F9xx = syntax-level errors ruff can detect
+select = ["F4", "F8", "F9"]
+
+# E501 (line too long) is intentionally excluded — the codebase has long
+# SQL strings and Rich markup that are clearer unbroken.
+ignore = []
+
+[tool.ruff.lint.per-file-ignores]
+# Tests import fixtures and use assert-rewriting patterns that ruff can
+# misread as unused. Allow F401/F811 in test files.
+"tests/*" = ["F401", "F811"]

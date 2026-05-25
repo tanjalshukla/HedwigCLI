@@ -529,3 +529,25 @@ def _load_spec_context(repo_root: Path, spec_path: str | None, max_chars: int) -
         digest=f"{display_path} (sha256 {sha256[:12]})\n{digest}",
         sha256=sha256,
     )
+
+
+# ---------------------------------------------------------------------------
+# Absorbed from sc/patch.py — patch validation lives here since model.py
+# is the only caller and already imports from helpers.
+# ---------------------------------------------------------------------------
+
+class PatchValidationError(ValueError):
+    """Raised when touched files fall outside the approved set."""
+
+
+def validate_touched_files(
+    repo_root: Path,
+    touched_files: list[str],
+    allowed_files: set[str],
+) -> None:
+    """Raise PatchValidationError if any touched file is not in allowed_files."""
+    extra = set(touched_files) - allowed_files
+    if extra:
+        raise PatchValidationError(
+            f"Updates touch files outside the approved set: {sorted(extra)}"
+        )

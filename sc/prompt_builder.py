@@ -8,7 +8,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from .phase import WorkflowPhase
+from .schema import WorkflowPhase
 from .trust_db import TrustDB
 
 
@@ -148,16 +148,13 @@ def build_run_system_prompt(
         "The CLI is the enforcement authority.\n\n"
         "Repository file tree (use these exact paths — do not invent paths):\n"
         f"{file_tree}\n\n"
-        "Response protocol:\n"
-        "1) Return JSON only.\n"
-        "2) Before editing, return either a read_request or an intent declaration.\n"
-        "3) During planning or implementation, if you face architecture decisions, approach tradeoffs,\n"
-        "   plan deviations, or meaningful uncertainty, return a CheckInMessage JSON instead of guessing.\n"
-        "4) Every check-in must include: architectural concern, at least two options when applicable,\n"
-        "   explicit tradeoffs, and a recommendation.\n"
-        "5) Include assumptions (list of key assumptions) and confidence (0.0-1.0) in every check_in.\n"
-        "6) Keep check-in content to 2-3 sentences. Each option should be one concise line with the tradeoff.\n"
-        "7) For file updates, output only the JSON file-update payload requested by the user prompt.\n\n"
+        "Response protocol — STRICT SCHEMA RULES:\n"
+        "1) Return JSON only. Never mix schemas.\n"
+        "2) To declare intent: {\"task_summary\":\"...\",\"planned_files\":[...],\"planned_actions\":[...],\"planned_commands\":[],\"expected_change_types\":[...],\"requirements_covered\":[...],\"potential_deviations\":[...]}\n"
+        "3) To check in: {\"type\":\"check_in\",\"reason\":\"...\",\"check_in_type\":\"decision_point\",\"content\":\"...\",\"recommendation\":\"...\",\"options\":[...],\"assumptions\":[...],\"confidence\":0.9}\n"
+        "   IMPORTANT: A check-in has ONLY these fields: type, reason, check_in_type, content, recommendation, options, assumptions, confidence. NO planned_files, NO task_summary, NO planned_actions.\n"
+        "4) To read files: {\"files\":[\"path/to/file\"]}\n"
+        "5) Keep check-in content to 2-3 sentences. Each option one concise line.\n\n"
         "Check-in quality bar:\n"
         "- Ask only when the decision is expensive to reverse (architecture, interfaces, workflows).\n"
         "- Do not ask about routine implementation details or formatting choices.\n"

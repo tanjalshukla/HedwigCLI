@@ -146,23 +146,22 @@ def _prompt_approval(
     pause_reason: str | None = None,
     diff_already_shown: bool = True,
 ) -> tuple[bool, bool, str | None]:
-    # If a diff panel was already shown (the common apply-stage path), don't
-    # repeat the file list — just show the pause reason and the prompt inline.
-    # This makes the diff → prompt flow feel like one moment, not two.
+    # After the diff, the developer just needs the reason + the decision.
+    # Show the primary file name if not already obvious from the diff.
     print()
-    print(panel_title("approve_request", stage))
+    if not diff_already_shown and files:
+        primary = files[0] if len(files) == 1 else f"{files[0]} +{len(files)-1} more"
+        print(f"[{PALETTE['info_bold']}]{primary}[/{PALETTE['info_bold']}]")
+        if len(files) > 1:
+            _render_file_list(files[1:])
     if pause_reason:
-        print(f"[{PALETTE['meta']}]Why I'm pausing:[/{PALETTE['meta']}] {pause_reason}")
-    if not diff_already_shown:
-        print(f"[{PALETTE['meta']}]Agent requests to modify:[/{PALETTE['meta']}]")
-        _render_file_list(files)
-    print()
+        print(f"[white]{pause_reason}[/white]")
     choices = ["a", "d"]
     if allow_remember:
         choices.insert(1, "r")
         prompt = (
             f"[{PALETTE['approve_bold']}]a[/{PALETTE['approve_bold']}] approve  "
-            f"[{PALETTE['learn']}]r[/{PALETTE['learn']}] approve + remember  "
+            f"[{PALETTE['learn']}]r[/{PALETTE['learn']}] approve · don't ask again  "
             f"[{PALETTE['deny_bold']}]d[/{PALETTE['deny_bold']}] deny"
         )
     else:
@@ -175,7 +174,7 @@ def _prompt_approval(
         return True, False, None
     if response == "r":
         note = _prompt_optional_feedback(
-            f"[{PALETTE['meta']}]Optional note for future autonomy decisions[/{PALETTE['meta']}]"
+            f"[{PALETTE['meta']}]Optional note (helps me learn your preference)[/{PALETTE['meta']}]"
         )
         return True, True, note
     note = _prompt_optional_feedback(
@@ -194,7 +193,7 @@ def _prompt_read(files: list[str], reason: str | None) -> tuple[bool, bool, str 
     print()
     response = Prompt.ask(
         f"[{PALETTE['approve_bold']}]a[/{PALETTE['approve_bold']}] approve  "
-        f"[{PALETTE['learn']}]r[/{PALETTE['learn']}] approve + remember  "
+        f"[{PALETTE['learn']}]r[/{PALETTE['learn']}] always allow reads to this file  "
         f"[{PALETTE['deny_bold']}]d[/{PALETTE['deny_bold']}] deny",
         choices=["a", "r", "d"],
     )
@@ -211,24 +210,16 @@ def _prompt_read(files: list[str], reason: str | None) -> tuple[bool, bool, str 
 def _render_intent_summary(declaration: IntentDeclaration) -> None:
     print()
     print(f"[{PALETTE['info_bold']}]Task:[/{PALETTE['info_bold']}] {declaration.task_summary}")
-    if declaration.planned_actions:
-        print(
-            f"[{PALETTE['meta']}]Planned actions:[/{PALETTE['meta']}] "
-            f"{', '.join(declaration.planned_actions)}"
-        )
-    if declaration.notes:
-        print(f"[{PALETTE['meta']}]Plan:[/{PALETTE['meta']}] {declaration.notes}")
-    if declaration.expected_change_types:
-        print(
-            f"[{PALETTE['meta']}]Expected change types:[/{PALETTE['meta']}] "
-            f"{', '.join(declaration.expected_change_types)}"
-        )
-    if declaration.requirements_covered:
-        print(f"[{PALETTE['meta']}]Requirements covered:[/{PALETTE['meta']}]")
-        _render_file_list(declaration.requirements_covered)
+    # Potential deviations are high-signal — show immediately after the task.
     if declaration.potential_deviations:
         print(f"[{PALETTE['attention']}]Potential deviations:[/{PALETTE['attention']}]")
         _render_file_list(declaration.potential_deviations)
+    if declaration.notes:
+        print(f"[{PALETTE['meta']}]Plan:[/{PALETTE['meta']}] {declaration.notes}")
+    if declaration.requirements_covered:
+        print(f"[{PALETTE['meta']}]Requirements covered:[/{PALETTE['meta']}]")
+        _render_file_list(declaration.requirements_covered)
+    # expected_change_types is internal scoring vocabulary — not shown to user.
     print(f"[{PALETTE['meta']}]Planned files:[/{PALETTE['meta']}]")
     _render_file_list(declaration.planned_files)
 
@@ -238,17 +229,14 @@ def _prompt_plan_checkpoint(
     reasons: tuple[str, ...],
 ) -> tuple[str, str | None]:
     print()
-    print(panel_title("approve_request", "plan"))
     _render_intent_summary(declaration)
     if reasons:
-        print()
-        print(f"[{PALETTE['meta']}]Why explicit plan approval:[/{PALETTE['meta']}]")
-        for reason in reasons:
-            print(f"  [dim]·[/dim] {reason}")
+        # Single most important reason only — keep it short.
+        print(f"[{PALETTE['meta']}]· {reasons[0]}[/{PALETTE['meta']}]")
     print()
     decision = Prompt.ask(
         f"[{PALETTE['approve_bold']}]a[/{PALETTE['approve_bold']}] approve  "
-        f"[{PALETTE['attention']}]v[/{PALETTE['attention']}] request revision  "
+        f"[{PALETTE['attention']}]v[/{PALETTE['attention']}] revise  "
         f"[{PALETTE['deny_bold']}]d[/{PALETTE['deny_bold']}] deny",
         choices=["a", "v", "d"],
     )
@@ -270,24 +258,33 @@ def _prompt_permanent(files: list[str]) -> bool:
     print(panel_title("learn", "grant permanent access?"))
     print(f"[{PALETTE['meta']}]You've approved these files multiple times:[/{PALETTE['meta']}]")
     _render_file_list(files)
-    response = Prompt.ask("Always approve changes to these files? (y/n)", choices=["y", "n"], default="n")
+    response = Prompt.ask(
+        f"[{PALETTE['meta']}]Always approve changes to these files?[/{PALETTE['meta']}] (y/n)",
+        choices=["y", "n"],
+        default="n",
+    )
     return response == "y"
 
 
 def _confirm_read_missing(missing_files: list[str]) -> bool:
-    print("\n[bold yellow]Files don't exist yet[/bold yellow]")
+    print(f"\n[{PALETTE['attention_bold']}]Files don't exist yet[/{PALETTE['attention_bold']}]")
     _render_file_list(missing_files)
     response = Prompt.ask(
-        "Files don't exist yet; proceed with create workflow? (a)pprove/(d)eny",
+        f"[{PALETTE['approve_bold']}]a[/{PALETTE['approve_bold']}] create  "
+        f"[{PALETTE['deny_bold']}]d[/{PALETTE['deny_bold']}] deny",
         choices=["a", "d"],
     )
     return response == "a"
 
 
 def _confirm_create_files(missing_files: list[str]) -> bool:
-    print("\n[bold yellow]Patch will create new files[/bold yellow]")
+    print(f"\n[{PALETTE['attention_bold']}]Patch will create new files[/{PALETTE['attention_bold']}]")
     _render_file_list(missing_files)
-    response = Prompt.ask("Allow new file creation? (a)pprove/(d)eny", choices=["a", "d"])
+    response = Prompt.ask(
+        f"[{PALETTE['approve_bold']}]a[/{PALETTE['approve_bold']}] create  "
+        f"[{PALETTE['deny_bold']}]d[/{PALETTE['deny_bold']}] deny",
+        choices=["a", "d"],
+    )
     return response == "a"
 
 
@@ -318,7 +315,7 @@ def _user_friendly_reason(policy: PolicyDecision) -> str:
     if "active write lease" in first or "active read lease" in first:
         return "permanent access granted"
     if first.startswith("adaptive policy disabled"):
-        return "policy disabled"
+        return "adaptive scoring off — checking in by default"
     match = _APPROVALS_RE.search(first)
     if match:
         count = int(float(match.group(1)))
@@ -374,7 +371,7 @@ def _render_policy_snapshot(
     }
 
     print()
-    print(panel_title("info", f"policy · {stage}"))
+    print(panel_title("info", f"decision · {stage}"))
     for path in files:
         policy = policies.get(path)
         if policy is None:

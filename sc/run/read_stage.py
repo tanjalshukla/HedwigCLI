@@ -127,6 +127,18 @@ def _process_read_request(
     _session_persona = infer_user_persona(_session_summary)
     _coding_mode = infer_coding_mode(_session_summary).value
 
+    # Files the developer explicitly remembered (r / approve_and_remember) for
+    # reading this session. Plain `a` approvals don't auto-carry forward — the
+    # developer had a reason to review and shouldn't have that choice removed.
+    # `r` is the explicit signal: "I trust this file for the rest of the session."
+    _session_approved_reads: set[str] = {
+        r["file_path"]
+        for r in _session_rows
+        if r.get("stage") == "read"
+        and r.get("user_decision") == "approve_and_remember"
+        and r.get("file_path") != "__session__"
+    }
+
     # Evaluate policy outcome per requested path.
     for path in requested:
         history = trust_db.policy_history(repo_root_str, path, stage="read")
@@ -172,10 +184,26 @@ def _process_read_request(
             auto_reads.append(path)
             continue
 
+        # Already approved for reading this session — don't ask again.
+        if path in _session_approved_reads:
+            read_policies[path] = PolicyDecision(
+                action="proceed",
+                score=900.0,
+                reasons=("approved for reading earlier this session",),
+            )
+            auto_reads.append(path)
+            continue
+
         if config.adaptive_policy_enabled:
+            # Reads use a more permissive threshold than writes — reading a file
+            # cannot break anything. The developer just named the task; asking
+            # permission to read every mentioned file is pure friction.
+            # Use a lower proceed_threshold so most reads auto-approve.
+            _read_proceed = min(profile.proceed_threshold, 0.5)
+            _read_flag = min(profile.flag_threshold, 0.1)
             proceed_threshold, flag_threshold = adjusted_policy_thresholds(
-                profile.proceed_threshold,
-                profile.flag_threshold,
+                _read_proceed,
+                _read_flag,
                 autonomy_preferences,
                 file_path=path,
                 model_checkin_approval_rate=model_checkin_rate,

@@ -405,7 +405,11 @@ class ClaudeClient:
                         if attempt == 1:
                             raise
                         session.add_user(
-                            "Return valid JSON only. Must match intent, read_request, or check_in schema."
+                            "Your response did not match any valid schema. Return exactly one of:\n"
+                            "Intent: {\"task_summary\":\"...\",\"planned_files\":[...],\"planned_actions\":[...],\"planned_commands\":[],\"expected_change_types\":[...],\"requirements_covered\":[...],\"potential_deviations\":[]}\n"
+                            "Read: {\"files\":[\"path\"]}\n"
+                            "Check-in: {\"type\":\"check_in\",\"reason\":\"...\",\"check_in_type\":\"decision_point\",\"content\":\"...\",\"recommendation\":\"...\",\"options\":[],\"assumptions\":[],\"confidence\":0.9}\n"
+                            "Do NOT mix fields from different schemas."
                         )
                         continue
         raise RuntimeError("Failed to obtain valid intent declaration.")

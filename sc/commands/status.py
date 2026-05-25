@@ -20,7 +20,6 @@ from ..run.theme import PALETTE, panel_title
 from ..status import (
     LearnedPreference,
     build_session_status,
-    render_status_text,
     template_preference_line,
     template_session_sentence,
     template_proactive_pause_sentence,

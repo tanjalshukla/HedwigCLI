@@ -498,7 +498,10 @@ def matches_preference(
             return False
 
     if c.min_prior_pushback_count is not None:
-        total_pb = session_summary.n_denials + session_summary.n_failures
+        # Count all meaningful pushback: denials, failures, and feedback turns.
+        # Feedback includes scope constraints and corrections which are the most
+        # common pushback types but weren't counted here before.
+        total_pb = session_summary.n_denials + session_summary.n_failures + session_summary.n_feedback
         if total_pb < c.min_prior_pushback_count:
             return False
     if c.min_prior_failure_count is not None:

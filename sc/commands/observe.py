@@ -136,15 +136,15 @@ def traces(
         "Stage",
         "File",
         "Initiator",
-        "MConf",
+        "Model Conf",
         "Policy",
         "Decision",
         "Feedback",
         "Verify",
         "Diff",
-        "Rev(s)",
+        "Review(s)",
         "Review",
-        "Resp(ms)",
+        "Time(ms)",
     ]
     table = Table(title="Recent Traces")
     for column in columns:
@@ -225,7 +225,7 @@ def preferences(
             )
             body.append(
                 "As you approve, deny, and correct across sessions, I'll "
-                "surface hypotheses for you to confirm or decline.",
+                "notice patterns in what you approve and flag, and offer them as preferences to save.",
                 style=PALETTE["meta_italic"],
             )
             console.print(
@@ -449,16 +449,23 @@ def preferences_clear(
 
 
 def weights(
-    verbose: bool = typer.Option(False, "--verbose", help="Show per-feature coefficient drift table."),
+    verbose: bool = typer.Option(False, "--verbose", help="Show all features, including near-zero drift."),
 ):
-    """What has Hedwig picked up from your interactions?
+    """Show how the learned classifier has drifted from the cold-start heuristic.
 
-    Default: a plain summary of what's moved.
-    With --verbose: per-feature coefficient drift with visual bars.
-    For the full picture, use `hw observe export --html`.
+    Each row shows a feature, its prior weight, current weight, numeric delta,
+    and a visual bar. Positive delta (green) = this feature now pushes toward
+    auto-approve more than the prior. Negative delta (red) = pushes toward
+    check-in more than the prior.
+
+    By default, only features with |delta| > 0.05 are shown (min 3 rows).
+    Use --verbose to show all features.
     """
     from ..ml_policy import FEATURE_NAMES
     from ..run.theme import PALETTE, panel_title
+    from rich.console import Console
+    from rich.panel import Panel
+    from rich.text import Text
 
     repo_root = require_repo_root()
     trust_db = open_trust_db(repo_root)
@@ -466,179 +473,153 @@ def weights(
 
     if classifier is None:
         print(
-            f"[{PALETTE['attention']}]Hedwig isn't set up for this repo yet. "
-            f"Run[/{PALETTE['attention']}] hw init [{PALETTE['attention']}]first.[/{PALETTE['attention']}]"
+            f"[{PALETTE['meta']}]No classifier data yet — run a few tasks first "
+            f"and weights will appear here.[/{PALETTE['meta']}]"
         )
         raise typer.Exit(code=0)
 
     real_samples = classifier.sample_count
     personalized = real_samples >= 10
 
-    # ---------- Default path: short prose ----------
-    if not verbose:
-        from rich.console import Console
-        from rich.panel import Panel
-        from rich.text import Text
-
+    # Cold-start: show a compact progress indicator rather than an empty table.
+    if not personalized:
         console = Console()
         body = Text()
-
-        if not personalized:
-            body.append(
-                f"Hedwig is still in cold-start mode — "
-                f"{real_samples}/10 real decisions needed before the learned "
-                f"scorer activates.\n\n",
-                style="white",
-            )
-            body.append(
-                "Until then, Hedwig uses the heuristic scorer.",
-                style=PALETTE["meta_italic"],
-            )
-            console.print(
-                Panel(
-                    body,
-                    title=panel_title("info", "what I've picked up"),
-                    border_style=PALETTE["info"],
-                    padding=(1, 2),
-                )
-            )
-            return
-
-        # Compute top movers in each direction.
-        current = classifier.clf.coef_[0]
-        prior = classifier.prior_coef
-        movers = [(FEATURE_NAMES[i], current[i] - prior[i]) for i in range(len(FEATURE_NAMES))]
-        strengthened = sorted([(n, d) for n, d in movers if d > 0.01], key=lambda x: -x[1])[:3]
-        weakened = sorted([(n, d) for n, d in movers if d < -0.01], key=lambda x: x[1])[:3]
-
-        # Plain-English name map so "prior_approvals" reads as "prior approvals".
-        def _humanize(feature: str) -> str:
-            return feature.replace("_", " ")
-
         body.append(
-            f"Trained on {real_samples} of your real decisions. "
-            f"Here's what's moved most:\n\n",
+            f"Hedwig is using built-in rules for now — {real_samples} of 10 decisions "
+            f"needed before it adapts to your patterns.\n\n",
             style="white",
         )
-        if strengthened:
-            body.append(
-                "Signals that now push toward auto-approving:\n",
-                style=PALETTE["approve_bold"],
-            )
-            for name, delta in strengthened:
-                body.append(f"  · {_humanize(name)} ", style="white")
-                body.append(f"(+{delta:.2f})\n", style=PALETTE["approve"])
-            body.append("\n")
-        if weakened:
-            body.append(
-                "Signals that now push toward checking in:\n",
-                style=PALETTE["deny_bold"],
-            )
-            for name, delta in weakened:
-                body.append(f"  · {_humanize(name)} ", style="white")
-                body.append(f"({delta:.2f})\n", style=PALETTE["deny"])
-            body.append("\n")
-        if not strengthened and not weakened:
-            body.append(
-                "Coefficients haven't moved much yet. Keep going — patterns "
-                "emerge after ~20 decisions.",
-                style=PALETTE["meta_italic"],
-            )
-
+        filled = real_samples
+        empty = 10 - real_samples
+        body.append("  Progress: ", style=PALETTE["meta"])
+        body.append("█" * filled, style=PALETTE["approve"])
+        body.append("░" * empty, style=PALETTE["meta"])
+        body.append(f"  {real_samples}/10\n\n", style=PALETTE["info"])
+        body.append(
+            "Keep approving and denying — each decision updates the classifier.",
+            style=PALETTE["meta_italic"],
+        )
         console.print(
             Panel(
                 body,
-                title=panel_title("info", "what I've picked up"),
+                title=panel_title("info", "learning · warming up"),
                 border_style=PALETTE["info"],
                 padding=(1, 2),
             )
         )
-        print(
-            f"[{PALETTE['meta']}]Use[/{PALETTE['meta']}] hw observe weights --verbose "
-            f"[{PALETTE['meta']}]for the full feature table, or[/{PALETTE['meta']}] "
-            f"hw observe export --html "
-            f"[{PALETTE['meta']}]for a browser report.[/{PALETTE['meta']}]"
-        )
         return
 
-    # ---------- Verbose path: original detailed table ----------
-    title_suffix = (
-        f"{real_samples} decisions · learned model active"
-        if personalized
-        else f"cold-start · {real_samples}/10 decisions to activate"
-    )
+    # Learned model active — show full per-feature drift table.
+    title_suffix = f"{real_samples} decisions · learned model active"
     table = Table(
-        title=panel_title("observe", f"learned weights · {title_suffix}"),
+        title=panel_title("observe", f"how my judgment has shifted · {title_suffix}"),
         title_justify="left",
         show_lines=False,
         padding=(0, 1),
         border_style=PALETTE["info_dim"],
         header_style=PALETTE["info_bold"],
     )
-    table.add_column("Feature", style="bold", no_wrap=True)
+    table.add_column("Feature", style="bold", no_wrap=True, min_width=26)
     table.add_column("Prior", justify="right", no_wrap=True)
-    if personalized:
-        table.add_column("Current", justify="right", no_wrap=True)
-        table.add_column("Delta", justify="right", no_wrap=True)
-        # Visual bar column — width scaled to largest absolute delta.
-        table.add_column("Drift", no_wrap=True, width=20)
+    table.add_column("Current", justify="right", no_wrap=True)
+    table.add_column("Delta", justify="right", no_wrap=True)
+    table.add_column("Drift", no_wrap=True, width=20)
 
     current_coef = classifier.clf.coef_[0]
     prior_coef = classifier.prior_coef
 
-    max_abs_delta = 0.0
-    if personalized:
-        max_abs_delta = max(
-            (abs(current_coef[i] - prior_coef[i]) for i in range(len(FEATURE_NAMES))),
-            default=0.0,
-        )
+    max_abs_delta = max(
+        (abs(current_coef[i] - prior_coef[i]) for i in range(len(FEATURE_NAMES))),
+        default=0.0,
+    )
 
+    # Human-readable labels for each feature.
+    _LABELS: dict[str, str] = {
+        "prior_approvals":          "prior approvals",
+        "prior_denials":            "prior denials",
+        "avg_response_ms":          "avg review time",
+        "avg_edit_distance":        "avg edit distance",
+        "diff_size_log":            "diff size (log)",
+        "blast_radius":             "blast radius",
+        "is_new_file":              "new file",
+        "is_security_sensitive":    "security sensitive",
+        "files_in_action":          "files in action",
+        "recent_denials":           "recent denials",
+        "verification_failure_rate":"verification failure rate",
+        "model_confidence_avg":     "model confidence",
+        "change_pattern_risk":      "change pattern risk",
+    }
+
+    # Build per-feature rows with their deltas.
+    all_rows = []
     for i, name in enumerate(FEATURE_NAMES):
         prior = prior_coef[i]
-        if personalized:
-            current = current_coef[i]
-            delta = current - prior
-            delta_str = f"{delta:+.3f}"
-            if delta > 0.01:
-                color = PALETTE["approve"]
-            elif delta < -0.01:
-                color = PALETTE["deny"]
-            else:
-                color = PALETTE["meta"]
+        current = current_coef[i]
+        delta = current - prior
+        all_rows.append((i, name, prior, current, delta))
 
-            # Build a visual bar — up to 16 chars total, centered at zero.
-            if max_abs_delta > 0:
-                bar_len = int(round(abs(delta) / max_abs_delta * 8))
-            else:
-                bar_len = 0
-            bar_char = "█"
-            if delta > 0:
-                bar = (
-                    f"[{PALETTE['meta']}]{' ' * 8}[/{PALETTE['meta']}]"
-                    f"[{PALETTE['approve']}]{bar_char * bar_len}[/{PALETTE['approve']}]"
-                )
-            elif delta < 0:
-                bar = (
-                    f"[{PALETTE['meta']}]{' ' * (8 - bar_len)}[/{PALETTE['meta']}]"
-                    f"[{PALETTE['deny']}]{bar_char * bar_len}[/{PALETTE['deny']}]"
-                )
-            else:
-                bar = f"[{PALETTE['meta']}]{' ' * 8}·[/{PALETTE['meta']}]"
+    # Filter: show only |delta| > 0.05, unless verbose; always show at least top 3.
+    DRIFT_THRESHOLD = 0.05
+    if not verbose:
+        significant = [r for r in all_rows if abs(r[4]) > DRIFT_THRESHOLD]
+        if len(significant) < 3:
+            significant = sorted(all_rows, key=lambda r: abs(r[4]), reverse=True)[:3]
+        hidden_count = len(all_rows) - len(significant)
+        rows_to_show = sorted(significant, key=lambda r: r[0])  # restore original order
+    else:
+        rows_to_show = all_rows
+        hidden_count = 0
 
-            table.add_row(
-                name,
-                f"{prior:+.3f}",
-                f"{current:+.3f}",
-                f"[{color}]{delta_str}[/{color}]",
-                bar,
+    for i, name, prior, current, delta in rows_to_show:
+        if delta > 0.01:
+            color = PALETTE["approve"]
+            arrow = "▲"
+        elif delta < -0.01:
+            color = PALETTE["deny"]
+            arrow = "▼"
+        else:
+            color = PALETTE["meta"]
+            arrow = " "
+
+        if max_abs_delta > 0:
+            bar_len = int(round(abs(delta) / max_abs_delta * 8))
+        else:
+            bar_len = 0
+
+        if delta > 0.01:
+            bar = (
+                f"[{PALETTE['meta']}]{' ' * 8}[/{PALETTE['meta']}]"
+                f"[{PALETTE['approve']}]{'█' * bar_len}[/{PALETTE['approve']}]"
+            )
+        elif delta < -0.01:
+            bar = (
+                f"[{PALETTE['meta']}]{' ' * (8 - bar_len)}[/{PALETTE['meta']}]"
+                f"[{PALETTE['deny']}]{'█' * bar_len}[/{PALETTE['deny']}]"
             )
         else:
-            table.add_row(name, f"{prior:+.3f}")
+            bar = f"[{PALETTE['meta']}]{'─' * 8}[/{PALETTE['meta']}]"
+
+        label = _LABELS.get(name, name.replace("_", " "))
+        table.add_row(
+            label,
+            f"[{PALETTE['meta']}]{prior:+.3f}[/{PALETTE['meta']}]",
+            f"{current:+.3f}",
+            f"[{color}]{delta:+.3f} {arrow}[/{color}]",
+            bar,
+        )
 
     print(table)
-    if not personalized:
+    print(
+        f"[white]"
+        f"green ▲ = now more likely to auto-approve  "
+        f"red ▼ = now more likely to check in"
+        f"[/white]"
+    )
+    if hidden_count > 0:
         print(
-            f"[{PALETTE['meta']}]· {10 - real_samples} more decisions to activate the personalized model[/{PALETTE['meta']}]"
+            f"[dim]{hidden_count} feature{'s' if hidden_count != 1 else ''} "
+            f"with <{DRIFT_THRESHOLD:.2f} drift not shown  (--verbose to see all)[/dim]"
         )
 
 
@@ -884,8 +865,8 @@ def report(
             )
         else:
             body.append(
-                f"Hedwig is still in cold-start mode "
-                f"({sample_count}/10 decisions to activate the learned scorer).",
+                f"Hedwig is still adapting — {sample_count} of 10 decisions recorded. "
+                f"After that, it adjusts based on your actual approvals and denials.",
                 style=PALETTE["meta"],
             )
 
@@ -956,10 +937,10 @@ def report(
             )
             print(
                 f"  [{PALETTE['meta']}]·[/{PALETTE['meta']}] "
-                f"{row.initiator}: high-signal "
+                f"{row.initiator}: useful pauses "
                 f"[{pct_color}]{row.useful}/{row.total}[/{pct_color}] "
                 f"([{pct_color}]{useful_pct:.1f}%[/{pct_color}]), "
-                f"low-signal [{PALETTE['meta']}]{row.wasted}[/{PALETTE['meta']}]"
+                f"unnecessary [{PALETTE['meta']}]{row.wasted}[/{PALETTE['meta']}]"
             )
 
     if model_confidence_values:
@@ -975,7 +956,7 @@ def report(
     print(
         f"[{PALETTE['meta']}]review timing:[/{PALETTE['meta']}] "
         f"[{deliberate_color}]{thoughtful_approvals} deliberate[/{deliberate_color}] · "
-        f"[{PALETTE['meta']}]{rubber_stamp_approvals} rubber-stamp (<5s)[/{PALETTE['meta']}]"
+        f"[{PALETTE['meta']}]{rubber_stamp_approvals} quick approvals (<5s)[/{PALETTE['meta']}]"
     )
     print(
         f"[{PALETTE['meta']}]plan revisions:[/{PALETTE['meta']}] "
@@ -1037,7 +1018,7 @@ def report(
         )
     else:
         print(
-            f"[{PALETTE['meta']}]· cold-start scorer active "
+            f"[{PALETTE['meta']}]· adapting to your patterns · "
             f"({sample_count}/10 decisions to activate learned model)[/{PALETTE['meta']}]"
         )
 
@@ -1199,7 +1180,7 @@ def reset(
     )
     print(f"  Access: revoked {revoked_leases} leases")
     print(f"  Preferences: {'cleared' if cleared_prefs else 'none to clear'}")
-    print("  Policy model: reset to heuristic warm-start (0 real samples)")
+    print("  Decision model: reset (0 decisions recorded)")
 
 def revoke(
     path: str | None = typer.Argument(None, help="Repo-relative file path whose lease to revoke."),

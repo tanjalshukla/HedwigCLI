@@ -4,7 +4,7 @@ from collections import deque
 from dataclasses import dataclass, field
 from typing import Iterable
 
-from .phase import WorkflowPhase
+from .schema import WorkflowPhase
 
 
 @dataclass

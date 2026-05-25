@@ -1,2 +1,0 @@
-API_ENV = "production"
-TASK_RESPONSE_ENVELOPE_VERSION = "v1"

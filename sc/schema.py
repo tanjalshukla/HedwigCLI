@@ -5,7 +5,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from .phase import WorkflowPhase
+# WorkflowPhase absorbed from sc/phase.py — it's a schema type, lives here.
+WorkflowPhase = Literal["research", "planning", "implementation", "review"]
 
 
 ChangeType = Literal[

@@ -1,5 +1,21 @@
 from __future__ import annotations
 
+"""PolicyScorer seam — the function that turns RiskSignals into a decision.
+
+Two adapters satisfy this seam:
+  HeuristicScorer  — hand-weighted linear scorer, cold-start behavior.
+  PolicyClassifier — online logistic regression (ml_policy.py), activates
+                     after MIN_SAMPLES_FOR_LEARNED real decisions.
+
+`select_scorer()` picks the active adapter. `decide_action()` runs the
+heuristic path with rich reason strings. `_policy_decision_for_file()`
+in run/helpers.py is the convergence point that calls whichever adapter
+is active and returns a PolicyDecision.
+
+Weight table for the heuristic scorer is documented in SPEC.md §10.
+Do not change weights without updating that table.
+"""
+
 # Policy scoring. Two adapters satisfy the PolicyScorer seam:
 # - HeuristicScorer: hand-weighted linear scorer; carries cold-start behavior.
 # - PolicyClassifier (sc/ml_policy.py): online logistic regression; takes over

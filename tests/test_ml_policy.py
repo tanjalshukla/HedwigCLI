@@ -11,7 +11,7 @@ from sc.ml_policy import (
     build_cold_classifier,
     featurize,
 )
-from sc.patch import PatchValidationError, validate_touched_files
+from sc.run.helpers import PatchValidationError, validate_touched_files
 from sc.policy import PolicyInput
 from pathlib import Path
 
@@ -264,6 +264,101 @@ class TestPatchValidation(unittest.TestCase):
     def test_empty_allowed_with_nonempty_touched_raises(self) -> None:
         with self.assertRaises(PatchValidationError):
             validate_touched_files(Path("."), ["any.py"], set())
+
+
+class TestCorrectedRegretIds(unittest.TestCase):
+    """Verify that _apply_regret_corrections fires at most once per regret trace_id.
+
+    This prevents the O(N) re-application bug where every call re-applies all
+    prior regrets, producing spurious negative signals that can reverse real
+    approval history.
+    """
+
+    def test_regret_correction_applied_only_once(self) -> None:
+        import tempfile
+        from pathlib import Path
+        from sc.run.apply_stage import _apply_regret_corrections
+        from sc.trust_db import TrustDB
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = TrustDB(Path(tmpdir) / "trust.db")
+            repo = "/tmp/repo"
+
+            # Record an auto-approved trace followed by a denial so detect_regret_events
+            # will fire.
+            db.record_trace(
+                repo_root=repo,
+                session_id="s1",
+                task="task",
+                stage="apply",
+                action_type="write_request",
+                file_path="svc/api.py",
+                change_type="api_change",
+                diff_size=20,
+                blast_radius=1,
+                existing_lease=False,
+                lease_type=None,
+                prior_approvals=1,
+                prior_denials=0,
+                policy_action="proceed",
+                policy_score=0.9,
+                user_decision="auto_approve",
+                participant_id=None,
+                study_run_id=None,
+                study_task_id=None,
+                autonomy_mode="balanced",
+            )
+            db.record_trace(
+                repo_root=repo,
+                session_id="s1",
+                task="task",
+                stage="apply",
+                action_type="write_request",
+                file_path="svc/api.py",
+                change_type="api_change",
+                diff_size=5,
+                blast_radius=1,
+                existing_lease=False,
+                lease_type=None,
+                prior_approvals=1,
+                prior_denials=0,
+                policy_action="check_in",
+                policy_score=0.3,
+                user_decision="deny",
+                participant_id=None,
+                study_run_id=None,
+                study_task_id=None,
+                autonomy_mode="balanced",
+            )
+
+            clf = build_cold_classifier()
+            session_rows = [dict(r) for r in db.session_traces(repo, "s1")]
+
+            corrections_first = _apply_regret_corrections(
+                classifier=clf,
+                trust_db=db,
+                repo_root_str=repo,
+                session_row_dicts=session_rows,
+                recent_apply_denials=1,
+            )
+            sample_count_after_first = clf.sample_count
+
+            # Second call with the same session rows must not apply any new corrections.
+            corrections_second = _apply_regret_corrections(
+                classifier=clf,
+                trust_db=db,
+                repo_root_str=repo,
+                session_row_dicts=session_rows,
+                recent_apply_denials=1,
+            )
+
+            self.assertEqual(corrections_first, 1, "Expected exactly one regret correction on first call")
+            self.assertEqual(corrections_second, 0, "Second call must not re-apply already-corrected regret")
+            self.assertEqual(
+                clf.sample_count,
+                sample_count_after_first,
+                "sample_count must not increase on the idempotent second call",
+            )
 
 
 if __name__ == "__main__":

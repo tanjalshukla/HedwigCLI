@@ -10,7 +10,6 @@ from rich.text import Text
 
 from ..trust_db import TrustDB
 from .theme import PALETTE, panel_title
-from .ui import _render_file_list
 
 
 def _render_run_summary(
@@ -100,10 +99,8 @@ def _render_run_summary(
         )
     )
     print(
-        f"[{PALETTE['meta']}]Use[/{PALETTE['meta']}] hw status "
-        f"[{PALETTE['meta']}]to see what Hedwig thinks about this session, "
-        f"or[/{PALETTE['meta']}] hw observe export --html "
-        f"[{PALETTE['meta']}]for a full report.[/{PALETTE['meta']}]"
+        f"[{PALETTE['meta']}]/status to see what Hedwig thinks about this session, "
+        f"/observe export --html for a full report.[/{PALETTE['meta']}]"
     )
 
 

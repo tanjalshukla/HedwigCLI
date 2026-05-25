@@ -5,8 +5,40 @@ from pathlib import Path
 
 from .autonomy import AutonomyPreferences
 from .features import estimate_blast_radius, is_security_sensitive
-from .schema import IntentDeclaration
+from .schema import IntentDeclaration, WorkflowPhase
 from .trust_db import TrustDB
+
+
+# ---------------------------------------------------------------------------
+# Absorbed from sc/phase.py — phase gate logic belongs with plan gate logic.
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class PhaseGateResult:
+    allowed: bool
+    blocked_files: list[str]
+    reason: str | None = None
+
+
+def evaluate_write_phase_gate(phase: WorkflowPhase, touched_files: list[str]) -> PhaseGateResult:
+    """Enforce phase-based write boundaries before policy/approval logic."""
+    if not touched_files:
+        return PhaseGateResult(allowed=True, blocked_files=[])
+    if phase == "research":
+        return PhaseGateResult(
+            allowed=False,
+            blocked_files=sorted(touched_files),
+            reason="Research phase blocks all file writes.",
+        )
+    if phase == "planning":
+        blocked = sorted(p for p in touched_files if Path(p).suffix.lower() != ".md")
+        if blocked:
+            return PhaseGateResult(
+                allowed=False,
+                blocked_files=blocked,
+                reason="Planning phase allows writes only to .md files.",
+            )
+    return PhaseGateResult(allowed=True, blocked_files=[])
 
 
 def _file_preview(files: list[str]) -> str:
@@ -107,6 +139,22 @@ def decide_plan_checkpoint(
         reasons.append("declared phase is research")
     elif declaration.workflow_phase == "planning" and len(planned_files) > 1:
         reasons.append("declared phase is planning with multi-file scope")
+
+    # Small single-file tasks with no risk signals auto-skip the plan gate.
+    # If you asked for a 3-line bug fix, you shouldn't have to re-approve the plan.
+    _is_trivially_small = (
+        len(planned_files) == 1
+        and len(material_actions) <= 1
+        and not declaration.potential_deviations
+        and not low_trust_reason
+        and not constrained_reason
+        and not security_reason
+        and not high_blast_reason
+        and not strict
+        and not spec_required  # spec alignment always warrants a gate
+    )
+    if _is_trivially_small:
+        return PlanCheckpointDecision(required=False, reasons=tuple())
 
     if autonomy_preferences and autonomy_preferences.skip_low_risk_plan_checkpoint:
         # Hard-risk signals always block the bypass (security, constrained files,

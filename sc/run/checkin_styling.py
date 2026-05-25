@@ -25,6 +25,8 @@ from rich.text import Text
 from ..preferences import PushbackType
 from .theme import PALETTE, moment, panel_title
 
+_CONSOLE = Console()
+
 
 _TRAILING_WINDOW = 10  # traces to consider for dominance calculation
 _DOMINANCE_RATIO = 0.5  # >=50% of trailing window must share a type
@@ -59,7 +61,7 @@ def render_adapted_checkin_context(
     if dominant_type is None:
         return
 
-    console = Console()
+    console = _CONSOLE
     body = Text()
 
     if dominant_type == PushbackType.FAILURE_REPORT:
@@ -86,7 +88,7 @@ def render_adapted_checkin_context(
         )
         body.append(f"Files touched: {len(files)}\n", style=PALETTE["info_bold"])
         if blast_radius is not None:
-            body.append(f"Blast radius: {blast_radius}\n", style=PALETTE["info_bold"])
+            body.append(f"Files potentially affected: {blast_radius}\n", style=PALETTE["info_bold"])
         if files:
             body.append("\n")
             for f in files[:10]:

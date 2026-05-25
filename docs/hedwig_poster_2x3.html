@@ -1,0 +1,867 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Hedwig Poster — ACM CAIS 2026</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=DM+Sans:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --purple: #e8447a;
+    --purple-dark: #9c1f4a;
+    --lavender: #fcdde7;
+    --lavender-soft: #fef0f5;
+    --green: #2d8653;
+    --cyan: #0e8a8a;
+    --text: #1a1a1a;
+    --text-soft: #555;
+    --text-light: #888;
+    --border: #e0e0e0;
+    --bg: #ffffff;
+    /* terminal palette matching Rich output */
+    --t-bg: #1e1e2e;
+    --t-cyan: #89dceb;
+    --t-green: #a6e3a1;
+    --t-green-bold: #5dd669;
+    --t-red: #f38ba8;
+    --t-yellow: #f9e2af;
+    --t-purple: #cba6f7;
+    --t-dim: #6c7086;
+    --t-white: #cdd6f4;
+    --t-border-cyan: #89b4fa;
+    --t-border-green: #a6e3a1;
+    --t-border-red: #f38ba8;
+  }
+  body {
+    font-family: 'DM Sans', sans-serif;
+    background: #c8c8c8;
+    display: flex;
+    justify-content: center;
+    padding: 20px;
+  }
+  .poster {
+    width: 1180px;
+    background: var(--bg);
+    padding: 26px 26px 16px;
+    box-shadow: 0 4px 50px rgba(0,0,0,0.28);
+    color: var(--text);
+    font-size: 11px;
+  }
+
+  /* ── HEADER ── */
+  .header {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 18px;
+    margin-bottom: 12px;
+    border-bottom: 2.5px solid var(--purple);
+    padding-bottom: 10px;
+  }
+  .header-owl {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 22px;
+    line-height: 1.4;
+    color: var(--purple);
+    white-space: pre;
+    opacity: 0.85;
+    flex-shrink: 0;
+  }
+  .title {
+    font-family: 'DM Serif Display', serif;
+    font-size: 38px;
+    line-height: 1.1;
+    color: #111;
+    margin-bottom: 6px;
+    letter-spacing: -0.5px;
+  }
+  .authors { font-size: 13.5px; color: var(--text); margin-bottom: 2px; }
+  .affiliation { font-size: 12px; color: var(--text-soft); }
+  .affiliation .venue { color: var(--purple); font-weight: 600; }
+  .header-right { display: flex; flex-direction: column; align-items: center; gap: 3px; }
+  .header-badge {
+    background: var(--purple); color: white;
+    font-size: 9.5px; font-weight: 700;
+    padding: 3px 10px; border-radius: 3px;
+  }
+  .header-sub { font-size: 9px; color: var(--text-soft); }
+
+  /* ── POSITIONING BAR (like advisor's L1–L5 row) ── */
+  .positioning-bar {
+    background: var(--lavender-soft);
+    border: 1px solid var(--lavender);
+    border-radius: 6px;
+    padding: 0;
+    margin-bottom: 10px;
+    overflow: hidden;
+  }
+  .pos-header {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    color: var(--text-soft);
+  }
+  .pos-header-left {
+    background: linear-gradient(to right, #f0f0f0, #f7c8d8);
+    padding: 4px 12px;
+    text-transform: uppercase;
+  }
+  .pos-header-right {
+    background: linear-gradient(to right, #f7c8d8, var(--purple));
+    color: white;
+    padding: 4px 12px;
+    text-align: right;
+    text-transform: uppercase;
+  }
+  .pos-cells {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    border-top: 1px solid var(--border);
+  }
+  .pos-cell {
+    padding: 8px 10px;
+    border-right: 1px solid var(--border);
+    font-size: 10.5px;
+    line-height: 1.38;
+    position: relative;
+  }
+  .pos-cell:last-child { border-right: none; }
+  .pos-cell.hedwig {
+    background: var(--lavender);
+    border: 2px solid var(--purple);
+    border-radius: 0;
+    margin: -1px;
+    z-index: 1;
+  }
+  .pos-cell .pos-label {
+    font-size: 8px;
+    font-weight: 700;
+    color: var(--text-light);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    display: block;
+    margin-bottom: 2px;
+  }
+  .pos-cell .pos-name {
+    font-weight: 700;
+    font-size: 11.5px;
+    color: var(--text);
+    display: block;
+    margin-bottom: 2px;
+  }
+  .pos-cell.hedwig .pos-name { color: var(--purple-dark); }
+  .pos-cell .pos-desc { color: var(--text-soft); font-size: 11px; }
+  .pos-cell .pos-example {
+    margin-top: 3px;
+    font-size: 7.5px;
+    color: var(--text-light);
+    font-style: italic;
+  }
+  .pos-hedwig-badge {
+    display: inline-block;
+    background: var(--purple);
+    color: white;
+    font-size: 8px;
+    font-weight: 700;
+    padding: 1px 5px;
+    border-radius: 2px;
+    margin-bottom: 3px;
+  }
+
+  /* ── MAIN CONTENT: 3 terminal panels + annotations ── */
+  .main-section {
+    display: grid;
+    grid-template-columns: 152px 1fr 1fr 1fr 152px;
+    gap: 22px;
+    margin-bottom: 8px;
+    align-items: stretch;
+    position: relative;
+  }
+  .arrow-overlay {
+    position: absolute;
+    top: 0; left: 0;
+    width: 100%; height: 100%;
+    pointer-events: none;
+    overflow: visible;
+  }
+  .side-annotations {
+    display: flex;
+    flex-direction: column;
+    justify-content: space-around;
+    gap: 0;
+    padding-top: 4px;
+    padding-bottom: 4px;
+  }
+  .side-annotations-right {
+    justify-content: flex-start;
+    gap: 22px;
+    padding-top: 4px;
+    padding-bottom: 4px;
+  }
+  .side-annot {
+    display: flex;
+    gap: 6px;
+    align-items: flex-start;
+  }
+  .side-badge {
+    min-width: 20px; height: 20px;
+    background: var(--purple);
+    color: white; border-radius: 50%;
+    font-size: 10px; font-weight: 700;
+    display: flex; align-items: center; justify-content: center;
+    flex-shrink: 0; margin-top: 1px;
+  }
+  /* Inline marker inside terminal body — matches the side badge */
+  .t-marker {
+    display: inline-block;
+    background: var(--purple);
+    color: white;
+    border-radius: 50%;
+    font-family: 'DM Sans', sans-serif;
+    font-size: 8px;
+    font-weight: 700;
+    width: 14px;
+    height: 14px;
+    line-height: 14px;
+    text-align: center;
+    vertical-align: middle;
+    margin-right: 4px;
+    flex-shrink: 0;
+  }
+  /* Arrow between annotation and terminal */
+  .side-text { font-size: 12px; line-height: 1.45; color: var(--text); }
+  .side-text .side-title {
+    font-size: 13px; font-weight: 700;
+    color: var(--purple-dark);
+    display: block; margin-bottom: 3px;
+  }
+
+  /* ── TERMINAL PANEL ── */
+  .terminal {
+    background: var(--t-bg);
+    border-radius: 8px;
+    overflow: hidden;
+    box-shadow: none;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 9.75px;
+    line-height: 1.45;
+  }
+  .term-bar {
+    background: #313244;
+    padding: 5px 10px;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+  }
+  .term-dot { width: 9px; height: 9px; border-radius: 50%; }
+  .term-dot.red { background: #f38ba8; }
+  .term-dot.yellow { background: #f9e2af; }
+  .term-dot.green { background: #a6e3a1; }
+  .term-title {
+    font-family: 'DM Sans', sans-serif;
+    font-size: 8px; color: #cdd6f4;
+    margin-left: 6px;
+    font-weight: 600;
+  }
+  .term-caption {
+    font-family: 'DM Sans', sans-serif;
+    font-size: 9px; font-weight: 700;
+    color: white;
+    background: var(--purple);
+    padding: 4px 10px;
+    text-align: center;
+  }
+  .term-body { padding: 6px 10px; }
+  .t { display: block; }
+  .tc  { color: var(--t-cyan); }
+  .tcb { color: var(--t-cyan); font-weight: bold; }
+  .tg  { color: var(--t-green); }
+  .tgb { color: var(--t-green-bold); font-weight: bold; }
+  .tr  { color: var(--t-red); }
+  .trb { color: var(--t-red); font-weight: bold; }
+  .ty  { color: var(--t-yellow); }
+  .tyb { color: var(--t-yellow); font-weight: bold; }
+  .tp  { color: var(--t-purple); }
+  .tpb { color: var(--t-purple); font-weight: bold; }
+  .td  { color: var(--t-dim); }
+  .tw  { color: var(--t-white); }
+  .twb { color: var(--t-white); font-weight: bold; }
+  /* panel borders */
+  .tpanel-cyan  { display: block; border-left: 2px solid var(--t-border-cyan); padding: 2px 7px; margin: 2px 0; }
+  .tpanel-green { display: block; border-left: 2px solid var(--t-green); padding: 2px 7px; margin: 2px 0; }
+  .tpanel-red   { display: block; border-left: 2px solid var(--t-red); padding: 2px 7px; margin: 2px 0; }
+  .tpanel-purple{ display: block; border-left: 2px solid var(--t-purple); padding: 2px 7px; margin: 2px 0; }
+  .tpanel-title {
+    font-size: 9px; font-weight: bold;
+    margin-bottom: 2px; display: block;
+  }
+  .t-prompt { color: var(--t-green); font-weight: bold; }
+  .t-input  { color: var(--t-white); }
+  .t-spacer { display: block; height: 1px; }
+  .t-bar { display: block; margin: 2px 0; }
+  .t-region {
+    display: block;
+    border: 1.5px solid var(--purple);
+    border-radius: 4px;
+    background: rgba(232, 68, 122, 0.06);
+    padding: 5px 8px;
+    margin: 4px -2px;
+  }
+
+  /* ── BOTTOM ROW ── */
+  .bottom-row {
+    display: grid;
+    grid-template-columns: 1.05fr 1fr 0.95fr;
+    gap: 12px;
+    margin-bottom: 8px;
+  }
+  .bottom-col h3 {
+    font-size: 16px; font-weight: 700; color: white;
+    background: var(--purple); padding: 4px 11px;
+    margin-bottom: 6px; display: inline-block;
+  }
+  .col-body { font-size: 13.5px; line-height: 1.42; color: var(--text); }
+  .col-body p { margin-bottom: 3px; }
+  .col-body strong { color: var(--purple-dark); }
+
+  /* mini chart */
+  .mini-chart { margin: 5px 0; background: var(--lavender-soft); padding: 6px 8px; border-radius: 3px; }
+  .mc-row { display: flex; align-items: center; gap: 4px; margin-bottom: 3px; font-size: 11px; }
+  .mc-label { min-width: 64px; font-weight: 600; }
+  .mc-bg { flex: 1; height: 11px; background: #e0e0e0; border-radius: 2px; }
+  .mc-fill { height: 100%; border-radius: 2px; display: flex; align-items: center; justify-content: flex-end; padding-right: 3px; color: white; font-size: 7.5px; font-weight: 700; }
+  .mc-fill.h { background: var(--purple); }
+  .mc-fill.c { background: #999; }
+
+  /* O badges */
+  .o-row { display: flex; gap: 7px; align-items: flex-start; margin-bottom: 2px; }
+  .o-badge {
+    min-width: 19px; color: var(--purple-dark);
+    font-size: 13.5px; font-weight: 700;
+    flex-shrink: 0; padding-top: 1px;
+  }
+  .o-text { font-size: 13.5px; line-height: 1.36; padding-top: 1px; }
+  .o-text strong { color: var(--purple-dark); }
+
+  .key-finding {
+    background: var(--lavender); border-radius: 3px;
+    padding: 6px 9px; margin-top: 5px;
+    font-size: 13px; line-height: 1.42;
+  }
+  .key-finding strong { color: var(--purple-dark); }
+
+  .future-list { margin-top: 3px; list-style: none; padding-left: 0; }
+  .future-list li {
+    font-size: 13.5px; line-height: 1.4; color: var(--text);
+    margin-bottom: 2px; padding-left: 10px; position: relative;
+  }
+  .future-list li::before {
+    content: "•"; color: var(--purple);
+    position: absolute; left: 2px; font-size: 11px; top: 0;
+  }
+
+  .stat-row { display: flex; align-items: baseline; gap: 6px; margin: 2px 0; }
+  .stat-num {
+    font-family: 'DM Serif Display', serif;
+    font-size: 15px; color: var(--purple); min-width: 38px; flex-shrink: 0;
+  }
+  .stat-desc { font-size: 13.5px; color: var(--text-soft); line-height: 1.4; flex: 1; }
+  .stat-desc strong { color: var(--text); }
+
+  .divider {
+    border: none;
+    border-left: 3px solid var(--purple);
+    margin: 5px 0 4px;
+    height: 0;
+    display: flex;
+    align-items: center;
+  }
+  .divider::after {
+    content: "";
+    flex: 1;
+    height: 1px;
+    background: var(--border);
+    margin-left: 6px;
+  }
+  .section-head {
+    font-size: 15px;
+    font-weight: 700;
+    color: var(--purple-dark);
+    margin-bottom: 6px;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+  }
+  .section-head::before {
+    content: "▸";
+    color: var(--purple);
+    font-size: 10px;
+  }
+
+
+  /* ── FOOTER ── */
+  .footer {
+    display: flex; align-items: center; justify-content: space-between;
+    border-top: 1px solid var(--border); padding-top: 6px;
+  }
+  .footer-left { display: flex; align-items: center; gap: 12px; }
+  .uw-logo img { height: 44px; width: auto; display: block; }
+  .footer-text { font-size: 11px; color: var(--text-soft); line-height: 1.38; }
+  .footer-text strong { color: var(--text); font-weight: 600; }
+  .footer-center { text-align: center; font-size: 11px; color: var(--text-soft); font-style: italic; }
+  .booth-cta {
+    background: var(--purple); color: white;
+    padding: 7px 18px; border-radius: 5px;
+    font-size: 14px; font-weight: 700;
+    display: inline-block; font-style: normal;
+    letter-spacing: 0.3px;
+  }
+  .footer-right { display: flex; gap: 10px; }
+  .footer-qr { display: flex; flex-direction: column; align-items: center; gap: 2px; }
+  .footer-qr svg { width: 56px; height: 56px; background: white; border: 1px solid var(--border); border-radius: 3px; padding: 2px; }
+  .qr-label { font-size: 9px; color: var(--text); font-weight: 700; letter-spacing: 0.3px; }
+
+  code {
+    font-family: 'JetBrains Mono', monospace;
+    background: var(--lavender); color: var(--purple-dark);
+    padding: 0 3px; border-radius: 2px; font-size: 8px;
+  }
+</style>
+</head>
+<body>
+<div class="poster">
+
+  <!-- HEADER -->
+  <div class="header">
+    <div class="header-owl">,___,&#10;(O,O)&#10;(   )&#10;-"-"-</div>
+    <div style="text-align:center;">
+      <h1 class="title">Hedwig: Adaptive Governance for LLM Coding Agents</h1>
+      <div style="font-size:13.5px;color:var(--purple-dark);font-style:italic;margin-bottom:4px;letter-spacing:0.1px;">A coding agent that learns when to pause, from your real corrections, not config files.</div>
+      <div class="authors">Tanjal Shukla &nbsp;·&nbsp; Kevin Feng &nbsp;·&nbsp; Leijie Wang &nbsp;·&nbsp; Mohammad Rostami &nbsp;·&nbsp; Amy Zhang</div>
+      <div class="affiliation">University of Washington &nbsp;·&nbsp; Social Futures Lab &nbsp;|&nbsp; <span class="venue">ACM CAIS 2026</span> &nbsp;|&nbsp; github.com/tanjalshukla/HedwigCLI</div>
+    </div>
+  </div>
+
+  <!-- POSITIONING BAR -->
+  <div class="positioning-bar">
+    <div class="pos-header">
+      <div class="pos-header-left">← More developer control</div>
+      <div class="pos-header-right">More agent autonomy →</div>
+    </div>
+    <div class="pos-cells">
+      <div class="pos-cell">
+        <span class="pos-label">Static rules</span>
+        <span class="pos-name">Rule files</span>
+        <span class="pos-desc">Developer writes CLAUDE.md, AGENTS.md upfront. Agent follows or ignores.</span>
+        <span class="pos-example">CLAUDE.md · AGENTS.md</span>
+      </div>
+      <div class="pos-cell hedwig">
+        <span class="pos-hedwig-badge">✦ Hedwig</span>
+        <span class="pos-name">Adaptive governance</span>
+        <span class="pos-desc">Oversight calibrates from real interaction traces. Decisions are legible, revokable, and repo-scoped.</span>
+      </div>
+      <div class="pos-cell">
+        <span class="pos-label">Milestone gating</span>
+        <span class="pos-name">Approval flows</span>
+        <span class="pos-desc">Human approves at fixed checkpoints regardless of content or history.</span>
+        <span class="pos-example">Jules · Devin</span>
+      </div>
+      <div class="pos-cell">
+        <span class="pos-label">Config flags</span>
+        <span class="pos-name">Preset autonomy</span>
+        <span class="pos-desc">Autonomy level set by a global flag or product default. Cannot adapt to this repo or this developer at runtime.</span>
+        <span class="pos-example">Cursor auto-mode · Aider --yes</span>
+      </div>
+      <div class="pos-cell">
+        <span class="pos-label">Full autonomy</span>
+        <span class="pos-name">Always proceed</span>
+        <span class="pos-desc">Agent acts without human oversight. Trust is binary.</span>
+        <span class="pos-example">AI Scientist · background agents</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- MAIN: left annotations | 3 terminals | right annotations -->
+  <div class="main-section">
+
+    <!-- LEFT ANNOTATIONS -->
+    <div class="side-annotations">
+      <div class="side-annot">
+        <div class="side-badge" id="badge-a">A</div>
+        <div class="side-text">
+          <span class="side-title">Rule Compiler</span>
+          <code>/rules add</code> classifies a natural-language rule into a <strong>hard constraint</strong> (CLI-enforced, cannot be overridden) or a <strong>behavioral guideline</strong> (retrieved into prompt). One command, two enforcement tiers, no special syntax required.
+        </div>
+      </div>
+      <div class="side-annot">
+        <div class="side-badge" id="badge-b">B</div>
+        <div class="side-text">
+          <span class="side-title">Approval Cascade</span>
+          Every file action flows through four layers in strict priority order: hard constraints → active leases → PolicyScorer → preference override. <strong>Hard constraints are absolute.</strong> No learned preference or scorer output can override them.
+        </div>
+      </div>
+      <div class="side-annot">
+        <div class="side-badge" id="badge-c">C</div>
+        <div class="side-text">
+          <span class="side-title">PolicyScorer</span>
+          Online logistic regression with calibrated probabilities activates after <strong>10 real decisions</strong>. Heuristic prior carries cold-start. Quick approvals (&lt;5s) get ½ weight to discount shallow review without blocking flow.
+        </div>
+      </div>
+    </div>
+
+    <!-- TERMINAL 1: Check-in with diff -->
+    <div class="terminal">
+      <div class="term-bar">
+        <div class="term-dot red"></div>
+        <div class="term-dot yellow"></div>
+        <div class="term-dot green"></div>
+        <span class="term-title">hw · recipe_api · balanced</span>
+      </div>
+      <div class="term-caption">Scene 1 — Governed first write</div>
+      <div class="term-body">
+        <span class="t td">   ,___,   <span style="color:#89b4fa;font-weight:bold;">hedwig</span></span>
+        <span class="t td">   (O,O)   global.claude-sonnet-4-6</span>
+        <span class="t td">   (   )   mode: <span style="color:var(--t-cyan);">balanced</span></span>
+        <span class="t td">   -"-"-   </span>
+        <span class="t-spacer"></span>
+        <span class="t td">Type a task · /oversight · /help</span>
+        <span class="t-spacer"></span>
+        <span class="t-region">
+        <span class="t" id="target-a"><span class="t-marker">A</span><span class="t-prompt">hedwig</span> <span class="t-input">/rules add "never touch production_config.py"</span></span>
+        <span class="tpanel-purple">
+          <span class="tpanel-title tpb">✦ rule compiled · hard constraint</span>
+          <span class="t"><span class="td">  type      </span><span class="tw">always_deny</span></span>
+          <span class="t"><span class="td">  scope     </span><span class="tw">recipe_api/production_config.py</span></span>
+          <span class="t td" style="font-size:7px;">  CLI-enforced · cannot be overridden by scorer or preferences</span>
+        </span>
+        </span>
+        <span class="t-spacer"></span>
+        <span class="t"><span class="t-prompt">hedwig</span> <span class="t-input">add a prep_time_minutes field to Recipe</span></span>
+        <span class="t-spacer"></span>
+        <span class="t-region">
+        <span class="t tc" id="target-b"><span class="t-marker">B</span>◆ hedwig · decision · read</span>
+        <span class="t"><span class="td">  ? </span><span class="tw">recipe_api/models.py</span> <span class="ty">needs approval</span> <span class="td">(no prior approvals)</span></span>
+        <span class="t"><span class="td">  ? </span><span class="tw">recipe_api/service.py</span> <span class="td">(affects multiple files)</span></span>
+        <span class="t-spacer"></span>
+        <span class="t tpb">a</span><span class="tw"> approve  </span><span class="tg">r</span><span class="tw"> approve · don't ask again  </span><span class="trb">d</span><span class="tw"> deny: </span><span class="tgb">a</span>
+        </span>
+        <span class="t-spacer"></span>
+        <span class="t tc">◆ hedwig · decision · apply</span>
+        <span class="tpanel-cyan">
+          <span class="tpanel-title tc">± edit  recipe_api/models.py</span>
+          <span class="t td">@@ -18,3 +18,4 @@</span>
+          <span class="t tw">     ingredients: list[Ingredient]</span>
+          <span class="t tw">     tags: list[str]</span>
+          <span class="t tw">     author: str = "anonymous"</span>
+          <span class="t tg">+    prep_time_minutes: int = 0</span>
+        </span>
+        <span class="t-spacer"></span>
+        <span class="t-region">
+        <span class="t" id="target-c"><span class="t-marker">C</span><span class="ty">? </span><span class="tw">recipe_api/models.py</span><span class="ty"> needs approval</span><span class="td"> · API/interface change</span></span>
+        <span class="t-spacer"></span>
+        <span class="t tpb">a</span><span class="tw"> approve  </span><span class="tg">r</span><span class="tw"> approve · don't ask again  </span><span class="trb">d</span><span class="tw"> deny: </span><span class="tg">r</span>
+        </span>
+        <span class="t-spacer"></span>
+        <span class="t tgb">✓ apply approved</span><span class="td">  · API/interface change</span>
+        <span class="t tgb">✓ verification passed</span>
+        <span class="t tgb">✓ done</span>
+        <span class="t-spacer"></span>
+        <span class="t"><span class="t-prompt">hedwig</span> <span class="t-input">/status</span></span>
+        <span class="t-spacer"></span>
+        <span class="tpanel-cyan" style="padding:5px 7px;">
+          <span class="tpanel-title tcb">◆ hedwig · session status</span>
+          <span class="t-spacer"></span>
+          <span class="t"><span class="td">  mode         </span><span class="tcb">balanced</span></span>
+          <span class="t"><span class="td">  decisions    </span><span class="tw">2 turns · adapting to your patterns</span></span>
+          <span class="t"><span class="td">  preferences  </span><span class="td">none confirmed yet</span></span>
+          <span class="t"><span class="td">  leases       </span><span class="tw">recipe_api/models.py</span><span class="td"> (72h)</span></span>
+          <span class="t-spacer"></span>
+          <span class="t td" style="font-size:7px;">  8 more decisions before Hedwig adapts to your patterns</span>
+        </span>
+      </div>
+    </div>
+
+    <!-- TERMINAL 2: Hypothesis panel -->
+    <div class="terminal">
+      <div class="term-bar">
+        <div class="term-dot red"></div>
+        <div class="term-dot yellow"></div>
+        <div class="term-dot green"></div>
+        <span class="term-title">hw · recipe_api · balanced</span>
+      </div>
+      <div class="term-caption">Scene 2 — Hypothesis bank fires</div>
+      <div class="term-body">
+        <span class="t"><span class="t-prompt">hedwig</span> <span class="t-input">add tag filtering to list_recipes</span></span>
+        <span class="t td">  … planning → apply →</span>
+        <span class="t ty">  ? </span><span class="tw">recipe_api/routes.py</span><span class="ty"> needs approval</span>
+        <span class="t tpb">a</span><span class="tw"> approve  </span><span class="trb">d</span><span class="tw"> deny: </span><span class="trb">d</span>
+        <span class="t td">Optional note: </span><span class="tw">just service.py, leave routes alone</span>
+        <span class="t-spacer"></span>
+        <span class="t"><span class="t-prompt">hedwig</span> <span class="t-input">add pagination to list_recipes</span></span>
+        <span class="t td">  … planning → apply →</span>
+        <span class="t ty">  ? </span><span class="tw">recipe_api/routes.py, tests/</span><span class="ty"> needs approval</span>
+        <span class="t tpb">a</span><span class="tw"> approve  </span><span class="trb">d</span><span class="tw"> deny: </span><span class="trb">d</span>
+        <span class="t td">Optional note: </span><span class="tw">only service.py, just the logic</span>
+        <span class="t-spacer"></span>
+        <span class="t"><span class="t-prompt">hedwig</span> <span class="t-input">add a slug field to Recipe</span></span>
+        <span class="t td">  … planning → apply →</span>
+        <span class="t ty">  ? </span><span class="tw">recipe_api/schema.py</span><span class="ty"> needs approval</span>
+        <span class="t tpb">a</span><span class="tw"> approve  </span><span class="trb">d</span><span class="tw"> deny: </span><span class="trb">d</span>
+        <span class="t td">Optional note: </span><span class="tw">just models.py</span>
+        <span class="t-spacer"></span>
+        <span class="t-region">
+        <span class="tpanel-green" style="padding:6px 8px;">
+          <span class="tpanel-title tgb" id="target-d"><span class="t-marker">D</span>✦ hedwig · learning · I noticed a pattern</span>
+          <span class="t-spacer"></span>
+          <span class="t twb">You've narrowed scope on me a few times —</span>
+          <span class="t twb">want me to always check in before</span>
+          <span class="t twb">multi-file changes?</span>
+          <span class="t-spacer"></span>
+          <span class="t td" style="font-size:7.5px;">3 scope-narrowing messages detected.</span>
+          <span class="t td" style="font-size:7.5px;">Applies to future sessions in this repo.</span>
+          <span class="t-spacer"></span>
+          <span class="t tgb">Save this as a rule for future sessions? (y/n) [y]: </span><span class="tgb">y</span>
+          <span class="t tgb">✦ preference saved</span>
+        </span>
+        </span>
+        <span class="t-spacer"></span>
+        <span class="t"><span class="t-prompt">hedwig</span> <span class="t-input">add a delete endpoint to recipes</span></span>
+        <span class="t td">  … planning → apply →</span>
+        <span class="t-spacer"></span>
+        <span class="tpanel-purple" style="padding:5px 7px;">
+          <span class="tpanel-title tpb">◆ hedwig · preference matched · check-in tightened</span>
+          <span class="t-spacer"></span>
+          <span class="t tw">multi-file change detected:</span>
+          <span class="t tw">  recipe_api/routes.py, recipe_api/service.py</span>
+          <span class="t-spacer"></span>
+          <span class="t td">scorer said </span><span class="tgb">proceed</span><span class="td"> · preference said </span><span class="tyb">check-in</span>
+          <span class="t td">→ </span><span class="tyb">check-in</span><span class="td"> (oversight is strictly additive)</span>
+        </span>
+      </div>
+    </div>
+
+    <!-- TERMINAL 3: /prefs + weights -->
+    <div class="terminal">
+      <div class="term-bar">
+        <div class="term-dot red"></div>
+        <div class="term-dot yellow"></div>
+        <div class="term-dot green"></div>
+        <span class="term-title">hw · recipe_api · balanced</span>
+      </div>
+      <div class="term-caption">Scene 3 — Legible governance state</div>
+      <div class="term-body">
+        <span class="t-region">
+        <span class="t" id="target-e"><span class="t-marker">E</span><span class="t-prompt">hedwig</span> <span class="t-input">/prefs</span></span>
+        <span class="t-spacer"></span>
+        <span class="tpanel-green" style="padding:5px 7px;">
+          <span class="tpanel-title tgb">✦ hedwig · learning · preferences</span>
+          <span class="t-spacer"></span>
+          <span class="t tgb">Accepted</span>
+          <span class="t tg">  ✦ I'll check in before multi-file changes</span>
+          <span class="t-spacer"></span>
+          <span class="t tcb">Watching for <span class="td" style="font-weight:normal;font-size:7px;">(confidence from your recent decisions)</span></span>
+          <span class="t"><span class="td">  ████████░░ </span><span class="tcb">80%</span><span class="tw">  reviewing changes carefully</span></span>
+          <span class="t"><span class="td">  ░░░░░░░░░░ </span><span class="td">new   redirecting toward better approaches</span></span>
+        </span>
+        </span>
+        <span class="t-spacer"></span>
+        <span class="t"><span class="t-prompt">hedwig</span> <span class="t-input">/observe weights</span></span>
+        <span class="t-spacer"></span>
+        <span class="tpanel-cyan" style="padding:5px 7px;">
+          <span class="tpanel-title tcb">◆ hedwig · observe · how my judgment has shifted · 14 decisions · adapting to your patterns</span>
+          <span class="t-spacer"></span>
+          <span class="t"><span class="tgb">▲ +0.31  </span><span class="tw">prior approvals    </span><span class="td">more history → more trust</span></span>
+          <span class="t"><span class="trb">▼ −0.58  </span><span class="tw">prior denials      </span><span class="td">stronger signal than prior</span></span>
+          <span class="t"><span class="trb">▼ −0.44  </span><span class="tw">files affected     </span><span class="td">multi-file risk learned</span></span>
+          <span class="t"><span class="trb">▼ −0.19  </span><span class="tw">change size        </span></span>
+          <span class="t"><span class="tgb">▲ +0.12  </span><span class="tw">change type        </span><span class="td">api changes tightened</span></span>
+          <span class="t-spacer"></span>
+          <span class="t td" style="font-size:7.5px;">  14 decisions · learned · green ▲ auto-approve · red ▼ check-in</span>
+        </span>
+        <span class="t-spacer"></span>
+        <span class="t-region">
+        <span class="t" id="target-f"><span class="t-marker">F</span><span class="t-prompt">hedwig</span> <span class="t-input">/retrospective</span></span>
+        <span class="tpanel-cyan" style="padding:5px 7px;">
+          <span class="tpanel-title tcb">◆ hedwig · session wrap-up</span>
+          <span class="t tw">8 auto-approved · 3 check-ins</span>
+          <span class="t-spacer"></span>
+          <span class="t tyb">Possibly too loose:</span>
+          <span class="t tw">  · recipe_api/service.py  <span class="td">auto-approved, then you pushed back</span></span>
+          <span class="t-spacer"></span>
+          <span class="t tw">Want me to check in more carefully? (y/n): </span><span class="tgb">y</span>
+          <span class="t tgb">✦ Got it — I'll be more careful next time.</span>
+        </span>
+        </span>
+      </div>
+    </div>
+
+    <!-- RIGHT ANNOTATIONS -->
+    <div class="side-annotations side-annotations-right">
+      <div class="side-annot">
+        <div class="side-badge" id="badge-d">D</div>
+        <div class="side-text">
+          <span class="side-title">Hypothesis Bank</span>
+          Evidence accumulates with context-sensitive weighting, so traces in high-relevance contexts count more. Surfaces at <strong>≥70% confidence over ≥3 traces</strong>. Contradicted candidates stored as rejected evidence, never silently deleted.
+        </div>
+      </div>
+      <div class="side-annot">
+        <div class="side-badge" id="badge-e">E</div>
+        <div class="side-text">
+          <span class="side-title">Legible State</span>
+          <code>/prefs</code> shows accepted preferences and live hypothesis confidence bars. <code>/observe weights</code> shows how each feature's influence has shifted. Every governance decision is traceable to which layer fired and why.
+        </div>
+      </div>
+      <div class="side-annot">
+        <div class="side-badge" id="badge-f">F</div>
+        <div class="side-text">
+          <span class="side-title">Regret + Retrospective</span>
+          <strong>Regret tracking</strong> replays auto-approved files as negative signals when the developer pushes back. <code>/retrospective</code> shows where Hedwig was too loose or too cautious. Preferences are revokable at any time.
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- APPROVAL CASCADE STRIP -->
+  <div style="margin-bottom:9px;">
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:7px;">
+      <span style="font-size:13px;font-weight:700;color:var(--purple-dark);">Approval Cascade</span>
+      <span style="font-size:10.5px;color:var(--text-soft);font-style:italic;">— every file action evaluated in strict priority order, first match wins</span>
+      <div style="flex:1;height:1px;background:var(--border);margin-left:4px;"></div>
+      <div style="display:flex;gap:12px;font-size:10.5px;color:var(--text-soft);">
+        <span>→ <span style="color:#2d8653;font-weight:700;">✓ proceed</span></span>
+        <span>→ <span style="color:#c08010;font-weight:700;">⚐ flag</span></span>
+        <span>→ <span style="color:#c44b4b;font-weight:700;">⏸ check-in</span></span>
+      </div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:6px;">
+      <div style="background:var(--lavender);border:1px solid var(--purple);border-radius:4px;padding:7px 11px;">
+        <div style="font-size:12.5px;font-weight:700;color:var(--purple-dark);margin-bottom:3px;">① Hard constraints</div>
+        <div style="font-size:11.5px;color:var(--text-soft);line-height:1.36;">Deterministic path rules compiled from <code>/rules add</code>. Always deny / check-in / allow. Cannot be overridden.</div>
+      </div>
+      <div style="background:var(--lavender);border:1px solid var(--purple);border-radius:4px;padding:7px 11px;">
+        <div style="font-size:12.5px;font-weight:700;color:var(--purple-dark);margin-bottom:3px;">② Active leases</div>
+        <div style="font-size:11.5px;color:var(--text-soft);line-height:1.36;">Time-bounded trust grants on specific files earned by prior approvals. Files with active leases skip the scorer entirely and auto-approve without interruption.</div>
+      </div>
+      <div style="background:var(--lavender);border:1px solid var(--purple);border-radius:4px;padding:7px 11px;">
+        <div style="font-size:12.5px;font-weight:700;color:var(--purple-dark);margin-bottom:3px;">③ PolicyScorer</div>
+        <div style="font-size:11.5px;color:var(--text-soft);line-height:1.36;">Online logistic regression with calibrated probabilities; heuristic prior carries cold-start. Scores risk signals → proceed / flag / check-in.</div>
+      </div>
+      <div style="background:var(--lavender);border:1px solid var(--purple);border-radius:4px;padding:7px 11px;">
+        <div style="font-size:12.5px;font-weight:700;color:var(--purple-dark);margin-bottom:3px;">④ Preference override</div>
+        <div style="font-size:11.5px;color:var(--text-soft);line-height:1.36;">Developer-confirmed preferences from the Hypothesis Bank. Can only <em>tighten</em> the scorer's output: a proceed becomes a check-in. Never loosens. Oversight is strictly additive.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- BOTTOM ROW: Formative + Eval (small) + O1-O5 + Future -->
+  <div class="bottom-row">
+
+    <!-- COL 1: Formative + Eval + Session Signals -->
+    <div class="bottom-col">
+      <h3>Formative Study (n=21)</h3>
+      <div class="stat-row">
+        <div class="stat-num">52%</div>
+        <div class="stat-desc">wanted check-ins at <strong>key milestones</strong>, not before every edit</div>
+      </div>
+      <div class="stat-row">
+        <div class="stat-num">67%</div>
+        <div class="stat-desc">frustrated agents <strong>ignored their correction patterns</strong> across sessions</div>
+      </div>
+      <div class="stat-row">
+        <div class="stat-num">43%</div>
+        <div class="stat-desc">couldn't understand <strong>why</strong> Hedwig acted autonomously</div>
+      </div>
+      <div class="key-finding" style="margin-top:5px;">
+        Preferences are <em>implicit</em>: developers recognize them in corrections but can't articulate them up front. Hedwig infers from behavior.
+      </div>
+      <div class="divider"></div>
+      <div class="section-head">Session Signals</div>
+      <div class="col-body">
+        <p>Hedwig infers <strong>coding mode</strong> (vibe / collaborative / human-only) and <strong>session intensity</strong> from each session's trace, shifting thresholds before the scorer fires. Override with <code>/oversight</code>.</p>
+      </div>
+      <div class="divider"></div>
+      <div class="section-head">Pilot Evaluation</div>
+      <div style="font-size:10px;font-weight:600;margin-bottom:5px;color:var(--text);">Of the check-ins a cautious developer would want, how many did the system catch?</div>
+      <div class="mini-chart">
+        <div class="mc-row"><div class="mc-label">Hedwig</div><div class="mc-bg"><div class="mc-fill h" style="width:100%;">1.00</div></div><span style="font-size:9px;color:var(--purple-dark);margin-left:5px;font-weight:700;">caught all</span></div>
+        <div class="mc-row"><div class="mc-label">Agent + rules</div><div class="mc-bg"><div class="mc-fill c" style="width:50%;">0.50</div></div><span style="font-size:9px;color:var(--text-soft);margin-left:5px;font-weight:600;">caught half</span></div>
+        <div class="mc-row"><div class="mc-label">Agent baseline</div><div class="mc-bg"><div class="mc-fill" style="width:2%;background:#ccc;"></div></div><span style="font-size:9px;color:#999;margin-left:5px;">0.00</span><span style="font-size:9px;color:#999;margin-left:5px;font-weight:600;">caught none</span></div>
+      </div>
+      <div style="font-size:9.5px;color:var(--text-soft);font-style:italic;margin-top:4px;">2 tasks · 11 ops · 4 labeled as requiring check-in under a cautious developer persona.</div>
+    </div>
+
+    <!-- COL 2: O1-O5 + Plan Checkpoint + Context -->
+    <div class="bottom-col">
+      <h3>Novel Capabilities</h3>
+      <div class="col-body" style="margin-bottom:6px;">Bui &amp; Evangelopoulos (2026) define five criteria for proactive oversight. <strong>Current agents satisfy at most two. Hedwig satisfies all five.</strong></div>
+      <div class="o-row"><div class="o-badge">1.</div><div class="o-text"><strong>Cost-of-interruption modeled</strong> via PolicyScorer weights + regret tracking</div></div>
+      <div class="o-row"><div class="o-badge">2.</div><div class="o-text"><strong>Stay-silent is explicit:</strong> auto-approve is a first-class logged decision with stored rationale</div></div>
+      <div class="o-row"><div class="o-badge">3.</div><div class="o-text"><strong>Feedback updates policy:</strong> online SGD classifier updates after every developer decision</div></div>
+      <div class="o-row"><div class="o-badge">4.</div><div class="o-text"><strong>Cross-context signals:</strong> session intensity and pushback type aggregate across turns</div></div>
+      <div class="o-row"><div class="o-badge">5.</div><div class="o-text"><strong>Agent-initiated check-ins:</strong> model pauses proactively; logged separately from policy-driven decisions</div></div>
+      <div class="key-finding" style="margin-top:7px;">
+        Current agents check in only when an explicit rule matches: no rule, no check-in. Hedwig checks in <strong>when learned signals indicate risk, even on paths no rule anticipated.</strong>
+      </div>
+    </div>
+
+    <!-- COL 3: Context Retrieval + Future Work -->
+    <div class="bottom-col">
+      <h3>Context Retrieval</h3>
+      <div class="col-body" style="margin-bottom:6px;">
+        <p style="margin-bottom:6px;">Each task starts with a dynamic prompt: three categories ranked by relevance to what's being asked.</p>
+        <div style="border-left:2px solid var(--purple);padding:3px 8px;margin-bottom:3px;background:var(--lavender-soft);">
+          <strong style="color:var(--purple-dark);">Logic notes</strong><br>
+          What was built and why, matched by semantic overlap.
+        </div>
+        <div style="border-left:2px solid var(--purple);padding:3px 8px;margin-bottom:3px;background:var(--lavender-soft);">
+          <strong style="color:var(--purple-dark);">Behavioral guidelines</strong><br>
+          Compiled from <code>/rules add</code>. Only task-relevant rules injected, not every rule every turn.
+        </div>
+        <div style="border-left:2px solid var(--purple);padding:3px 8px;margin-bottom:3px;background:var(--lavender-soft);">
+          <strong style="color:var(--purple-dark);">Feedback snippets</strong><br>
+          Prior corrections by token overlap. The agent sees its past mistakes first.
+        </div>
+      </div>
+      <div class="key-finding">
+        Repo-aware from session one. Corrections, decisions, and guidelines feed forward automatically.
+      </div>
+      <div class="divider"></div>
+      <div class="section-head">Future Work</div>
+      <ul class="future-list">
+        <li><strong>Lab study:</strong> interruption burden, steerability, calibrated reliance</li>
+        <li><strong>Richer interrupt taxonomy:</strong> distinguish wrong file, wrong approach, poor quality, or risky timing so adaptation updates the right dimension</li>
+        <li><strong>Generalization</strong> beyond coding: docs, browser agents, infra-as-code</li>
+      </ul>
+    </div>
+
+  </div>
+
+  <!-- FOOTER -->
+  <div class="footer">
+    <div class="footer-left">
+      <div class="uw-logo"><img src="Washington_Huskies_logo.svg.png" alt="University of Washington"/></div>
+    </div>
+    <div class="footer-center">
+      <div class="booth-cta">Try Hedwig live at our booth!</div>
+    </div>
+    <div class="footer-right">
+      <div class="footer-qr">
+        <!-- Real QR → https://github.com/tanjalshukla/HedwigCLI -->
+        <svg viewBox="0 0 33 33" shape-rendering="crispEdges"><rect width="33" height="33" fill="#fff"/><path fill="#1a1a1a" d="M2,2H3V3H2zM3,2H4V3H3zM4,2H5V3H4zM5,2H6V3H5zM6,2H7V3H6zM7,2H8V3H7zM8,2H9V3H8zM13,2H14V3H13zM15,2H16V3H15zM16,2H17V3H16zM17,2H18V3H17zM19,2H20V3H19zM20,2H21V3H20zM21,2H22V3H21zM24,2H25V3H24zM25,2H26V3H25zM26,2H27V3H26zM27,2H28V3H27zM28,2H29V3H28zM29,2H30V3H29zM30,2H31V3H30zM2,3H3V4H2zM8,3H9V4H8zM11,3H12V4H11zM12,3H13V4H12zM14,3H15V4H14zM17,3H18V4H17zM24,3H25V4H24zM30,3H31V4H30zM2,4H3V5H2zM4,4H5V5H4zM5,4H6V5H5zM6,4H7V5H6zM8,4H9V5H8zM12,4H13V5H12zM14,4H15V5H14zM16,4H17V5H16zM17,4H18V5H17zM19,4H20V5H19zM20,4H21V5H20zM21,4H22V5H21zM22,4H23V5H22zM24,4H25V5H24zM26,4H27V5H26zM27,4H28V5H27zM28,4H29V5H28zM30,4H31V5H30zM2,5H3V6H2zM4,5H5V6H4zM5,5H6V6H5zM6,5H7V6H6zM8,5H9V6H8zM11,5H12V6H11zM12,5H13V6H12zM14,5H15V6H14zM16,5H17V6H16zM17,5H18V6H17zM18,5H19V6H18zM20,5H21V6H20zM24,5H25V6H24zM26,5H27V6H26zM27,5H28V6H27zM28,5H29V6H28zM30,5H31V6H30zM2,6H3V7H2zM4,6H5V7H4zM5,6H6V7H5zM6,6H7V7H6zM8,6H9V7H8zM11,6H12V7H11zM12,6H13V7H12zM14,6H15V7H14zM15,6H16V7H15zM16,6H17V7H16zM17,6H18V7H17zM18,6H19V7H18zM20,6H21V7H20zM24,6H25V7H24zM26,6H27V7H26zM27,6H28V7H27zM28,6H29V7H28zM30,6H31V7H30zM2,7H3V8H2zM8,7H9V8H8zM10,7H11V8H10zM11,7H12V8H11zM13,7H14V8H13zM17,7H18V8H17zM21,7H22V8H21zM24,7H25V8H24zM30,7H31V8H30zM2,8H3V9H2zM3,8H4V9H3zM4,8H5V9H4zM5,8H6V9H5zM6,8H7V9H6zM7,8H8V9H7zM8,8H9V9H8zM10,8H11V9H10zM12,8H13V9H12zM14,8H15V9H14zM16,8H17V9H16zM18,8H19V9H18zM20,8H21V9H20zM22,8H23V9H22zM24,8H25V9H24zM25,8H26V9H25zM26,8H27V9H26zM27,8H28V9H27zM28,8H29V9H28zM29,8H30V9H29zM30,8H31V9H30zM13,9H14V10H13zM14,9H15V10H14zM16,9H17V10H16zM17,9H18V10H17zM19,9H20V10H19zM20,9H21V10H20zM2,10H3V11H2zM5,10H6V11H5zM7,10H8V11H7zM8,10H9V11H8zM10,10H11V11H10zM11,10H12V11H11zM14,10H15V11H14zM16,10H17V11H16zM18,10H19V11H18zM23,10H24V11H23zM25,10H26V11H25zM2,11H3V12H2zM3,11H4V12H3zM5,11H6V12H5zM7,11H8V12H7zM12,11H13V12H12zM14,11H15V12H14zM15,11H16V12H15zM18,11H19V12H18zM22,11H23V12H22zM24,11H25V12H24zM27,11H28V12H27zM30,11H31V12H30zM3,12H4V13H3zM5,12H6V13H5zM8,12H9V13H8zM12,12H13V13H12zM13,12H14V13H13zM16,12H17V13H16zM18,12H19V13H18zM21,12H22V13H21zM22,12H23V13H22zM23,12H24V13H23zM26,12H27V13H26zM27,12H28V13H27zM28,12H29V13H28zM29,12H30V13H29zM3,13H4V14H3zM5,13H6V14H5zM6,13H7V14H6zM10,13H11V14H10zM13,13H14V14H13zM14,13H15V14H14zM15,13H16V14H15zM17,13H18V14H17zM18,13H19V14H18zM21,13H22V14H21zM26,13H27V14H26zM28,13H29V14H28zM29,13H30V14H29zM2,14H3V15H2zM3,14H4V15H3zM5,14H6V15H5zM6,14H7V15H6zM8,14H9V15H8zM10,14H11V15H10zM11,14H12V15H11zM12,14H13V15H12zM14,14H15V15H14zM18,14H19V15H18zM19,14H20V15H19zM23,14H24V15H23zM24,14H25V15H24zM27,14H28V15H27zM29,14H30V15H29zM30,14H31V15H30zM2,15H3V16H2zM5,15H6V16H5zM9,15H10V16H9zM11,15H12V16H11zM14,15H15V16H14zM15,15H16V16H15zM19,15H20V16H19zM20,15H21V16H20zM21,15H22V16H21zM22,15H23V16H22zM23,15H24V16H23zM2,16H3V17H2zM6,16H7V17H6zM7,16H8V17H7zM8,16H9V17H8zM9,16H10V17H9zM11,16H12V17H11zM12,16H13V17H12zM14,16H15V17H14zM16,16H17V17H16zM18,16H19V17H18zM20,16H21V17H20zM22,16H23V17H22zM24,16H25V17H24zM25,16H26V17H25zM26,16H27V17H26zM27,16H28V17H27zM28,16H29V17H28zM29,16H30V17H29zM30,16H31V17H30zM3,17H4V18H3zM4,17H5V18H4zM6,17H7V18H6zM9,17H10V18H9zM12,17H13V18H12zM13,17H14V18H13zM14,17H15V18H14zM15,17H16V18H15zM17,17H18V18H17zM19,17H20V18H19zM20,17H21V18H20zM22,17H23V18H22zM23,17H24V18H23zM24,17H25V18H24zM27,17H28V18H27zM29,17H30V18H29zM2,18H3V19H2zM3,18H4V19H3zM8,18H9V19H8zM10,18H11V19H10zM12,18H13V19H12zM13,18H14V19H13zM14,18H15V19H14zM15,18H16V19H15zM17,18H18V19H17zM19,18H20V19H19zM22,18H23V19H22zM25,18H26V19H25zM29,18H30V19H29zM4,19H5V20H4zM7,19H8V20H7zM9,19H10V20H9zM10,19H11V20H10zM13,19H14V20H13zM14,19H15V20H14zM16,19H17V20H16zM17,19H18V20H17zM18,19H19V20H18zM19,19H20V20H19zM22,19H23V20H22zM23,19H24V20H23zM24,19H25V20H24zM25,19H26V20H25zM27,19H28V20H27zM30,19H31V20H30zM2,20H3V21H2zM5,20H6V21H5zM7,20H8V21H7zM8,20H9V21H8zM13,20H14V21H13zM14,20H15V21H14zM16,20H17V21H16zM20,20H21V21H20zM23,20H24V21H23zM25,20H26V21H25zM26,20H27V21H26zM29,20H30V21H29zM30,20H31V21H30zM5,21H6V22H5zM12,21H13V22H12zM16,21H17V22H16zM19,21H20V22H19zM22,21H23V22H22zM23,21H24V22H23zM25,21H26V22H25zM26,21H27V22H26zM29,21H30V22H29zM30,21H31V22H30zM2,22H3V23H2zM4,22H5V23H4zM6,22H7V23H6zM8,22H9V23H8zM9,22H10V23H9zM14,22H15V23H14zM17,22H18V23H17zM18,22H19V23H18zM21,22H22V23H21zM22,22H23V23H22zM23,22H24V23H23zM24,22H25V23H24zM25,22H26V23H25zM26,22H27V23H26zM28,22H29V23H28zM10,23H11V24H10zM11,23H12V24H11zM12,23H13V24H12zM14,23H15V24H14zM19,23H20V24H19zM20,23H21V24H20zM21,23H22V24H21zM22,23H23V24H22zM26,23H27V24H26zM28,23H29V24H28zM29,23H30V24H29zM30,23H31V24H30zM2,24H3V25H2zM3,24H4V25H3zM4,24H5V25H4zM5,24H6V25H5zM6,24H7V25H6zM7,24H8V25H7zM8,24H9V25H8zM12,24H13V25H12zM13,24H14V25H13zM18,24H19V25H18zM22,24H23V25H22zM24,24H25V25H24zM26,24H27V25H26zM29,24H30V25H29zM2,25H3V26H2zM8,25H9V26H8zM10,25H11V26H10zM13,25H14V26H13zM14,25H15V26H14zM16,25H17V26H16zM17,25H18V26H17zM20,25H21V26H20zM22,25H23V26H22zM26,25H27V26H26zM27,25H28V26H27zM28,25H29V26H28zM2,26H3V27H2zM4,26H5V27H4zM5,26H6V27H5zM6,26H7V27H6zM8,26H9V27H8zM11,26H12V27H11zM12,26H13V27H12zM13,26H14V27H13zM14,26H15V27H14zM18,26H19V27H18zM19,26H20V27H19zM22,26H23V27H22zM23,26H24V27H23zM24,26H25V27H24zM25,26H26V27H25zM26,26H27V27H26zM2,27H3V28H2zM4,27H5V28H4zM5,27H6V28H5zM6,27H7V28H6zM8,27H9V28H8zM10,27H11V28H10zM12,27H13V28H12zM14,27H15V28H14zM21,27H22V28H21zM22,27H23V28H22zM24,27H25V28H24zM25,27H26V28H25zM26,27H27V28H26zM27,27H28V28H27zM28,27H29V28H28zM29,27H30V28H29zM2,28H3V29H2zM4,28H5V29H4zM5,28H6V29H5zM6,28H7V29H6zM8,28H9V29H8zM12,28H13V29H12zM13,28H14V29H13zM16,28H17V29H16zM18,28H19V29H18zM20,28H21V29H20zM21,28H22V29H21zM22,28H23V29H22zM26,28H27V29H26zM27,28H28V29H27zM28,28H29V29H28zM30,28H31V29H30zM2,29H3V30H2zM8,29H9V30H8zM11,29H12V30H11zM12,29H13V30H12zM16,29H17V30H16zM17,29H18V30H17zM18,29H19V30H18zM19,29H20V30H19zM20,29H21V30H20zM21,29H22V30H21zM22,29H23V30H22zM23,29H24V30H23zM26,29H27V30H26zM29,29H30V30H29zM2,30H3V31H2zM3,30H4V31H3zM4,30H5V31H4zM5,30H6V31H5zM6,30H7V31H6zM7,30H8V31H7zM8,30H9V31H8zM10,30H11V31H10zM11,30H12V31H11zM12,30H13V31H12zM15,30H16V31H15zM16,30H17V31H16zM17,30H18V31H17zM19,30H20V31H19zM22,30H23V31H22zM23,30H24V31H23zM24,30H25V31H24zM25,30H26V31H25zM26,30H27V31H26zM27,30H28V31H27zM29,30H30V31H29z"/></svg>
+        <div class="qr-label">GitHub</div>
+      </div>
+      <div class="footer-qr">
+        <!-- Real QR → https://arxiv.org/abs/2605.11495 -->
+        <svg viewBox="0 0 33 33" shape-rendering="crispEdges"><rect width="33" height="33" fill="#fff"/><path fill="#1a1a1a" d="M2,2H3V3H2zM3,2H4V3H3zM4,2H5V3H4zM5,2H6V3H5zM6,2H7V3H6zM7,2H8V3H7zM8,2H9V3H8zM10,2H11V3H10zM12,2H13V3H12zM13,2H14V3H13zM14,2H15V3H14zM22,2H23V3H22zM24,2H25V3H24zM25,2H26V3H25zM26,2H27V3H26zM27,2H28V3H27zM28,2H29V3H28zM29,2H30V3H29zM30,2H31V3H30zM2,3H3V4H2zM8,3H9V4H8zM11,3H12V4H11zM18,3H19V4H18zM19,3H20V4H19zM20,3H21V4H20zM21,3H22V4H21zM24,3H25V4H24zM30,3H31V4H30zM2,4H3V5H2zM4,4H5V5H4zM5,4H6V5H5zM6,4H7V5H6zM8,4H9V5H8zM11,4H12V5H11zM12,4H13V5H12zM14,4H15V5H14zM15,4H16V5H15zM17,4H18V5H17zM18,4H19V5H18zM19,4H20V5H19zM21,4H22V5H21zM22,4H23V5H22zM24,4H25V5H24zM26,4H27V5H26zM27,4H28V5H27zM28,4H29V5H28zM30,4H31V5H30zM2,5H3V6H2zM4,5H5V6H4zM5,5H6V6H5zM6,5H7V6H6zM8,5H9V6H8zM10,5H11V6H10zM12,5H13V6H12zM13,5H14V6H13zM14,5H15V6H14zM16,5H17V6H16zM17,5H18V6H17zM18,5H19V6H18zM21,5H22V6H21zM24,5H25V6H24zM26,5H27V6H26zM27,5H28V6H27zM28,5H29V6H28zM30,5H31V6H30zM2,6H3V7H2zM4,6H5V7H4zM5,6H6V7H5zM6,6H7V7H6zM8,6H9V7H8zM10,6H11V7H10zM12,6H13V7H12zM13,6H14V7H13zM15,6H16V7H15zM16,6H17V7H16zM18,6H19V7H18zM22,6H23V7H22zM24,6H25V7H24zM26,6H27V7H26zM27,6H28V7H27zM28,6H29V7H28zM30,6H31V7H30zM2,7H3V8H2zM8,7H9V8H8zM10,7H11V8H10zM12,7H13V8H12zM13,7H14V8H13zM15,7H16V8H15zM16,7H17V8H16zM17,7H18V8H17zM19,7H20V8H19zM21,7H22V8H21zM24,7H25V8H24zM30,7H31V8H30zM2,8H3V9H2zM3,8H4V9H3zM4,8H5V9H4zM5,8H6V9H5zM6,8H7V9H6zM7,8H8V9H7zM8,8H9V9H8zM10,8H11V9H10zM12,8H13V9H12zM14,8H15V9H14zM16,8H17V9H16zM18,8H19V9H18zM20,8H21V9H20zM22,8H23V9H22zM24,8H25V9H24zM25,8H26V9H25zM26,8H27V9H26zM27,8H28V9H27zM28,8H29V9H28zM29,8H30V9H29zM30,8H31V9H30zM10,9H11V10H10zM11,9H12V10H11zM13,9H14V10H13zM16,9H17V10H16zM19,9H20V10H19zM21,9H22V10H21zM2,10H3V11H2zM6,10H7V11H6zM8,10H9V11H8zM9,10H10V11H9zM10,10H11V11H10zM15,10H16V11H15zM16,10H17V11H16zM17,10H18V11H17zM18,10H19V11H18zM19,10H20V11H19zM20,10H21V11H20zM21,10H22V11H21zM23,10H24V11H23zM24,10H25V11H24zM25,10H26V11H25zM26,10H27V11H26zM27,10H28V11H27zM30,10H31V11H30zM2,11H3V12H2zM4,11H5V12H4zM5,11H6V12H5zM7,11H8V12H7zM9,11H10V12H9zM10,11H11V12H10zM11,11H12V12H11zM12,11H13V12H12zM14,11H15V12H14zM23,11H24V12H23zM24,11H25V12H24zM25,11H26V12H25zM26,11H27V12H26zM27,11H28V12H27zM28,11H29V12H28zM29,11H30V12H29zM30,11H31V12H30zM2,12H3V13H2zM4,12H5V13H4zM6,12H7V13H6zM8,12H9V13H8zM9,12H10V13H9zM10,12H11V13H10zM12,12H13V13H12zM13,12H14V13H13zM15,12H16V13H15zM16,12H17V13H16zM17,12H18V13H17zM19,12H20V13H19zM24,12H25V13H24zM30,12H31V13H30zM2,13H3V14H2zM3,13H4V14H3zM7,13H8V14H7zM10,13H11V14H10zM11,13H12V14H11zM15,13H16V14H15zM17,13H18V14H17zM18,13H19V14H18zM19,13H20V14H19zM21,13H22V14H21zM23,13H24V14H23zM25,13H26V14H25zM26,13H27V14H26zM27,13H28V14H27zM29,13H30V14H29zM30,13H31V14H30zM3,14H4V15H3zM4,14H5V15H4zM6,14H7V15H6zM8,14H9V15H8zM9,14H10V15H9zM10,14H11V15H10zM11,14H12V15H11zM14,14H15V15H14zM15,14H16V15H15zM19,14H20V15H19zM20,14H21V15H20zM21,14H22V15H21zM22,14H23V15H22zM29,14H30V15H29zM2,15H3V16H2zM4,15H5V16H4zM5,15H6V16H5zM9,15H10V16H9zM12,15H13V16H12zM15,15H16V16H15zM16,15H17V16H16zM18,15H19V16H18zM24,15H25V16H24zM25,15H26V16H25zM26,15H27V16H26zM27,15H28V16H27zM28,15H29V16H28zM29,15H30V16H29zM30,15H31V16H30zM2,16H3V17H2zM4,16H5V17H4zM6,16H7V17H6zM8,16H9V17H8zM9,16H10V17H9zM10,16H11V17H10zM11,16H12V17H11zM14,16H15V17H14zM18,16H19V17H18zM19,16H20V17H19zM20,16H21V17H20zM22,16H23V17H22zM25,16H26V17H25zM27,16H28V17H27zM28,16H29V17H28zM30,16H31V17H30zM2,17H3V18H2zM3,17H4V18H3zM5,17H6V18H5zM10,17H11V18H10zM11,17H12V18H11zM14,17H15V18H14zM16,17H17V18H16zM19,17H20V18H19zM20,17H21V18H20zM23,17H24V18H23zM25,17H26V18H25zM26,17H27V18H26zM29,17H30V18H29zM30,17H31V18H30zM6,18H7V19H6zM8,18H9V19H8zM9,18H10V19H9zM12,18H13V19H12zM13,18H14V19H13zM15,18H16V19H15zM16,18H17V19H16zM17,18H18V19H17zM19,18H20V19H19zM20,18H21V19H20zM21,18H22V19H21zM22,18H23V19H22zM23,18H24V19H23zM25,18H26V19H25zM29,18H30V19H29zM2,19H3V20H2zM4,19H5V20H4zM5,19H6V20H5zM6,19H7V20H6zM7,19H8V20H7zM9,19H10V20H9zM14,19H15V20H14zM19,19H20V20H19zM20,19H21V20H20zM24,19H25V20H24zM25,19H26V20H25zM26,19H27V20H26zM27,19H28V20H27zM29,19H30V20H29zM30,19H31V20H30zM4,20H5V21H4zM5,20H6V21H5zM6,20H7V21H6zM8,20H9V21H8zM10,20H11V21H10zM13,20H14V21H13zM15,20H16V21H15zM16,20H17V21H16zM17,20H18V21H17zM20,20H21V21H20zM22,20H23V21H22zM25,20H26V21H25zM26,20H27V21H26zM28,20H29V21H28zM30,20H31V21H30zM4,21H5V22H4zM6,21H7V22H6zM7,21H8V22H7zM14,21H15V22H14zM15,21H16V22H15zM17,21H18V22H17zM19,21H20V22H19zM21,21H22V22H21zM22,21H23V22H22zM25,21H26V22H25zM29,21H30V22H29zM30,21H31V22H30zM2,22H3V23H2zM3,22H4V23H3zM5,22H6V23H5zM6,22H7V23H6zM7,22H8V23H7zM8,22H9V23H8zM10,22H11V23H10zM13,22H14V23H13zM15,22H16V23H15zM18,22H19V23H18zM19,22H20V23H19zM20,22H21V23H20zM22,22H23V23H22zM23,22H24V23H23zM24,22H25V23H24zM25,22H26V23H25zM26,22H27V23H26zM27,22H28V23H27zM30,22H31V23H30zM10,23H11V24H10zM13,23H14V24H13zM14,23H15V24H14zM15,23H16V24H15zM16,23H17V24H16zM17,23H18V24H17zM21,23H22V24H21zM22,23H23V24H22zM26,23H27V24H26zM30,23H31V24H30zM2,24H3V25H2zM3,24H4V25H3zM4,24H5V25H4zM5,24H6V25H5zM6,24H7V25H6zM7,24H8V25H7zM8,24H9V25H8zM10,24H11V25H10zM11,24H12V25H11zM13,24H14V25H13zM14,24H15V25H14zM17,24H18V25H17zM19,24H20V25H19zM21,24H22V25H21zM22,24H23V25H22zM24,24H25V25H24zM26,24H27V25H26zM27,24H28V25H27zM28,24H29V25H28zM30,24H31V25H30zM2,25H3V26H2zM8,25H9V26H8zM12,25H13V26H12zM13,25H14V26H13zM16,25H17V26H16zM17,25H18V26H17zM18,25H19V26H18zM19,25H20V26H19zM20,25H21V26H20zM22,25H23V26H22zM26,25H27V26H26zM29,25H30V26H29zM30,25H31V26H30zM2,26H3V27H2zM4,26H5V27H4zM5,26H6V27H5zM6,26H7V27H6zM8,26H9V27H8zM10,26H11V27H10zM11,26H12V27H11zM13,26H14V27H13zM14,26H15V27H14zM15,26H16V27H15zM16,26H17V27H16zM17,26H18V27H17zM18,26H19V27H18zM19,26H20V27H19zM20,26H21V27H20zM21,26H22V27H21zM22,26H23V27H22zM23,26H24V27H23zM24,26H25V27H24zM25,26H26V27H25zM26,26H27V27H26zM27,26H28V27H27zM2,27H3V28H2zM4,27H5V28H4zM5,27H6V28H5zM6,27H7V28H6zM8,27H9V28H8zM11,27H12V28H11zM12,27H13V28H12zM14,27H15V28H14zM17,27H18V28H17zM23,27H24V28H23zM25,27H26V28H25zM30,27H31V28H30zM2,28H3V29H2zM4,28H5V29H4zM5,28H6V29H5zM6,28H7V29H6zM8,28H9V29H8zM16,28H17V29H16zM17,28H18V29H17zM18,28H19V29H18zM19,28H20V29H19zM21,28H22V29H21zM27,28H28V29H27zM28,28H29V29H28zM29,28H30V29H29zM30,28H31V29H30zM2,29H3V30H2zM8,29H9V30H8zM11,29H12V30H11zM12,29H13V30H12zM14,29H15V30H14zM15,29H16V30H15zM16,29H17V30H16zM17,29H18V30H17zM19,29H20V30H19zM20,29H21V30H20zM22,29H23V30H22zM23,29H24V30H23zM24,29H25V30H24zM27,29H28V30H27zM29,29H30V30H29zM30,29H31V30H30zM2,30H3V31H2zM3,30H4V31H3zM4,30H5V31H4zM5,30H6V31H5zM6,30H7V31H6zM7,30H8V31H7zM8,30H9V31H8zM10,30H11V31H10zM12,30H13V31H12zM13,30H14V31H13zM14,30H15V31H14zM15,30H16V31H15zM16,30H17V31H16zM18,30H19V31H18zM19,30H20V31H19zM20,30H21V31H20zM22,30H23V31H22zM24,30H25V31H24zM26,30H27V31H26zM27,30H28V31H27zM29,30H30V31H29z"/></svg>
+        <div class="qr-label">Paper</div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+
+</body>
+</html>

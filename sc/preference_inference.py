@@ -24,9 +24,9 @@ _HUMAN_ONLY_APPROVAL_RATE_MAX = 0.50   # revised from 0.15 — the 0.15 value le
                                         # human-only nearly undetectable
 
 # Session-intensity thresholds. Grounded in the SWE-chat Q3 cluster centers:
-# "active" cluster averaged 24.9 turns, 13.17 tool calls per turn, 213 words;
-# "delegating" averaged 7.6 turns, 2.95 tool calls, 149 words. We use n_turns
-# and mean_prev_tools as the two cleanest discriminators.
+# "active" cluster averaged 24.9 turns; "delegating" averaged 7.6 turns.
+# Turn count is the primary discriminator; tool-call rate is not recorded in
+# Hedwig's schema (the agent's tool calls are opaque to the governance layer).
 _ACTIVE_TURNS_MIN = 12                  # between the two cluster centers
 _ACTIVE_TOOLS_PER_TURN_MIN = 6.0        # between the two cluster centers
 _UNKNOWN_TURNS_MAX = 2                  # below: not enough signal yet
@@ -82,10 +82,13 @@ class SessionSummary:
     n_feedback: int              # traces with non-empty user_feedback_text
     n_failures: int              # traces classified as failure_report
     mean_edit_distance: float    # 0..1; how much dev rewrote agent output
-    mean_prev_tools: float       # mean tool calls per turn (agent side)
     mean_review_seconds: float   # mean time dev spent before approving/denying
     distinct_tasks: int          # different task strings in this session
     n_interruptions: int         # user_decision indicating hard stop
+    n_auto_approvals: int = 0    # turns Hedwig approved without asking
+    # Anthropic (2026) shows delegation and intervention are orthogonal axes:
+    # experienced developers auto-approve MORE but also interrupt MORE.
+    # These two rates replace the single intensity classification as separate signals.
 
     @property
     def approval_rate(self) -> float:
@@ -98,6 +101,16 @@ class SessionSummary:
     @property
     def feedback_rate(self) -> float:
         return self.n_feedback / self.n_turns if self.n_turns else 0.0
+
+    @property
+    def delegation_rate(self) -> float:
+        """Fraction of turns Hedwig handled without asking. High = developer is delegating."""
+        return self.n_auto_approvals / self.n_turns if self.n_turns else 0.0
+
+    @property
+    def intervention_rate(self) -> float:
+        """Fraction of turns developer explicitly stopped or denied. High = developer is vigilant."""
+        return (self.n_denials + self.n_interruptions) / self.n_turns if self.n_turns else 0.0
 
 
 def summarize_session(rows: list[sqlite3.Row] | list[dict]) -> SessionSummary:
@@ -115,7 +128,7 @@ def summarize_session(rows: list[sqlite3.Row] | list[dict]) -> SessionSummary:
     Optional: pushback_type, prev_tool_count.
     """
     if not rows:
-        return SessionSummary("", 0, 0, 0, 0, 0, 0.0, 0.0, 0.0, 0, 0)
+        return SessionSummary("", 0, 0, 0, 0, 0, 0.0, 0.0, 0, 0, 0)
 
     session_id = _get(rows[0], "session_id") or ""
     n_turns = len(rows)
@@ -124,10 +137,9 @@ def summarize_session(rows: list[sqlite3.Row] | list[dict]) -> SessionSummary:
     n_feedback = 0
     n_failures = 0
     n_interruptions = 0
+    n_auto_approvals = 0
     edit_sum = 0.0
     edit_count = 0
-    tools_sum = 0.0
-    tools_count = 0
     review_sum = 0.0
     review_count = 0
     tasks: set[str] = set()
@@ -141,10 +153,14 @@ def summarize_session(rows: list[sqlite3.Row] | list[dict]) -> SessionSummary:
         TurnPurpose.SESSION_CONTINUATION.value,
     }
 
+    _auto_approve_prefixes = ("auto_approve",)
+
     for row in rows:
         decision = (_get(row, "user_decision") or "").lower()
         if decision.startswith("approve"):
             n_approvals += 1
+        if decision.startswith(_auto_approve_prefixes):
+            n_auto_approvals += 1
         elif decision == "deny":
             n_denials += 1
         elif decision == "interrupt":
@@ -180,20 +196,11 @@ def summarize_session(rows: list[sqlite3.Row] | list[dict]) -> SessionSummary:
             except (TypeError, ValueError):
                 pass
 
-        pt = _get(row, "prev_tool_count")
-        if pt is not None:
-            try:
-                tools_sum += float(pt)
-                tools_count += 1
-            except (TypeError, ValueError):
-                pass
-
         task = _get(row, "task")
         if task:
             tasks.add(str(task))
 
     mean_edit = edit_sum / edit_count if edit_count else 0.0
-    mean_tools = tools_sum / tools_count if tools_count else 0.0
     mean_review = review_sum / review_count if review_count else 0.0
     return SessionSummary(
         session_id=session_id,
@@ -203,10 +210,10 @@ def summarize_session(rows: list[sqlite3.Row] | list[dict]) -> SessionSummary:
         n_feedback=n_feedback,
         n_failures=n_failures,
         mean_edit_distance=mean_edit,
-        mean_prev_tools=mean_tools,
         mean_review_seconds=mean_review,
         distinct_tasks=len(tasks),
         n_interruptions=n_interruptions,
+        n_auto_approvals=n_auto_approvals,
     )
 
 
@@ -230,23 +237,34 @@ def infer_user_persona(summary: SessionSummary) -> UserPersona:
     """Session intensity inferred from trace signals.
 
     Revised from the 4-value persona enum based on behavioral clustering of
-    5,776 sessions. The data supports a 2-value intensity split, not
-    persona-type labels:
+    5,776 sessions. Now uses two orthogonal axes per Anthropic (2026):
+    delegation_rate (fraction auto-approved) and intervention_rate
+    (fraction denied/interrupted). High delegation + high intervention is a
+    valid experienced-developer state — they let routine things run but step
+    in firmly when needed.
 
-    - DELEGATING: short sessions, low tool use — the developer is accepting
-      most of what the agent does.
-    - ACTIVE: long sessions with heavy agent tool use — the developer is
-      deeply engaged in dialogue.
+    - ACTIVE: high intervention rate OR long session with heavy tool use.
+    - DELEGATING: high delegation rate and low intervention rate.
     - UNKNOWN: insufficient signal (very short session).
     """
     if summary.n_turns <= _UNKNOWN_TURNS_MAX:
         return UserPersona.UNKNOWN
-    if (
-        summary.n_turns >= _ACTIVE_TURNS_MIN
-        or summary.mean_prev_tools >= _ACTIVE_TOOLS_PER_TURN_MIN
-    ):
+    # High intervention — developer is vigilant regardless of delegation.
+    if summary.intervention_rate >= 0.15:
         return UserPersona.ACTIVE
-    return UserPersona.DELEGATING
+    # Long engaged session — turn count is the primary discriminator.
+    # (mean_prev_tools not recorded in schema; turns alone is a clean signal
+    # from the SWE-chat cluster analysis.)
+    if summary.n_turns >= _ACTIVE_TURNS_MIN:
+        return UserPersona.ACTIVE
+    # High delegation, low intervention — true delegating mode.
+    if summary.delegation_rate >= 0.5 and summary.intervention_rate < 0.05:
+        return UserPersona.DELEGATING
+    # Ambiguous mid-range session (3–11 turns, moderate engagement). Returning
+    # DELEGATING here was wrong — it suppressed hypothesis surfacing for sessions
+    # that are engaged but not yet long enough to be classified ACTIVE. UNKNOWN
+    # preserves hypothesis seeding while deferring the intensity classification.
+    return UserPersona.UNKNOWN
 
 
 def infer_task_intent(prompt_text: str | None) -> TaskIntent:
@@ -423,12 +441,21 @@ def hypothesize_from_session(
     *,
     inferred_persona: UserPersona | None = None,
     recent_verification_failures: int = 0,
+    already_surfaced: set[str] | None = None,
 ) -> PreferenceHypothesis | None:
-    """Return at most one PreferenceHypothesis for the current session, or None.
+    """Return the highest-priority un-surfaced PreferenceHypothesis, or None.
+
+    NOTE: in the main apply_stage flow, this function is NOT called directly.
+    Instead, `hypothesis_bank.seed_candidates_from_session()` calls the
+    individual `_scope_narrowing_hypothesis()` etc. generators and seeds the
+    bank. This function is retained for tests and any caller that wants a
+    single-shot hypothesis without the bank pipeline.
 
     Priority: scope_constraint → failure_reactive → deliberate_reviewer
               → rapid_approver → positive_redirect.
 
+    already_surfaced: drivers already asked this session — skipped so each
+    pattern is surfaced at most once but multiple patterns can fire.
     Intensity gate: DELEGATING sessions never surface hypotheses.
     """
     if session_summary.n_turns < MIN_TRACES_FOR_HYPOTHESIS:
@@ -436,22 +463,24 @@ def hypothesize_from_session(
     if inferred_persona == UserPersona.DELEGATING:
         return None
 
+    skip = already_surfaced or set()
+
     scope_count = pushback_counts.get(PushbackType.SCOPE_CONSTRAINT.value, 0)
-    if scope_count >= MIN_PUSHBACK_COUNT:
+    if scope_count >= MIN_PUSHBACK_COUNT and "scope_constraint" not in skip:
         return _scope_narrowing_hypothesis(scope_count)
 
     total_failures = session_summary.n_failures + max(0, recent_verification_failures)
-    if total_failures >= _FAILURE_REACTIVE_MIN_FAILURES:
+    if total_failures >= _FAILURE_REACTIVE_MIN_FAILURES and "failure_reactive" not in skip:
         return _failure_reactive_hypothesis(total_failures)
 
-    if _is_deliberate_reviewer(session_summary):
+    if _is_deliberate_reviewer(session_summary) and "deliberate_reviewer" not in skip:
         return _deliberate_reviewer_hypothesis(session_summary.n_approvals)
 
-    if _is_rapid_approver(session_summary):
+    if _is_rapid_approver(session_summary) and "rapid_approver" not in skip:
         return _rapid_approver_hypothesis(session_summary.n_approvals)
 
     positive_count = pushback_counts.get(PushbackType.POSITIVE_REDIRECT.value, 0)
-    if positive_count >= MIN_PUSHBACK_COUNT:
+    if positive_count >= MIN_PUSHBACK_COUNT and "positive_redirect" not in skip:
         return _positive_redirect_hypothesis(positive_count)
 
     return None
@@ -489,7 +518,11 @@ def _is_rapid_approver(summary: SessionSummary) -> bool:
 
 def _scope_narrowing_hypothesis(count: int) -> PreferenceHypothesis:
     preference = Preference(
-        trigger=Trigger(stages=("apply",), min_blast_radius=2),
+        # min_blast_radius=1 ensures this fires even on single-file changes in the
+        # demo repo where api.py may only have one importer. The scope-narrowing
+        # pattern is about *the developer's behavior* (they narrowed scope repeatedly),
+        # not about blast radius of the current action.
+        trigger=Trigger(stages=("apply",), min_blast_radius=1),
         condition=Condition(min_prior_pushback_count=2, session_position_min=0.33),
         action=PreferenceAction.FULL_CHECKIN,
         scope=Scope(level="repo"),

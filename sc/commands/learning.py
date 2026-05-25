@@ -9,13 +9,11 @@ Researcher depth lives in `hw observe export --html`.
 import json
 from collections import Counter
 
-import typer
 from rich.console import Console
 from rich.panel import Panel
 from rich.text import Text
 
 from ..commands.shared import open_trust_db, require_repo_root
-from ..preference_inference import summarize_session
 from ..run.theme import PALETTE, panel_title
 
 
@@ -158,7 +156,6 @@ def learning() -> None:
         )
         if classifier is not None:
             # Find the largest absolute coefficient shift and describe it.
-            import numpy as _np
             from ..ml_policy import FEATURE_NAMES as _FN
 
             deltas = [

@@ -98,7 +98,7 @@ class PromptBuilderTests(unittest.TestCase):
             self.assertIn("always_check_in: src/auth/*", prompt)
             self.assertIn("Always run tests after editing.", prompt)
             self.assertIn("Current phase is implementation.", prompt)
-            self.assertIn("return a CheckInMessage JSON", prompt)
+            self.assertIn("To check in:", prompt)
             self.assertIn("Recent qualitative guidance:", prompt)
             self.assertIn("Use existing auth adapter", prompt)
             self.assertIn("Relevant prior functionality notes:", prompt)

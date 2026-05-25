@@ -22,10 +22,10 @@ def _summary(n_failures: int = 0, n_turns: int = 5) -> SessionSummary:
         n_feedback=0,
         n_failures=n_failures,
         mean_edit_distance=0.05,
-        mean_prev_tools=2.0,
         mean_review_seconds=5.0,
         distinct_tasks=1,
         n_interruptions=0,
+        n_auto_approvals=0,
     )
 
 

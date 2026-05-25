@@ -131,15 +131,6 @@ class SessionSummaryTests(unittest.TestCase):
         self.assertEqual(s.n_approvals, 2)
         self.assertEqual(s.n_denials, 1)
 
-    def test_mean_prev_tools(self) -> None:
-        rows = [
-            _row(prev_tool_count=10),
-            _row(prev_tool_count=0),
-            _row(prev_tool_count=5),
-        ]
-        s = summarize_session(rows)
-        self.assertAlmostEqual(s.mean_prev_tools, 5.0)
-
     def test_failure_count_from_pushback_type(self) -> None:
         rows = [
             _row(pushback_type="failure_report"),
@@ -180,15 +171,27 @@ class UserPersonaInferenceTests(unittest.TestCase):
             UserPersona.ACTIVE,
         )
 
-    def test_active_on_high_tool_use(self) -> None:
-        rows = [_row(decision="approve", prev_tool_count=13) for _ in range(5)]
+    def test_active_on_high_intervention_rate(self) -> None:
+        # 2 denies out of 5 turns = 40% intervention rate → ACTIVE
+        rows = [_row(decision="deny") for _ in range(2)] + [_row(decision="approve") for _ in range(3)]
         self.assertEqual(
             infer_user_persona(summarize_session(rows)),
             UserPersona.ACTIVE,
         )
 
-    def test_delegating_on_short_low_tool_session(self) -> None:
-        rows = [_row(decision="approve", prev_tool_count=3) for _ in range(5)]
+    def test_unknown_on_short_low_intervention_session(self) -> None:
+        # 5 manual approvals, no auto-approves → delegation_rate=0.
+        # Falls through to UNKNOWN (not enough signal to claim DELEGATING,
+        # which requires high delegation_rate).
+        rows = [_row(decision="approve") for _ in range(5)]
+        self.assertEqual(
+            infer_user_persona(summarize_session(rows)),
+            UserPersona.UNKNOWN,
+        )
+
+    def test_delegating_on_high_auto_approve_session(self) -> None:
+        # High delegation_rate (mostly auto-approves) + low intervention → DELEGATING
+        rows = [_row(decision="auto_approve") for _ in range(6)]
         self.assertEqual(
             infer_user_persona(summarize_session(rows)),
             UserPersona.DELEGATING,

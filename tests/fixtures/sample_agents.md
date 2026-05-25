@@ -1,6 +1,6 @@
-# Sample Rules
+# Sample AGENTS.md fixture for constraint parser tests
 
-Do not modify files in src/auth/
-Always check in for `shared/types.py`
-Always allow docs/*.md
+Never modify files under src/auth/.
+Always check in before editing shared/types.py.
+Always allow changes to docs/*.md files.
 Be careful with billing module changes

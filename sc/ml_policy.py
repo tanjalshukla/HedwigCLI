@@ -96,28 +96,41 @@ class PolicyClassifier:
     _calibrator: IsotonicRegression | None = None
     _calib_X: list[float] = None  # type: ignore[assignment]
     _calib_y: list[int] = None    # type: ignore[assignment]
+    # Trace IDs of regret events already applied to this classifier. Stored
+    # in-memory only (not persisted) so regrets are corrected at most once
+    # per session. Prevents O(N) re-application on every turn.
+    _corrected_regret_ids: set[int] = None  # type: ignore[assignment]
 
     def __post_init__(self) -> None:
         if self._calib_X is None:
             self._calib_X = []
         if self._calib_y is None:
             self._calib_y = []
+        if self._corrected_regret_ids is None:
+            self._corrected_regret_ids = set()
 
-    def update(self, pi: "PolicyInput", approved: bool) -> None:
-        """Online update from a single developer decision."""
+    def update(self, pi: "PolicyInput", approved: bool, *, count_sample: bool = True) -> None:
+        """Online update from a single developer decision.
+
+        count_sample=False is used for rubber-stamp double-updates: both the
+        approve and deny passes fire partial_fit but only the first increments
+        sample_count, so rubber-stamps don't count as two real decisions.
+        """
         x = self.scaler.transform(featurize(pi).reshape(1, -1))
         label = 1 if approved else 0
         self.clf.partial_fit(x, np.array([label]), classes=np.array([0, 1]))
-        self.sample_count += 1
-        # Accumulate raw probability + true label for calibrator.
-        raw_prob = float(self.clf.predict_proba(x)[0, 1])
-        self._calib_X.append(raw_prob)
-        self._calib_y.append(label)
-        # Refit calibrator once we have enough samples.
-        if len(self._calib_X) >= _CALIBRATION_MIN_SAMPLES:
-            cal = IsotonicRegression(out_of_bounds="clip")
-            cal.fit(np.array(self._calib_X), np.array(self._calib_y))
-            self._calibrator = cal
+        if count_sample:
+            self.sample_count += 1
+            # Accumulate raw probability + true label for calibrator only for
+            # real counted decisions so calibration tracks actual decisions made.
+            raw_prob = float(self.clf.predict_proba(x)[0, 1])
+            self._calib_X.append(raw_prob)
+            self._calib_y.append(label)
+            # Refit calibrator once we have enough samples.
+            if len(self._calib_X) >= _CALIBRATION_MIN_SAMPLES:
+                cal = IsotonicRegression(out_of_bounds="clip")
+                cal.fit(np.array(self._calib_X), np.array(self._calib_y))
+                self._calibrator = cal
 
     def score(self, pi: "PolicyInput") -> float:
         """Return calibrated approval probability in [0, 1].
@@ -144,11 +157,35 @@ class PolicyClassifier:
             for i, name in enumerate(FEATURE_NAMES)
         }
 
+    def __getstate__(self) -> dict:
+        # Exclude _corrected_regret_ids from the pickle — it is per-session
+        # in-memory state that must start fresh each session. Persisting it
+        # would permanently suppress re-correction for those trace IDs across
+        # all future sessions, and would crash on unpickling an old blob that
+        # predates this field (pickle restores __dict__ directly, bypassing
+        # __post_init__).
+        state = self.__dict__.copy()
+        state["_corrected_regret_ids"] = None
+        return state
+
+    def __setstate__(self, state: dict) -> None:
+        self.__dict__.update(state)
+        # Re-initialize transient fields regardless of what was stored.
+        # Guards for _calib_X/_calib_y/_calibrator handle old pickle blobs
+        # predating those fields being added to the dataclass.
+        self._corrected_regret_ids = set()
+        if not hasattr(self, "_calib_X") or self._calib_X is None:
+            self._calib_X = []
+        if not hasattr(self, "_calib_y") or self._calib_y is None:
+            self._calib_y = []
+        if not hasattr(self, "_calibrator"):
+            self._calibrator = None
+
     def to_bytes(self) -> bytes:
         return pickle.dumps(self)
 
     @staticmethod
-    def from_bytes(data: bytes) -> PolicyClassifier:
+    def from_bytes(data: bytes) -> "PolicyClassifier":
         return pickle.loads(data)  # noqa: S301 — first-party SQLite blob only
 
 

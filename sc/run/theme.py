@@ -28,12 +28,12 @@ PALETTE = {
     "info": "cyan",
     "info_dim": "dim cyan",
     "info_bold": "bold cyan",
-    # Learning moments — scarce by design; used only for inference + confirmation.
-    "learn": "magenta",
-    "learn_bold": "bold magenta",
+    # Learning moments — hypotheses, confirmed preferences, growth signals.
+    "learn": "green",
+    "learn_bold": "bold green",
     # Concrete developer decisions.
-    "approve": "green",
-    "approve_bold": "bold green",
+    "approve": "bright_green",
+    "approve_bold": "bold bright_green",
     "deny": "red",
     "deny_bold": "bold red",
     # Attention without alarm (soft check-in, flagged-for-review, defer).
@@ -87,8 +87,8 @@ MOMENTS: dict[str, MomentStyle] = {
         name="hedwig",
     ),
     "learn": MomentStyle(
-        border="magenta",
-        title_style="bold magenta",
+        border="green",
+        title_style="bold green",
         icon="✦",
         name="hedwig · learning",
     ),

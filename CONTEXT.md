@@ -113,12 +113,17 @@ Three inferred signals we compute from traces. Each has plain-English meaning in
 
 ### UserPersona
 
-- **Precise:** Session-level persona. **Currently being revised based on SWE-chat findings** — the 4-value enum (`expert_nitpicker` / `vague_requester` / `mind_changer` / `unknown`) is not supported by behavioral clustering. The data suggests 2 values: intensity-based.
-- **Plain:** What style of interaction this developer is having. Pre-revision: nitpicker / vague / changes mind / unknown. Post-revision: actively engaged or delegating (based on how long the session is and how much they push back).
+- **Precise:** Session-level intensity enum — `active` / `delegating` / `unknown`. Replaces the old 4-value persona enum (`expert_nitpicker` etc.) which was not supported by behavioral clustering of 5,776 sessions. Inferred from turn count and tool-calls-per-turn. Affects scorer thresholds and hypothesis surfacing (delegating sessions never see hypothesis prompts).
+- **Plain:** How engaged the developer is being. Active = deep in it, lots of back-and-forth. Delegating = accepting most of what the agent does, moving fast.
+
+### Oversight
+
+- **Precise:** The user-facing label for session intensity, exposed via `/oversight` in the REPL. Three values: `hands-on` (maps to internal `active`), `balanced` (maps to `None` / auto-infer), `delegating`. Set explicitly overrides inference.
+- **Plain:** How much the developer wants Hedwig in their face right now. Can be pinned via `/oversight` or left to auto-infer.
 
 ### PushbackType
 
-- **Precise:** Per-turn enum — `correction` / `rejection` / `failure_report` / `non_pushback`. **Being extended** to include `scope_constraint` and `positive_redirect` (33% of real pushback turns don't fit the current 4-category scheme).
+- **Precise:** Per-turn enum — `correction` / `rejection` / `failure_report` / `non_pushback` / `scope_constraint` / `positive_redirect`. The last two were added based on the SWE-chat analysis (33% of real pushback turns fell outside the original 4-category scheme).
 - **Plain:** What kind of response the developer gave this turn. Fixing it, saying no, reporting a failure, silent agreement, narrowing scope, or "looks good, now do X."
 
 ---
@@ -153,9 +158,44 @@ A scoping question with an empirical answer (SWE-chat ICC = 0.25 across sessions
 
 ### Failure-signal check-in
 
-A deployable proactive check-in trigger, grounded in finding 2 of the SWE-chat analysis. Pattern: session has debug intent + the agent has run ≥2 bash commands + there has been ≥1 prior failure report. Predicts future failure reports with AUC 0.90.
+A deployable proactive check-in trigger, grounded in finding 2 of the SWE-chat analysis. Pattern: session has debug intent + prior failure report or verification failure. Predicts future failure reports with AUC 0.90. Implemented as `FAILURE_SIGNAL_CHECKIN` in `preferences.py`.
 
-- **Plain:** When the developer is clearly debugging, the agent is running a lot of commands, and something's already gone wrong once this session — stop and ask before continuing.
+- **Plain:** When the developer is clearly debugging and something's already gone wrong this session — pause before the next write.
+
+### Hypothesis bank
+
+- **Precise:** A per-session SQLite table (`hypothesis_candidates`) that stores generated hypothesis candidates with evidence counts. Rule-based detectors and an optional LLM generator seed candidates; each new trace scores `+1 for` or `+1 against` every pending candidate. Candidates are surfaced when `evidence_for / total ≥ 0.70` over ≥5 traces; pruned when `≤ 0.30`. Implements the Trial-Error-Explain loop.
+- **Plain:** Hedwig watches patterns without asking immediately. It waits until it has enough evidence that a pattern is real, then surfaces one question. Patterns that get contradicted are silently dropped.
+
+### Evidence accumulation
+
+- **Precise:** The process of scoring each new decision trace against every pending hypothesis candidate and updating `evidence_for` / `evidence_against` counts. Handled by `update_evidence()` in `hypothesis_bank.py`, called on every apply decision.
+- **Plain:** After each action, Hedwig quietly updates its confidence in each pattern hypothesis.
+
+### REPL
+
+- **Precise:** The persistent interactive session started by `hw` with no subcommand. A single `session_id` is shared across all tasks in the loop. Slash commands (`/status`, `/learning`, `/prefs`, `/rules`, `/observe`, `/oversight`) are handled inline without leaving the session.
+- **Plain:** Instead of running `hw run "task"` once and exiting, you start `hw` and stay inside it. Every task you type shares the same session, so behavioral signals accumulate across multiple tasks.
+
+### O1–O5 criteria (Bui & Evangelopoulos, 2026)
+
+Five criteria for evaluating coding-agent insight policies. Hedwig is the first system that meaningfully satisfies O1+O2+O3:
+
+- **O1** — cost-of-interruption is computed. Hedwig's policy scorer models the probability that an action needs review.
+- **O2** — "stay silent" is an explicit learned action, not a fallback. Hedwig's auto-approve path is a first-class decision, not the absence of a check-in.
+- **O3** — per-developer feedback updates the policy. Hedwig's online classifier and hypothesis bank both update from real decisions.
+- **O4** — cross-context observation. Hedwig's session signals (intensity, coding mode) aggregate across multiple tasks in a session.
+- **O5** — initiation channel. Model check-ins let the agent proactively surface uncertainty.
+
+No deployed coding agent audited by Bui & Evangelopoulos (Cursor, Copilot, Jules, Claude Code Routines) satisfied O1+O2+O3.
+
+### Governance layers
+
+Hedwig's governance maps to three layers (Sahoo, Controllability Trap, 2026):
+
+- **Preventive** — hard constraints (always_deny / always_check_in rules)
+- **Detective** — regret tracking (auto-approves that were later pushed back on)
+- **Corrective** — calibration retrospective (session-end view of where Hedwig was too loose or too cautious)
 
 ---
 

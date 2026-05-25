@@ -9,8 +9,6 @@ Inline CSS, no external dependencies — single file, openable anywhere.
 
 import html
 import json
-import sqlite3
-from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path

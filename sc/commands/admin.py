@@ -137,7 +137,7 @@ def init(
     region: str = typer.Option(None, "--region", help="AWS region for Bedrock."),
 ):
     """Initialize .sc config and trust DB."""
-    from ..run.theme import PALETTE, panel_title
+    from ..run.theme import PALETTE
 
     repo_root = require_repo_root()
 

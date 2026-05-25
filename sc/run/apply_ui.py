@@ -13,7 +13,7 @@ from pathlib import Path
 
 from rich import print
 
-from ..features import RiskSignals, change_type_label
+from ..features import RiskSignals
 from ..policy import PolicyDecision, within_scope_budget
 from ..trust_db import PolicyHistory
 from .checkin_styling import dominant_pushback_type, render_adapted_checkin_context
@@ -28,6 +28,7 @@ from .ui import (
     _render_file_list,
     _render_policy_snapshot,
     _summarize_autonomy_rationale,
+    _user_friendly_reason,
 )
 
 
@@ -40,12 +41,16 @@ def render_apply_policy_snapshot(
     denied_apply: list[str],
     milestone_reasons: tuple[str, ...],
 ) -> None:
+    # When a diff panel will follow immediately, suppress the pre-diff file list —
+    # it's redundant. Only force-show for hard-constraint denials and milestone gates
+    # where no diff follows.
+    force = bool(denied_apply) or bool(milestone_reasons)
     _render_policy_snapshot(
         stage="apply",
         files=touched_files,
         histories=histories,
         policies=policies,
-        force=prompt_required or bool(denied_apply) or bool(milestone_reasons),
+        force=force,
     )
 
 
@@ -70,7 +75,9 @@ def render_apply_auto_approve_summary(
 
 
 def render_hard_constraint_deny(denied_files: list[str]) -> None:
-    print(f"[{PALETTE['deny_bold']}]✗ patch denied by hard constraint[/{PALETTE['deny_bold']}]")
+    from .theme import moment
+    _style = moment("rule_hard")
+    print(f"[{_style.title_style}]{_style.icon} change blocked by your rule[/{_style.title_style}]")
     _render_file_list(denied_files)
 
 
@@ -126,7 +133,7 @@ def render_apply_checkin_prompt(
 
 def render_apply_denied(intervention: bool = False) -> None:
     if intervention:
-        print(f"[{PALETTE['attention']}]✗ patch denied after your intervention[/{PALETTE['attention']}]")
+        print(f"[{PALETTE['attention']}]✗ change rejected after you stopped it[/{PALETTE['attention']}]")
     else:
         print(f"[{PALETTE['attention']}]✗ patch denied[/{PALETTE['attention']}]")
 
@@ -157,7 +164,10 @@ def render_apply_auto_approved(
             f"  [{PALETTE['meta']}]· {_auto_why}[/{PALETTE['meta']}]"
         )
     else:
-        print(f"[{PALETTE['approve_bold']}]✓ apply approved[/{PALETTE['approve_bold']}]")
+        print(
+            f"[{PALETTE['approve_bold']}]✓ apply approved[/{PALETTE['approve_bold']}]"
+            f"  [{PALETTE['meta']}]· low risk, proceeding[/{PALETTE['meta']}]"
+        )
     return "auto_approve"
 
 
@@ -195,9 +205,12 @@ def render_soft_checkin_gate(
     soft_reason = None
     for p in touched_files:
         rs = apply_policies.get(p)
-        if rs and rs.reasons:
-            soft_reason = rs.reasons[-1]
-            break
+        if rs:
+            # Translate through the human-readable layer; raw scorer strings
+            # like "scorer:0.41 -- 1.2 weighted approvals" aren't audience-readable.
+            soft_reason = _user_friendly_reason(rs) or None
+            if soft_reason:
+                break
     return render_soft_checkin(
         stage="apply",
         files=touched_files,

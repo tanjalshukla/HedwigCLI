@@ -518,24 +518,38 @@ def run(
         raise typer.Exit(code=0)
 
     # Stage 3: evaluate write policy and collect apply traces.
-    _evaluate_apply_stage(
-        repo_root=repo_root,
-        config=config,
-        trust_db=trust_db,
-        repo_root_str=repo_root_str,
-        run_session_id=run_session_id,
-        task=task,
-        session=session,
-        feedback=feedback,
-        updates=updates,
-        touched_files=touched_files,
-        declaration=declaration,
-        planned_files=planned_files,
-        remember=remember,
-        threshold=threshold,
-        client=client,
-        study_context=study_context,
-    )
+    # Wrap in try/finally so _finalize_run (session summary + guideline
+    # suggestions) is always shown — even when the developer denies, which
+    # raises typer.Exit(code=0) inside _evaluate_apply_stage.
+    try:
+        _evaluate_apply_stage(
+            repo_root=repo_root,
+            config=config,
+            trust_db=trust_db,
+            repo_root_str=repo_root_str,
+            run_session_id=run_session_id,
+            task=task,
+            session=session,
+            feedback=feedback,
+            updates=updates,
+            touched_files=touched_files,
+            declaration=declaration,
+            planned_files=planned_files,
+            remember=remember,
+            threshold=threshold,
+            client=client,
+            study_context=study_context,
+        )
+    except typer.Exit as _exc:
+        if _exc.exit_code == 0:
+            # Developer denied — show the summary then exit cleanly.
+            _finalize_run(
+                trust_db=trust_db,
+                repo_root=repo_root_str,
+                session_id=run_session_id,
+            )
+            raise
+        raise  # code=1 (hard constraint deny) propagates as before
 
     if dry_run:
         print("[yellow]Dry run enabled: patch not applied.[/yellow]")
@@ -579,7 +593,8 @@ def run(
         daemon=True,
     ).start()
 
-    print("[green]Patch applied successfully.[/green]")
+    from .theme import PALETTE as _PAL_DONE
+    print(f"[{_PAL_DONE['approve_bold']}]✓ done[/{_PAL_DONE['approve_bold']}]")
     _finalize_run(
         trust_db=trust_db,
         repo_root=repo_root_str,

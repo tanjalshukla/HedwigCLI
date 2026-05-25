@@ -30,7 +30,9 @@ from rich.text import Text
 from .theme import PALETTE, moment, panel_title
 
 
-SOFT_CHECKIN_WINDOW_SECONDS = 2.5
+_CONSOLE = Console()
+
+SOFT_CHECKIN_WINDOW_SECONDS = 5.0  # 20s was dead air in a live demo; 5s is enough to read and decide
 
 
 @dataclass(frozen=True)
@@ -56,12 +58,12 @@ def render_soft_checkin(
     """
     from rich.live import Live
 
-    console = Console()
     style = moment("soft_checkin")
 
     def _panel(remaining: float) -> Panel:
         body = Text()
-        body.append(f"{stage}\n", style=PALETTE["info_bold"])
+        stage_label = "About to apply changes to:" if stage == "apply" else f"{stage}"
+        body.append(f"{stage_label}\n", style=PALETTE["info_bold"])
         if files:
             body.append("\n")
             for f in files:
@@ -83,10 +85,9 @@ def render_soft_checkin(
         body.append("  ")
         body.append("█" * filled, style=PALETTE["attention"])
         body.append("░" * empty, style=PALETTE["meta"])
-        body.append(f"  {remaining:>4.1f}s", style=PALETTE["attention"])
         body.append("\n")
         body.append(
-            "  press Enter to intervene · otherwise proceeding",
+            f"  press Enter to review · continuing in {remaining:.0f}s",
             style=PALETTE["meta"],
         )
 
@@ -99,31 +100,39 @@ def render_soft_checkin(
 
     if not sys.stdin.isatty() or window_seconds <= 0:
         # Non-interactive path — render once and return.
-        console.print(_panel(window_seconds))
+        _CONSOLE.print(_panel(window_seconds))
         intervened = False
     else:
         # Interactive path — animate the bar while polling stdin.
+        # Ctrl-C during the window is treated as intervention, not a crash.
         intervened = False
         end_time = time.monotonic() + window_seconds
-        refresh_hz = 10
-        with Live(_panel(window_seconds), console=console, refresh_per_second=refresh_hz) as live:
-            while True:
-                remaining = end_time - time.monotonic()
-                if remaining <= 0:
-                    break
-                ready, _, _ = select.select([sys.stdin], [], [], min(remaining, 1.0 / refresh_hz))
-                if ready:
-                    sys.stdin.readline()
-                    intervened = True
-                    break
-                live.update(_panel(max(remaining, 0)))
+        refresh_hz = 4  # 250ms intervals — bar updates every cell (0.25s), 5s window = 20 frames
+        try:
+            with Live(_panel(window_seconds), console=_CONSOLE, refresh_per_second=refresh_hz) as live:
+                while True:
+                    remaining = end_time - time.monotonic()
+                    if remaining <= 0:
+                        break
+                    try:
+                        ready, _, _ = select.select([sys.stdin], [], [], min(remaining, 1.0 / refresh_hz))
+                    except (select.error, OSError):
+                        # select() not supported on this platform (e.g. Windows stdin)
+                        break
+                    if ready:
+                        sys.stdin.readline()
+                        intervened = True
+                        break
+                    live.update(_panel(max(remaining, 0)))
+        except (KeyboardInterrupt, EOFError):
+            intervened = True
 
     if intervened:
-        console.print(
-            f"[{PALETTE['attention']}]→ intervention requested · escalating[/{PALETTE['attention']}]"
+        _CONSOLE.print(
+            f"[{PALETTE['attention']}]→ stopping for your review[/{PALETTE['attention']}]"
         )
     else:
-        console.print(f"[{PALETTE['meta']}]→ proceeding[/{PALETTE['meta']}]")
+        _CONSOLE.print(f"[{PALETTE['meta']}]→ proceeding with the change[/{PALETTE['meta']}]")
     return SoftCheckinOutcome(intervened=intervened)
 
 

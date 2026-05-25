@@ -10,7 +10,7 @@ The system is designed for developers who already supervise and validate agent w
 
 # Part 1: Technical Implementation
 
-This document focuses on architecture, runtime behavior, data flow, and future implementation work. Installation, command-line usage, and operator steps live in `README.md` and `demo_task_api/DEMO_FLOW.md`.
+This document focuses on architecture, runtime behavior, data flow, and future implementation work. Installation, command-line usage, and operator steps live in `README.md` and `demo_recipe_api/DEMO_FLOW.md`.
 
 ## Architecture
 
@@ -277,7 +277,7 @@ Key modules, by responsibility:
 
 ## Why This Matters
 
-Current tools offer binary autonomy: ask before every edit, or edit automatically. Static config files (CLAUDE.md, .cursorrules) capture preferences the developer can articulate in advance, but most preferences are implicit — they show up as correction patterns, review timing, edit distance, and phase-of-work context.
+Current tools calibrate autonomy through developer-authored static configuration — CLAUDE.md files, permission lists, rule files. These capture preferences the developer can articulate in advance, but most preferences are implicit — they emerge as correction patterns, review timing, edit distance, and phase-of-work context that no static config file can anticipate.
 
 Recent studies suggest the main bottleneck is not raw model capability but trust infrastructure: when to let the agent continue, when to intervene, and how to turn observed behavior into future calibration. Hedwig is an attempt to make that boundary explicit and measurable.
 

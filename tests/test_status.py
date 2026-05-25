@@ -13,7 +13,11 @@ from sc.status import (
 )
 
 
-def _summary(n_turns: int = 7, n_approvals: int = 6) -> SessionSummary:
+def _summary(
+    n_turns: int = 7,
+    n_approvals: int = 6,
+    n_auto_approvals: int = 0,
+) -> SessionSummary:
     return SessionSummary(
         session_id="s1",
         n_turns=n_turns,
@@ -22,10 +26,10 @@ def _summary(n_turns: int = 7, n_approvals: int = 6) -> SessionSummary:
         n_feedback=0,
         n_failures=0,
         mean_edit_distance=0.1,
-        mean_prev_tools=3.0,
         mean_review_seconds=5.0,
         distinct_tasks=1,
         n_interruptions=0,
+        n_auto_approvals=n_auto_approvals,
     )
 
 
@@ -36,8 +40,11 @@ class TemplateSentenceTests(unittest.TestCase):
         self.assertIn("haven't exchanged", sentence)
 
     def test_delegating_session_reads_naturally(self) -> None:
-        # Low turns + low tool use → delegating.
-        status = build_session_status(summary=_summary(n_turns=4, n_approvals=4))
+        # High auto-approve rate + low intervention → delegating.
+        # (4 auto-approves gives delegation_rate=1.0, intervention_rate=0.0)
+        status = build_session_status(
+            summary=_summary(n_turns=4, n_approvals=4, n_auto_approvals=4)
+        )
         sentence = template_session_sentence(status)
         self.assertIn("delegating", sentence)
         self.assertIn("4 turns", sentence)

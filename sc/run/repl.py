@@ -2,57 +2,60 @@ from __future__ import annotations
 
 """Hedwig REPL — persistent session loop.
 
-`hw` (no subcommand) drops the developer into a long-running session where
-tasks are submitted one by one. The banner shows once. The session_id and
-classifier state persist across every task in the loop. This is the right
-model for Hedwig's learning story: hypotheses fire after multiple tasks
-accumulate signal, the scorer updates continuously, and the owl banner sits
-at the top as a visual anchor.
+`hw` (no subcommand) drops into an interactive session. The banner shows once.
+A single session_id is shared across all tasks in the loop, so behavioral
+signals (pushback patterns, review timing, verification failures) accumulate
+and the hypothesis bank and online classifier update continuously.
 
-Slash commands available inside the loop:
-  /status     — what does Hedwig think about this session right now?
-  /learning   — what has Hedwig learned about this repo?
-  /prefs      — active confirmed preferences
-  /intensity  — toggle active/delegating/auto
-  /reset      — clear session state (keeps repo history)
-  /exit       — exit the REPL
+Slash commands:
+  /status       What Hedwig thinks about this session right now
+  /learning     What Hedwig has learned about this repo
+  /prefs        Active confirmed preferences
+  /rules        List or add rules (/rules add <natural language rule>)
+  /observe      Repo activity (/observe report | traces | weights | personas)
+  /oversight    Set oversight level (hands-on / balanced / delegating)
+  /reset        Clear session state, keep repo history
+  /help         Show this list
+  /exit         Exit
 
-Entering a plain task runs it through the full governed pipeline.
+Typing a plain task runs it through the full governed pipeline.
+
+Terminology note: "oversight" is the user-facing label; "intensity" is the
+internal variable name (active/delegating/None) used throughout the approval
+cascade. The two map via _label_from_intensity() in oversight_toggle.py.
 """
 
 import hashlib
 import json
-import sys
 from pathlib import Path
 from uuid import uuid4
 
 import typer
 from rich import print
 from rich.console import Console
-from rich.prompt import Prompt
-from rich.text import Text
-from .intensity_toggle import run_toggle, OPTIONS as _OVERSIGHT_OPTIONS, _TO_INTENSITY, _label_from_intensity
+from .oversight_toggle import OPTIONS as _OVERSIGHT_OPTIONS, _TO_INTENSITY, _label_from_intensity
 
 from ..cli_shared import read_file_context as _read_file_context, resolve_config as _resolve_config
-from ..config import SAConfig, autonomy_profile, config_dir
+from ..config import autonomy_profile, config_dir
 from ..repo import RepoError, get_repo_root
 from ..session import ClaudeSession
 from ..session_feedback import SessionFeedback
 from ..trust_db import TrustDB
-from .helpers import SpecContext, StudyContext, _load_spec_context
+from .helpers import StudyContext, _load_spec_context
 from .theme import PALETTE
 
 
 _SLASH_COMMANDS = {
-    "/status":   "What Hedwig thinks about this session",
-    "/learning": "What Hedwig has learned about this repo",
-    "/prefs":    "Active confirmed preferences",
-    "/rules":    "Add or list rules  (/rules add <rule> | /rules list)",
-    "/observe":  "Observe repo activity  (/observe report | traces | weights | personas)",
-    "/oversight":"Set oversight level (hands-on / balanced / delegating)",
-    "/reset":    "Clear session and start fresh",
-    "/help":     "Show this list",
-    "/exit":     "Exit Hedwig",
+    "/status":        "What Hedwig thinks about this session",
+    "/learning":      "What Hedwig has learned about this repo",
+    "/prefs":         "Your saved preferences and patterns Hedwig is watching for",
+    "/rules":         "Add or list rules  (/rules add <rule> | /rules list)",
+    "/observe":       "Repo activity  (/observe report | traces | weights | personas | export [--html])",
+    "/oversight":     "Set oversight level (hands-on / balanced / delegating)",
+    "/retrospective": "Session wrap-up — where I was too loose or too cautious",
+    "/reset":         "Mark a session boundary (history is preserved)",
+    "/help":          "Show this list",
+    "/exit":          "Exit Hedwig",
 }
 
 
@@ -69,7 +72,26 @@ def _handle_slash(
     parts = cmd.strip().split()
     verb = parts[0].lower()
 
+    if verb == "/retrospective":
+        from .retrospective import run_retrospective
+        run_retrospective(
+            trust_db=trust_db,
+            repo_root_str=repo_root_str,
+            session_id=run_session_id,
+        )
+        return True, pinned_intensity
+
     if verb == "/exit":
+        # Offer retrospective on exit if the session had regrets — one line, easy to skip.
+        from ..regret import detect_regret_events
+        _rows = [dict(r) for r in trust_db.session_traces(repo_root_str, run_session_id)]
+        if _rows:
+            _regrets = detect_regret_events(_rows)
+            if _regrets:
+                console.print(
+                    f"\n[{PALETTE['meta']}]{len(_regrets)} action{'s' if len(_regrets) != 1 else ''} "
+                    f"could use a look — /retrospective before you go, or just exit.[/{PALETTE['meta']}]"
+                )
         return False, pinned_intensity
 
     if verb == "/help":
@@ -94,18 +116,73 @@ def _handle_slash(
         return True, pinned_intensity
 
     if verb == "/prefs":
+        from rich.panel import Panel as _P
+        from rich.text import Text as _T
+        from .theme import panel_title as _pt
+        _body = _T()
+
+        # Accepted preferences.
         rows = trust_db.confirmed_preferences_for_repo(repo_root_str)
         accepted = [r for r in rows if json.loads(r["preference_json"]).get("accepted")]
-        if not accepted:
-            print(f"[{PALETTE['meta_italic']}]No confirmed preferences yet.[/{PALETTE['meta_italic']}]")
-        else:
-            from ..preferences import preference_from_dict
+        if accepted:
+            _body.append("Accepted\n", style=PALETTE["learn_bold"])
             from ..commands.status import _humanize_preference
             for r in accepted:
                 payload = json.loads(r["preference_json"])
                 learned = _humanize_preference(payload, scope="this repo")
                 if learned:
-                    print(f"  [{PALETTE['learn']}]✦[/{PALETTE['learn']}] {learned.headline}")
+                    _body.append(f"  ✦ {learned.headline}\n", style=PALETTE["learn"])
+
+        # Pending hypotheses with confidence bars.
+        pending = trust_db.get_pending_hypothesis_candidates(repo_root_str, run_session_id)
+        if pending:
+            if accepted:
+                _body.append("\n")
+            _body.append("Watching for  ", style=PALETTE["info_bold"])
+            _body.append("(confidence from your recent decisions)\n", style=PALETTE["meta"])
+            _DRIVER_LABELS = {
+                "scope_constraint":   "narrowing scope on multi-file changes",
+                "failure_reactive":   "checking in after failures",
+                "deliberate_reviewer":"reviewing changes carefully",
+                "rapid_approver":     "approving quickly without review",
+                "positive_redirect":  "redirecting toward better approaches",
+            }
+            for c in pending:
+                total = int(c["evidence_for"]) + int(c["evidence_against"])
+                driver = _DRIVER_LABELS.get(c["driver"], c["driver"].replace("_", " "))
+                if total > 0:
+                    conf = int(c["evidence_for"]) / total
+                    filled = int(conf * 10)
+                    bar = "█" * filled + "░" * (10 - filled)
+                    _body.append(f"  {bar} ", style=PALETTE["meta"])
+                    _body.append(f"{conf:.0%}", style=PALETTE["info_bold"])
+                    _body.append(f"  {driver}\n", style="white")
+                else:
+                    _body.append(f"  {'░' * 10} ", style=PALETTE["meta"])
+                    _body.append("new", style=PALETTE["meta"])
+                    _body.append(f"  {driver}\n", style="white")
+
+        # Rejected candidates.
+        with trust_db._connect() as _conn:
+            _rejected = _conn.execute(
+                """SELECT driver, evidence_for, evidence_against FROM hypothesis_candidates
+                   WHERE repo_root = ? AND session_id = ? AND status = 'rejected'""",
+                (repo_root_str, run_session_id),
+            ).fetchall()
+        if _rejected:
+            if accepted or pending:
+                _body.append("\n")
+            _body.append("Considered but not enough evidence yet\n", style=PALETTE["meta"])
+            for r in _rejected:
+                total = int(r["evidence_for"]) + int(r["evidence_against"])
+                conf = int(r["evidence_for"]) / total if total else 0
+                driver = r["driver"].replace("_", " ")
+                _body.append(f"  ✗ {driver}  ({conf:.0%} of {total} traces)\n", style=PALETTE["meta"])
+
+        if not accepted and not pending and not _rejected:
+            _body.append("No preferences yet — patterns appear as you work.", style=PALETTE["meta_italic"])
+
+        console.print(_P(_body, title=_pt("learn", "preferences"), border_style=PALETTE["learn"], padding=(1, 2)))
         return True, pinned_intensity
 
     if verb in ("/oversight", "/intensity"):
@@ -115,7 +192,7 @@ def _handle_slash(
                 current_label = _label_from_intensity(pinned_intensity)
                 print(f"[{PALETTE['meta']}]current: {current_label}[/{PALETTE['meta']}]")
                 for opt in _OVERSIGHT_OPTIONS:
-                    from .intensity_toggle import _DESCRIPTIONS
+                    from .oversight_toggle import _DESCRIPTIONS
                     marker = "◉" if opt == current_label else "○"
                     print(f"  [{PALETTE['meta']}]{marker}[/{PALETTE['meta']}] [{PALETTE['info_bold']}]{opt:<12}[/{PALETTE['info_bold']}]  [{PALETTE['meta']}]{_DESCRIPTIONS[opt]}[/{PALETTE['meta']}]")
                 print(f"\n[{PALETTE['meta']}]usage: /oversight [balanced|hands-on|delegating][/{PALETTE['meta']}]")
@@ -123,7 +200,7 @@ def _handle_slash(
             new_intensity = _TO_INTENSITY[label]
         else:
             # No arg — show numbered menu, read one keypress.
-            from .intensity_toggle import _DESCRIPTIONS
+            from .oversight_toggle import _DESCRIPTIONS
             current_label = _label_from_intensity(pinned_intensity)
             print()
             for i, opt in enumerate(_OVERSIGHT_OPTIONS, 1):
@@ -164,7 +241,7 @@ def _handle_slash(
             else:
                 from ..commands.admin import add_rule
                 try:
-                    add_rule(rule=rule_text, dry_run=False)
+                    add_rule(rule=rule_text, source="manual_rule", model_id=None, region=None, yes=True)
                 except SystemExit:
                     pass
         else:
@@ -173,13 +250,15 @@ def _handle_slash(
 
     if verb == "/observe":
         sub = parts[1].lower() if len(parts) > 1 else "report"
-        from ..commands.observe import report, traces, weights, personas, leases
+        from ..commands.observe import report, traces, weights, personas, leases, export
+        html_flag = "--html" in parts
         _obs_map = {
             "report":   lambda: report(json_out=False, verbose=False),
             "traces":   lambda: traces(limit=20, json_out=False),
-            "weights":  lambda: weights(json_out=False),
+            "weights":  lambda: weights(verbose=False),
             "personas": lambda: personas(limit=5, verbose=False),
             "leases":   lambda: leases(json_out=False),
+            "export":   lambda: export(out=Path(".sc/exports"), session_id=None, html_report=html_flag, open_browser=True),
         }
         fn = _obs_map.get(sub)
         if fn:
@@ -188,7 +267,7 @@ def _handle_slash(
             except SystemExit:
                 pass
         else:
-            print(f"[{PALETTE['meta']}]usage: /observe [report|traces|weights|personas|leases][/{PALETTE['meta']}]")
+            print(f"[{PALETTE['meta']}]usage: /observe [report|traces|weights|personas|leases|export [--html]][/{PALETTE['meta']}]")
         return True, pinned_intensity
 
     if verb == "/reset":
@@ -264,10 +343,9 @@ def run_repl(
 
     # Count confirmed preferences for the banner.
     _pref_rows = trust_db.confirmed_preferences_for_repo(repo_root_str)
-    import json as _json
     _confirmed_count = sum(
         1 for r in _pref_rows
-        if _json.loads(r["preference_json"]).get("accepted")
+        if json.loads(r["preference_json"]).get("accepted")
     )
 
     render_session_start_banner(
@@ -277,6 +355,13 @@ def run_repl(
         confirmed_pref_count=_confirmed_count,
     )
 
+    # On cold-start (no prior sessions), show a one-line orientation so a
+    # first-time user immediately understands what Hedwig does.
+    if _prior_summary is None or _prior_summary.n_turns == 0:
+        print(
+            f"[{PALETTE['info']}]Hedwig governs each file change — "
+            f"you approve, deny, or teach.[/{PALETTE['info']}]"
+        )
     print(f"[{PALETTE['meta']}]Type a task · /oversight to adjust · /help for commands.[/{PALETTE['meta']}]")
     print()
 
@@ -294,17 +379,16 @@ def run_repl(
 
     while True:
         # Print the prompt label with Rich markup, then read input directly.
-        _console = Console()
         if pinned_intensity:
             _olabel = _label_from_intensity(pinned_intensity)
             _pin_color = PALETTE["learn"] if _olabel == "hands-on" else PALETTE["info"]
-            _console.print(
+            console.print(
                 f"\n[{PALETTE['info_bold']}]hedwig[/{PALETTE['info_bold']}]"
                 f" [{_pin_color}][{_olabel}][/{_pin_color}]",
                 end=" ",
             )
         else:
-            _console.print(f"\n[{PALETTE['info_bold']}]hedwig[/{PALETTE['info_bold']}]", end=" ")
+            console.print(f"\n[{PALETTE['info_bold']}]hedwig[/{PALETTE['info_bold']}]", end=" ")
 
         try:
             raw = input().strip()
@@ -366,7 +450,7 @@ def run_repl(
             )
         except typer.Exit:
             continue
-        except Exception as exc:
+        except (ValueError, RuntimeError, KeyError, AttributeError) as exc:
             print(f"[{PALETTE['deny']}]Error during planning: {exc}[/{PALETTE['deny']}]")
             continue
 
@@ -389,7 +473,7 @@ def run_repl(
         for path in planned_files:
             try:
                 current = (repo_root / path).read_text()
-            except Exception:
+            except (FileNotFoundError, IsADirectoryError, OSError):
                 current = ""
             file_hashes[path] = hashlib.sha256(current.encode("utf-8")).hexdigest()
 
@@ -450,8 +534,8 @@ def run_repl(
             )
         except typer.Exit as exc:
             if exc.exit_code != 0:
-                continue
-            continue
+                raise  # hard constraint deny — propagate so the REPL doesn't silently swallow it
+            continue  # soft deny (code=0) — loop back to prompt
 
         _apply_updates_and_verify(
             repo_root=repo_root,

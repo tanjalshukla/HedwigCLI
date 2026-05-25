@@ -1,5 +1,20 @@
 from __future__ import annotations
 
+"""Threshold adaptation — adjusts the scorer's proceed/flag thresholds based
+on repo-level preferences and session signals.
+
+`AutonomyPreferences` is the legacy coarse-toggle system (prefer_fewer_checkins,
+allowed_checkin_topics, scoped_paths). It still drives the threshold-shift path
+and is persisted per-repo. The newer 5-dim Preference taxonomy (preferences.py)
+handles post-scorer action overrides; `autonomy_prefs_to_preferences()` bridges
+the two so both systems contribute to `force_action_from_preferences()`.
+
+`adjusted_policy_thresholds()` is called per-file in the approval cascade.
+It shifts thresholds based on: AutonomyPreferences, model check-in calibration,
+session intensity (active/delegating), and coding mode (vibe/human_only).
+Small deltas — the scorer still dominates; this is a trim, not an override.
+"""
+
 from dataclasses import dataclass
 from fnmatch import fnmatch
 import json

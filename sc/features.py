@@ -1,5 +1,19 @@
 from __future__ import annotations
 
+"""Risk signal computation — the single source of truth for what Hedwig
+knows about a proposed action before deciding whether to auto-approve.
+
+`assess_risk()` takes a file path and its old/new content and produces a
+`RiskSignals` object. Every scorer and preference matcher consumes this;
+nothing downstream should recompute risk independently.
+
+Key exports:
+  RiskSignals — pure data object, no weights or scores
+  assess_risk() — produces RiskSignals from file content diff
+  CHANGE_PATTERNS — authoritative vocabulary for change_pattern values
+  change_type_label() — human-readable string for display
+"""
+
 import re
 from dataclasses import dataclass
 from pathlib import Path

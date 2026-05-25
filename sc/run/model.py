@@ -11,8 +11,8 @@ from rich import print
 from rich.prompt import Prompt
 
 from ..agent_client import ClaudeClient, ModelCheckInRequired
-from ..phase import evaluate_write_phase_gate
-from ..patch import PatchValidationError, validate_touched_files
+from ..plan_gate import evaluate_write_phase_gate
+from .helpers import PatchValidationError, validate_touched_files
 from ..prompt_builder import build_run_system_prompt
 from ..schema import CheckInMessage, IntentDeclaration, WorkflowPhase
 from ..session import ClaudeSession
@@ -82,17 +82,16 @@ def _handle_model_checkin(
     client: ClaudeClient | None = None,
     study_context: StudyContext | None = None,
 ) -> tuple[bool, str, str | None]:
-    from ..run.theme import PALETTE
+    from ..run.theme import PALETTE, panel_title
     print()
-    print(f"[bold cyan]◉ hedwig · {stage}[/bold cyan]")
-    print(f"[dim]{check_in.reason}[/dim]")
+    print(panel_title("approve_request", stage))
+    print(f"[{PALETTE['meta']}]{check_in.reason}[/{PALETTE['meta']}]")
     if check_in.recommendation:
-        print(f"[dim white]{check_in.recommendation}[/dim white]")
+        print(f"[{PALETTE['meta']}]{check_in.recommendation}[/{PALETTE['meta']}]")
 
     response_text = ""
     prompt_started = time.time()
     approved = False
-    feedback_text: str | None = None
 
     # Only surface options when they represent genuinely different tradeoffs.
     # Cap at 2 options — the model sometimes generates redundant ones.
@@ -290,7 +289,8 @@ def _generate_updates_with_repair(
                 study_context=study_context,
             )
             if not approved:
-                print("[yellow]Task denied during model check-in.[/yellow]")
+                from ..run.theme import PALETTE as _PAL
+                print(f"[{_PAL['attention']}]Task denied during model check-in.[/{_PAL['attention']}]")
                 raise typer.Exit(code=0)
             next_phase = _infer_phase_from_checkin(exc.message, current_phase)
             current_phase = _apply_phase_transition_with_display(
