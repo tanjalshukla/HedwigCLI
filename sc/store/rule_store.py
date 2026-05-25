@@ -17,7 +17,7 @@ from fnmatch import fnmatch
 from typing import TYPE_CHECKING, Iterable
 
 if TYPE_CHECKING:
-    from ..trust_db import BehavioralGuideline, HardConstraint, LogicNote
+    from ..trust_db import HardConstraint
 
 _RETRIEVAL_STOPWORDS = {
     "a", "an", "and", "are", "as", "at", "be", "before", "by", "do", "for",
