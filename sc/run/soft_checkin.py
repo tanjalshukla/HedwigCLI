@@ -83,8 +83,8 @@ def render_soft_checkin(
             filled = 0
         empty = cells - filled
         body.append("  ")
-        body.append("█" * filled, style=PALETTE["attention"])
-        body.append("░" * empty, style=PALETTE["meta"])
+        body.append("█" * filled, style=PALETTE["attention_bold"])
+        body.append("░" * empty, style=PALETTE["info_dim"])
         body.append("\n")
         body.append(
             f"  press Enter to review · continuing in {remaining:.0f}s",

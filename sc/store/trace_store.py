@@ -17,8 +17,6 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Iterable
 
-from .types import DecisionTraceRow, PlanRevisionRow  # noqa: F401  (re-exported)
-
 if TYPE_CHECKING:
     from ..trust_db import (
         AccessStats,

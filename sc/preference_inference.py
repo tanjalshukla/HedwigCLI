@@ -70,6 +70,8 @@ _SCOPE_CONSTRAINT_PHRASES = (
     "just do", "just the", "just focus", "just keep", "only do",
     "only the", "only focus", "don't touch", "don't modify",
     "don't change", "leave", "avoid", "skip", "limit to",
+    "narrow", "narrow scope", "separately", "store first", "first then",
+    "one at a time", "start with", "focus on", "scope to",
 )
 
 

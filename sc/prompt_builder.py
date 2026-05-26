@@ -122,7 +122,11 @@ def build_run_system_prompt(
     elif workflow_phase == "implementation":
         phase_guidance = (
             "Current phase is implementation. Minimize interruptions for routine edits "
-            "and only check in for architecture-level decisions, uncertainty, or plan deviations."
+            "and only check in for architecture-level decisions, uncertainty, or plan deviations. "
+            "Do NOT emit phase_transition check-ins — you are already in implementation. "
+            "Do NOT ask the developer about test fixture style, import path, or file placement "
+            "if the developer's plan-level guidance already answered those questions. "
+            "Just write the code."
         )
     elif workflow_phase == "research":
         phase_guidance = (
@@ -153,7 +157,8 @@ def build_run_system_prompt(
         "2) To declare intent: {\"task_summary\":\"...\",\"planned_files\":[...],\"planned_actions\":[...],\"planned_commands\":[],\"expected_change_types\":[...],\"requirements_covered\":[...],\"potential_deviations\":[...]}\n"
         "3) To check in: {\"type\":\"check_in\",\"reason\":\"...\",\"check_in_type\":\"decision_point\",\"content\":\"...\",\"recommendation\":\"...\",\"options\":[...],\"assumptions\":[...],\"confidence\":0.9}\n"
         "   IMPORTANT: A check-in has ONLY these fields: type, reason, check_in_type, content, recommendation, options, assumptions, confidence. NO planned_files, NO task_summary, NO planned_actions.\n"
-        "4) To read files: {\"files\":[\"path/to/file\"]}\n"
+        "4) To read files: {\"files\":[\"path/to/file\"],\"reason\":\"...\"}\n"
+        "   read reason: max 8 words, no punctuation. examples: 'check current model', 'find seed data', 'see validation patterns'.\n"
         "5) Keep check-in content to 2-3 sentences. Each option one concise line.\n\n"
         "Check-in quality bar:\n"
         "- Ask only when the decision is expensive to reverse (architecture, interfaces, workflows).\n"

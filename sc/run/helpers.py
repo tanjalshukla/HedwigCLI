@@ -16,13 +16,36 @@ from ..autonomy import preferences_from_model_payload
 from ..cli_shared import truncate_content as _truncate_content
 from ..features import RiskSignals
 from ..ml_policy import PolicyClassifier
-from ..policy import PolicyDecision, PolicyInput, decide_action, select_scorer
+from ..policy import PolicyDecision, PolicyInput, select_scorer
+from ..preference_inference import (
+    infer_coding_mode,
+    infer_user_persona,
+    summarize_session,
+)
 from ..schema import IntentDeclaration
 from ..session import ClaudeSession
 from ..trust_db import HardConstraint, Lease, PolicyHistory, TrustDB
 
+
+def infer_session_intensity(
+    trust_db: TrustDB,
+    repo_root_str: str,
+    run_session_id: str,
+) -> tuple[str, str, list[dict]]:
+    """Compute (persona_value, coding_mode_value, session_row_dicts) once.
+
+    Both the read stage and the apply stage need session intensity to feed
+    `adjusted_policy_thresholds`. Centralizing it here keeps the two stages
+    in lockstep — drift in this signal would silently change check-in rates.
+    """
+    rows = [dict(r) for r in trust_db.session_traces(repo_root_str, run_session_id)]
+    summary = summarize_session(rows)
+    persona = infer_user_persona(summary).value
+    coding_mode = infer_coding_mode(summary).value
+    return persona, coding_mode, rows
+
 AccessType = Literal["read", "write"]
-HardConstraintOutcome = Literal["deny", "check_in", "allow", "passthrough"]
+HardConstraintOutcome = Literal["deny", "check_in", "allow", "passthrough", "lease"]
 
 
 @dataclass(frozen=True)
@@ -115,40 +138,17 @@ def _policy_decision_for_file(
     flag_threshold: float,
     classifier: PolicyClassifier | None = None,
 ) -> PolicyDecision:
-    pi = PolicyInput(
-        prior_approvals=history.effective_approvals,
-        prior_denials=history.denials,
-        avg_response_ms=history.avg_response_ms,
-        avg_edit_distance=history.avg_edit_distance or 0.0,
-        diff_size=risk.diff_size,
-        blast_radius=risk.blast_radius,
-        is_new_file=risk.is_new_file,
-        is_security_sensitive=risk.is_security_sensitive,
-        change_pattern=risk.change_pattern,
+    pi = PolicyInput.from_signals(
+        history,
+        risk,
         recent_denials=recent_denials,
         files_in_action=files_in_action,
         verification_failure_rate=verification_failure_rate,
         model_confidence_avg=model_confidence_avg,
         model_confidence_samples=model_confidence_samples,
     )
-    scorer, label = select_scorer(classifier)
-    if label == "heuristic":
-        # HeuristicScorer.score() loses reasons + action bucketing, so for the
-        # heuristic path we still want the richer PolicyDecision from decide_action.
-        return decide_action(pi, proceed_threshold=proceed_threshold, flag_threshold=flag_threshold)
-    score = scorer.score(pi)
-    if score >= proceed_threshold:
-        action = "proceed"
-    elif score >= flag_threshold:
-        action = "proceed_flag"
-    else:
-        action = "check_in"
-    sample_count = getattr(classifier, "sample_count", 0)
-    return PolicyDecision(
-        action=action,
-        score=score,
-        reasons=(f"learned-policy score {score:.3f} ({sample_count} real samples)",),
-    )
+    scorer, _label = select_scorer(classifier)
+    return scorer.decide(pi, proceed_threshold=proceed_threshold, flag_threshold=flag_threshold)
 
 
 def _build_patch_from_updates(
@@ -284,6 +284,32 @@ def _hard_constraint_decision(
         policy,
         "passthrough",
     )
+
+
+def _resolve_pre_scorer(
+    *,
+    constraint: HardConstraint | None,
+    lease: Lease | None,
+    access_type: AccessType,
+) -> tuple[PolicyDecision, str | None, HardConstraintOutcome] | None:
+    """Run the pre-scorer half of the approval cascade.
+
+    Returns (decision, lease_label, outcome) when a constraint or lease
+    determines the decision; returns None when the cascade should fall
+    through to the scorer. Outcome is "deny" / "check_in" / "allow" for
+    hard constraints, "lease" for an active lease grant.
+
+    Stage-specific side effects (which list to append to, prompt flags, etc.)
+    stay at the call site — this helper only shares the constraint+lease
+    branching that both read and apply stages perform identically.
+    """
+    if constraint is not None:
+        decision, lease_label, outcome = _hard_constraint_decision(constraint, access_type)
+        if outcome != "passthrough":
+            return decision, lease_label, outcome
+    if lease is not None:
+        return _lease_decision(lease, access_type), lease.lease_type, "lease"
+    return None
 
 
 def _auto_read_user_decision(

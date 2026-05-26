@@ -70,7 +70,7 @@ class SAConfig:
     model_id: str
     autonomy_mode: AutonomyMode = "balanced"
     aws_region: str = field(default_factory=default_region)
-    max_tokens: int = 2500
+    max_tokens: int = 8000
     temperature: float = 0.0
     lease_ttl_hours: int = 72
     scope_budget_files: int = 12
@@ -93,7 +93,7 @@ class SAConfig:
             model_id=data["model_id"],
             autonomy_mode=normalize_autonomy_mode(data.get("autonomy_mode", "balanced")),
             aws_region=data.get("aws_region", default_region()),
-            max_tokens=int(data.get("max_tokens", 2500)),
+            max_tokens=int(data.get("max_tokens", 8000)),
             temperature=float(data.get("temperature", 0.0)),
             lease_ttl_hours=int(data.get("lease_ttl_hours", 72)),
             scope_budget_files=int(data.get("scope_budget_files", 12)),

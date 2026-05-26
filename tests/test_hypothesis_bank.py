@@ -268,5 +268,112 @@ class BankIntegrationTests(unittest.TestCase):
         self.assertEqual(rows[0]["status"], "rejected")
 
 
+class FakeNoticerClient:
+    """Stand-in for AgentClient — returns canned JSON from `_call`."""
+    def __init__(self, payload: str) -> None:
+        self.payload = payload
+        self.calls = 0
+
+    def _call(self, session, max_tokens, temperature):
+        self.calls += 1
+        return self.payload
+
+
+class NoticerTests(unittest.TestCase):
+    def _seed_traces(self, db: TrustDB, repo: str, session: str, n: int) -> list[int]:
+        ids: list[int] = []
+        for i in range(n):
+            db.record_trace(
+                repo_root=repo,
+                session_id=session,
+                task="task",
+                stage="apply",
+                action_type="write_request",
+                file_path=f"a{i}.py",
+                change_type="logic",
+                diff_size=1,
+                blast_radius=1,
+                existing_lease=False,
+                lease_type=None,
+                prior_approvals=0,
+                prior_denials=0,
+                policy_action="proceed",
+                policy_score=1.0,
+                user_decision="approve",
+            )
+        rows = db.session_traces(repo, session)
+        return [int(r["id"]) for r in rows]
+
+    def test_noticer_drops_uncited_candidates(self):
+        from sc.hypothesis_bank import maybe_generate_llm_hypotheses
+        db, repo, session = _make_db()
+        self._seed_traces(db, repo, session, 5)
+        client = FakeNoticerClient(json.dumps([
+            {"driver": "uncited", "prompt": "P?", "rationale": "R", "evidence_trace_ids": []}
+        ]))
+        new = maybe_generate_llm_hypotheses(
+            trust_db=db, repo_root=repo, session_id=session,
+            session_summary=_summary(), turn_count=10, client=client,
+        )
+        self.assertEqual(new, [])
+
+    def test_noticer_drops_hallucinated_citations(self):
+        from sc.hypothesis_bank import maybe_generate_llm_hypotheses
+        db, repo, session = _make_db()
+        self._seed_traces(db, repo, session, 3)
+        client = FakeNoticerClient(json.dumps([
+            {"driver": "ghost", "prompt": "P?", "rationale": "R",
+             "evidence_trace_ids": [99999]}
+        ]))
+        new = maybe_generate_llm_hypotheses(
+            trust_db=db, repo_root=repo, session_id=session,
+            session_summary=_summary(), turn_count=10, client=client,
+        )
+        self.assertEqual(new, [])
+
+    def test_noticer_seeds_evidence_and_surfaces_immediately(self):
+        from sc.hypothesis_bank import maybe_generate_llm_hypotheses
+        db, repo, session = _make_db()
+        ids = self._seed_traces(db, repo, session, 5)
+        client = FakeNoticerClient(json.dumps([
+            {"driver": "novel_pattern", "prompt": "P?",
+             "rationale": "grounded in cited traces",
+             "evidence_trace_ids": ids[:3]}
+        ]))
+        new = maybe_generate_llm_hypotheses(
+            trust_db=db, repo_root=repo, session_id=session,
+            session_summary=_summary(), turn_count=10, client=client,
+        )
+        self.assertEqual(len(new), 1)
+        with db._connect() as conn:
+            row = conn.execute(
+                "SELECT status, source, evidence_for FROM hypothesis_candidates WHERE id = ?",
+                (new[0],),
+            ).fetchone()
+        self.assertEqual(row["source"], "llm_generated")
+        self.assertEqual(row["status"], "ready_to_surface")
+        self.assertGreaterEqual(int(row["evidence_for"]), MIN_EVIDENCE)
+
+    def test_noticer_skips_when_driver_already_pending(self):
+        from sc.hypothesis_bank import maybe_generate_llm_hypotheses
+        db, repo, session = _make_db()
+        ids = self._seed_traces(db, repo, session, 5)
+        # Pre-seed a candidate with the driver the LLM will propose.
+        db.add_hypothesis_candidate(
+            repo_root=repo, session_id=session, driver="dup_driver",
+            source="rule_based", prompt="existing", rationale="r",
+            preference_json="{}",
+        )
+        client = FakeNoticerClient(json.dumps([
+            {"driver": "dup_driver", "prompt": "P?", "rationale": "R",
+             "evidence_trace_ids": ids[:2]}
+        ]))
+        new = maybe_generate_llm_hypotheses(
+            trust_db=db, repo_root=repo, session_id=session,
+            session_summary=_summary(), turn_count=10, client=client,
+        )
+        self.assertEqual(new, [])
+
+
 if __name__ == "__main__":
     unittest.main()

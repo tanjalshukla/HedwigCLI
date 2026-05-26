@@ -1,6 +1,27 @@
 from __future__ import annotations
 
-"""Read-request evaluation and enforcement for `hw run`."""
+"""Read-request evaluation and enforcement for `hw run`.
+
+Mirrors the apply-stage cascade in ``apply_stage.py``: hard constraints →
+leases → PolicyScorer → preference override. The shared steps are factored
+into ``helpers._resolve_pre_scorer`` (constraints + leases) and
+``helpers._policy_decision_for_file`` (scorer); both stages call the same
+helpers in the same order. What differs by stage and is intentional:
+
+* **Thresholds** — reads use a more permissive ``proceed_threshold`` since
+  reading a file cannot break anything (see line ~180).
+* **Lease tables** — ``read_leases`` is separate from ``leases``; the
+  former is a read-only grant, the latter is a write grant.
+* **No regret corrections, no hypothesis pipeline, no classifier updates** —
+  those live only in the apply stage. Read decisions feed traces but
+  don't drive learning beyond threshold history.
+* **UI surface** — read prompts are simpler (``a``/``r``/``d``) and never
+  touch the apply check-in flow.
+
+Unifying the two cascades into one parameterized module is parked
+post-conference (see BRAINSTORM.md): the shared work already lives in
+``helpers``, and the remaining differences are all intentional.
+"""
 
 import time
 from pathlib import Path
@@ -23,9 +44,9 @@ from .helpers import (
     _append_file_context,
     _auto_read_user_decision,
     _constraint_index,
-    _hard_constraint_decision,
-    _lease_decision,
     _policy_decision_for_file,
+    _resolve_pre_scorer,
+    infer_session_intensity,
 )
 from .traces import _policy_checkin_initiators, _record_traces
 from .ui import (
@@ -98,9 +119,22 @@ def _process_read_request(
         raise typer.Exit(code=1)
 
     missing_reads = [path for path in requested if not (repo_root / path).exists()]
-    if missing_reads and not _confirm_read_missing(missing_reads):
-        print("[yellow]Read request denied.[/yellow]")
-        raise typer.Exit(code=0)
+    if missing_reads:
+        # The agent asked to read a path that doesn't exist (typically a
+        # hallucinated filename). Don't bother the developer — bounce the
+        # mistake back to the agent with the file tree so it self-corrects.
+        from ..prompt_builder import _repo_file_tree
+        tree = _repo_file_tree(repo_root_str, max_files=80)
+        session.add_user(
+            "Your last read request listed paths that do not exist in this "
+            "repository: "
+            + ", ".join(missing_reads)
+            + ".\n\nReal repository file tree (use these exact paths — do not "
+            "invent paths):\n"
+            + tree
+            + "\n\nRetry the read request using only paths from the tree above."
+        )
+        return
 
     active_reads = trust_db.active_read_leases(repo_root_str, requested)
     read_constraints = _constraint_index(trust_db, repo_root_str, requested, access_type="read")
@@ -122,12 +156,12 @@ def _process_read_request(
     profile = autonomy_profile(config)
 
     # Session intensity — consumed by adjusted_policy_thresholds so that active
-    # sessions tighten oversight on reads too (not only writes).
-    from ..preference_inference import infer_coding_mode, infer_user_persona, summarize_session
-    _session_rows = [dict(r) for r in trust_db.session_traces(repo_root_str, run_session_id)]
-    _session_summary = summarize_session(_session_rows)
-    _session_persona = infer_user_persona(_session_summary)
-    _coding_mode = infer_coding_mode(_session_summary).value
+    # sessions tighten oversight on reads too (not only writes). Shared with
+    # the apply stage via helpers.infer_session_intensity to keep the signal
+    # in lockstep across the two cascades.
+    _session_persona, _coding_mode, _session_rows = infer_session_intensity(
+        trust_db, repo_root_str, run_session_id
+    )
 
     # Files the developer explicitly remembered (r / approve_and_remember) for
     # reading this session. Plain `a` approvals don't auto-carry forward — the
@@ -147,25 +181,20 @@ def _process_read_request(
         read_histories[path] = history
 
         constraint = trust_db.strongest_constraint(repo_root_str, path, access_type="read")
-        if constraint is not None:
-            decision, lease_label, outcome = _hard_constraint_decision(constraint, "read")
-            if outcome != "passthrough":
-                read_leases[path] = lease_label
-                read_policies[path] = decision
-                if outcome == "deny":
-                    denied_reads.append(path)
-                elif outcome == "check_in":
-                    needs_prompt.append(path)
-                elif outcome == "allow":
-                    auto_reads.append(path)
-                continue
-
         lease = active_reads.get(path)
-        read_leases[path] = lease.lease_type if lease else None
-        if lease is not None:
-            read_policies[path] = _lease_decision(lease, "read")
-            auto_reads.append(path)
+        pre = _resolve_pre_scorer(constraint=constraint, lease=lease, access_type="read")
+        if pre is not None:
+            decision, lease_label, outcome = pre
+            read_leases[path] = lease_label
+            read_policies[path] = decision
+            if outcome == "deny":
+                denied_reads.append(path)
+            elif outcome == "check_in":
+                needs_prompt.append(path)
+            elif outcome in ("allow", "lease"):
+                auto_reads.append(path)
             continue
+        read_leases[path] = None
 
         # Already approved for reading this session — don't ask again.
         if path in _session_approved_reads:
@@ -191,12 +220,12 @@ def _process_read_request(
                 file_path=path,
                 model_checkin_approval_rate=model_checkin_rate,
                 model_checkin_total=model_checkin_total,
-                session_intensity=_session_persona.value,
+                session_intensity=_session_persona,
                 coding_mode=_coding_mode,
             )
             read_risk = RiskSignals(
                 change_pattern="read",
-                blast_radius=len(requested),
+                blast_radius=1,  # reads don't have blast radius in the write sense
                 is_security_sensitive=False,
                 is_new_file=False,
                 diff_size=0,
@@ -205,7 +234,7 @@ def _process_read_request(
                 history=history,
                 risk=read_risk,
                 recent_denials=recent_read_denials,
-                files_in_action=len(requested),
+                files_in_action=1,  # multi-file reads are not multi-file writes
                 verification_failure_rate=None,
                 model_confidence_avg=None,
                 model_confidence_samples=0,
@@ -290,8 +319,9 @@ def _process_read_request(
     auto_without_lease = [path for path in auto_reads if read_leases[path] is None]
     if needs_prompt:
         prompt_started = time.time()
-        approved, remembered, read_feedback = _prompt_read(needs_prompt, request.reason)
+        approved, remember_paths, read_feedback = _prompt_read(needs_prompt, request.reason)
         response_time_ms = int((time.time() - prompt_started) * 1000)
+        remembered = bool(remember_paths)
         trust_db.record_decision(
             repo_root_str,
             task,
@@ -341,8 +371,13 @@ def _process_read_request(
             raise typer.Exit(code=0)
 
         trust_db.add_permanent_read_leases(repo_root_str, auto_without_lease, source="policy_auto")
-        if remembered:
-            prompt_grants = [path for path in needs_prompt if read_constraints.get(path) is None]
+        if remember_paths:
+            # Per-file remember: only paths the developer explicitly toggled
+            # become permanent leases (and only if not already constrained).
+            prompt_grants = [
+                path for path in remember_paths
+                if read_constraints.get(path) is None
+            ]
             trust_db.add_permanent_read_leases(repo_root_str, prompt_grants, source="user_permanent")
 
         _record_auto_read_traces(

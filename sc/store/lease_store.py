@@ -63,11 +63,11 @@ class LeaseStoreMixin:
         rows: Iterable[sqlite3.Row],
         lease_type: str,
     ) -> dict[str, "Lease"]:
+        from ..trust_db import Lease
         best: dict[str, "Lease"] = {}
         for row in rows:
             file_path = str(row["file_path"])
             expires_at = row["expires_at"]
-            from ..trust_db import Lease
             candidate = Lease(file_path, expires_at, lease_type)
             existing = best.get(file_path)
             if existing is None:

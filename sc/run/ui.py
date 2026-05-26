@@ -58,7 +58,7 @@ _MODEL_STATUS_PHRASES: dict[str, tuple[str, ...]] = {
 
 # Thread-local current stream so callers can push thoughts from anywhere
 # inside a `with _model_status(...):` block.
-_ACTIVE_STATUS: dict[str, object] = {"status": None}
+_ACTIVE_STATUS: dict[str, object] = {"status": None, "last_push_at": 0.0}
 
 
 def push_thought(thought: str) -> None:
@@ -68,7 +68,13 @@ def push_thought(thought: str) -> None:
     `_model_status` context, or during tests). Useful for emitting
     context-specific reasoning from decision paths — "no hard constraint
     matched", "scorer says 0.63", etc.
+
+    The spinner's background phrase rotation respects a recent push and
+    will not clobber it for a few seconds — otherwise pushed thoughts would
+    flash and vanish during long streaming calls.
     """
+    import time as _time
+
     from .theme import PALETTE
 
     status = _ACTIVE_STATUS.get("status")
@@ -79,9 +85,29 @@ def push_thought(thought: str) -> None:
             f"[{PALETTE['info_bold']}]hedwig[/{PALETTE['info_bold']}]  "
             f"[{PALETTE['meta_italic']}]{thought}[/{PALETTE['meta_italic']}]"
         )
+        _ACTIVE_STATUS["last_push_at"] = _time.time()
     except Exception:
         # Status may have been torn down between the check and the update.
         pass
+
+
+def announce_above_spinner(line: str) -> None:
+    """Print a permanent line above the active spinner, then resume spinning.
+
+    Used to surface durable progress (e.g. "→ writing models.py") that should
+    persist as an audit trail even after the spinner is torn down. No-ops if
+    there is no active spinner — falls back to a normal print.
+    """
+    status = _ACTIVE_STATUS.get("status")
+    if status is None:
+        _CONSOLE.print(line)
+        return
+    try:
+        # Rich Status / Live exposes .console.print which prints above the
+        # transient spinner without disturbing it.
+        status.console.print(line)
+    except Exception:
+        _CONSOLE.print(line)
 
 
 @contextmanager
@@ -105,11 +131,16 @@ def _model_status(stage: str, initial_thought: str | None = None):
 
     def _animate() -> None:
         # Slower rotation gives each thought ~1.6s of dwell time, which reads
-        # as thoughtful rather than frantic. The rotation keeps going even
-        # when the call is long — so for longer Bedrock calls the whole
-        # phrase set gets exercised before looping.
+        # as thoughtful rather than frantic. If a caller has recently pushed
+        # a custom thought via push_thought(), let it dwell instead of
+        # clobbering it with the next rotation phrase.
+        import time as _time
+
         index = 1
         while not stop_event.wait(1.6):
+            last_push = float(_ACTIVE_STATUS.get("last_push_at") or 0.0)
+            if last_push and (_time.time() - last_push) < 4.0:
+                continue
             phrase = phrases[index % len(phrases)]
             status.update(
                 f"[{PALETTE['info_bold']}]hedwig[/{PALETTE['info_bold']}]  "
@@ -131,11 +162,22 @@ def _model_status(stage: str, initial_thought: str | None = None):
 
 def _render_file_list(files: list[str]) -> None:
     for path in files:
-        print(f"  [dim]·[/dim] {path}")
+        print(f"  [{PALETTE['info']}]·[/{PALETTE['info']}] {path}")
 
 
 def _prompt_optional_feedback(prompt_text: str) -> str | None:
-    note = Prompt.ask(prompt_text, default="").strip()
+    # prompt_toolkit handles backspace across wrapped lines correctly,
+    # but it redraws its own line — pre-printing the label via Rich gets
+    # clobbered and the cursor lands on top of the label. So strip Rich
+    # markup and pass the bare label to prompt_toolkit as the prompt arg.
+    bare = re.sub(r"\[/?[^\]]+\]", "", prompt_text).strip()
+    try:
+        from prompt_toolkit import prompt as _pt_prompt
+        note = _pt_prompt(f"{bare} ").strip()
+    except Exception:
+        from rich.console import Console as _Console
+        _Console().print(f"{prompt_text} ", end="")
+        note = Prompt.ask("", default="").strip()
     return note or None
 
 
@@ -154,14 +196,15 @@ def _prompt_approval(
         print(f"[{PALETTE['info_bold']}]{primary}[/{PALETTE['info_bold']}]")
         if len(files) > 1:
             _render_file_list(files[1:])
-    if pause_reason:
-        print(f"[white]{pause_reason}[/white]")
+    # pause_reason intentionally not printed here — _render_policy_snapshot
+    # already shows the rationale inline on each file's line. Re-printing
+    # before the prompt was duplicate noise.
     choices = ["a", "d"]
     if allow_remember:
         choices.insert(1, "r")
         prompt = (
             f"[{PALETTE['approve_bold']}]a[/{PALETTE['approve_bold']}] approve  "
-            f"[{PALETTE['learn']}]r[/{PALETTE['learn']}] approve · don't ask again  "
+            f"[{PALETTE['learn']}]r[/{PALETTE['learn']}] approve+remember  "
             f"[{PALETTE['deny_bold']}]d[/{PALETTE['deny_bold']}] deny"
         )
     else:
@@ -169,7 +212,8 @@ def _prompt_approval(
             f"[{PALETTE['approve_bold']}]a[/{PALETTE['approve_bold']}] approve  "
             f"[{PALETTE['deny_bold']}]d[/{PALETTE['deny_bold']}] deny"
         )
-    response = Prompt.ask(prompt, choices=choices)
+    response = Prompt.ask(prompt, choices=choices, case_sensitive=False, show_choices=False)
+    response = response.strip().lower()
     if response == "a":
         return True, False, None
     if response == "r":
@@ -183,44 +227,93 @@ def _prompt_approval(
     return False, False, note
 
 
-def _prompt_read(files: list[str], reason: str | None) -> tuple[bool, bool, str | None]:
-    print()
-    print(panel_title("approve_request", "read"))
+def _prompt_read(
+    files: list[str],
+    reason: str | None,
+) -> tuple[bool, list[str], str | None]:
+    """Prompt the developer to approve a batch of read requests.
+
+    Returns ``(approved, remember_paths, denial_feedback)``:
+    * ``approved`` — True if the batch was approved (any subset of files
+      may have been marked "remember"; the apply still proceeds for all).
+    * ``remember_paths`` — paths the developer chose to grant a permanent
+      read lease for. Subset of ``files``. Empty when nothing was marked.
+    * ``denial_feedback`` — optional free-text reason captured on deny.
+
+    For a single file, the prompt collapses to ``a / r / d``. For
+    multiple files, ``r`` opens a per-file toggle so different files can
+    have different lease decisions in one batch.
+    """
     if reason:
-        print(f"[{PALETTE['meta']}]Reason:[/{PALETTE['meta']}] {reason}")
-    print(f"[{PALETTE['meta']}]Agent requests to read:[/{PALETTE['meta']}]")
-    _render_file_list(files)
-    print()
+        short = reason.strip().split("\n", 1)[0]
+        words = short.split()
+        if len(words) > 10:
+            short = " ".join(words[:10]) + "…"
+        print(f"[{PALETTE['meta']}]{short}[/{PALETTE['meta']}]")
+
+    if len(files) == 1:
+        response = Prompt.ask(
+            f"[{PALETTE['approve_bold']}]a[/{PALETTE['approve_bold']}] approve  "
+            f"[{PALETTE['learn']}]r[/{PALETTE['learn']}] approve+remember  "
+            f"[{PALETTE['deny_bold']}]d[/{PALETTE['deny_bold']}] deny",
+            choices=["a", "r", "d"],
+            case_sensitive=False,
+            show_choices=False,
+        )
+        response = response.strip().lower()
+        if response == "a":
+            return True, [], None
+        if response == "r":
+            return True, list(files), None
+        note = _prompt_optional_feedback(
+            f"[{PALETTE['meta']}]Optional reason for denying this read[/{PALETTE['meta']}]"
+        )
+        return False, [], note
+
+    # Multi-file path. 'a' approves all (no remember), 'r' approves all and
+    # remembers all (one-shot shortcut for trust-everything), 'p' approves
+    # all and lets the developer pick which subset to remember per file,
+    # 'd' denies all.
     response = Prompt.ask(
-        f"[{PALETTE['approve_bold']}]a[/{PALETTE['approve_bold']}] approve  "
-        f"[{PALETTE['learn']}]r[/{PALETTE['learn']}] always allow reads to this file  "
+        f"[{PALETTE['approve_bold']}]a[/{PALETTE['approve_bold']}] approve all  "
+        f"[{PALETTE['learn']}]r[/{PALETTE['learn']}] approve+remember all  "
+        f"[{PALETTE['learn']}]p[/{PALETTE['learn']}] pick which to remember  "
         f"[{PALETTE['deny_bold']}]d[/{PALETTE['deny_bold']}] deny",
-        choices=["a", "r", "d"],
+        choices=["a", "r", "p", "d"],
+        case_sensitive=False,
+        show_choices=False,
     )
+    response = response.strip().lower()
     if response == "a":
-        return True, False, None
+        return True, [], None
     if response == "r":
-        return True, True, None
-    note = _prompt_optional_feedback(
-        f"[{PALETTE['meta']}]Optional reason for denying this read[/{PALETTE['meta']}]"
-    )
-    return False, False, note
+        return True, list(files), None
+    if response == "d":
+        note = _prompt_optional_feedback(
+            f"[{PALETTE['meta']}]Optional reason for denying this read[/{PALETTE['meta']}]"
+        )
+        return False, [], note
+    # 'p' — per-file toggle. Default is 'no remember' to match the cautious option.
+    print(f"[{PALETTE['meta']}]Mark each file to remember (y) or just approve once (N).[/{PALETTE['meta']}]")
+    remember: list[str] = []
+    for path in files:
+        ans = Prompt.ask(
+            f"  [{PALETTE['info']}]{path}[/{PALETTE['info']}] · remember?",
+            choices=["y", "n"],
+            default="n",
+            case_sensitive=False,
+            show_choices=False,
+            show_default=False,
+        )
+        if ans.strip().lower() == "y":
+            remember.append(path)
+    return True, remember, None
 
 
 def _render_intent_summary(declaration: IntentDeclaration) -> None:
     print()
-    print(f"[{PALETTE['info_bold']}]Task:[/{PALETTE['info_bold']}] {declaration.task_summary}")
-    # Potential deviations are high-signal — show immediately after the task.
-    if declaration.potential_deviations:
-        print(f"[{PALETTE['attention']}]Potential deviations:[/{PALETTE['attention']}]")
-        _render_file_list(declaration.potential_deviations)
-    if declaration.notes:
-        print(f"[{PALETTE['meta']}]Plan:[/{PALETTE['meta']}] {declaration.notes}")
-    if declaration.requirements_covered:
-        print(f"[{PALETTE['meta']}]Requirements covered:[/{PALETTE['meta']}]")
-        _render_file_list(declaration.requirements_covered)
-    # expected_change_types is internal scoring vocabulary — not shown to user.
-    print(f"[{PALETTE['meta']}]Planned files:[/{PALETTE['meta']}]")
+    plan_text = declaration.notes or declaration.task_summary
+    print(f"[{PALETTE['info_bold']}]Plan:[/{PALETTE['info_bold']}] {plan_text}")
     _render_file_list(declaration.planned_files)
 
 
@@ -295,11 +388,8 @@ _ACTION_LABELS: dict[str, str] = {
     "proceed_flag": "approved (flagged)",
 }
 
-_APPROVALS_RE = re.compile(r"([\d.]+)\s*weighted approvals")
-
-
-def _user_friendly_reason(policy: PolicyDecision) -> str:
-    """Translate the primary policy reason into plain language."""
+def _user_friendly_reason(policy: "PolicyDecision") -> str:
+    """Translate the primary policy reason into plain language (used for rationale summaries)."""
     if not policy.reasons:
         return ""
     for reason in policy.reasons:
@@ -316,10 +406,8 @@ def _user_friendly_reason(policy: PolicyDecision) -> str:
         return "permanent access granted"
     if first.startswith("adaptive policy disabled"):
         return "adaptive scoring off — checking in by default"
-    match = _APPROVALS_RE.search(first)
-    if match:
-        count = int(float(match.group(1)))
-        return f"approved {count} times before" if count else "no prior approvals"
+    if "+history:" in first:
+        return "seen before"
     if policy.action == "check_in" and policy.score == 0.0:
         return "first time accessing this file"
     for reason in policy.reasons:
@@ -331,10 +419,28 @@ def _user_friendly_reason(policy: PolicyDecision) -> str:
             return "large change"
         if "-risk:interface change" in reason:
             return "API/interface change"
-    for reason in policy.reasons:
-        if "-risk:multi-file blast radius" in reason or "-risk:large multi-file action" in reason:
-            return "affects multiple files"
     return ""
+
+
+def _trust_dot(policy: "PolicyDecision") -> str:
+    """Colored confidence dot based on policy score.
+
+    ● green  — high trust (score ≥ 0.8 or hard allow/lease)
+    ● yellow — some history, borderline (0.3 ≤ score < 0.8)
+    ◌ grey   — no signal / cold start
+    ● red    — blocked or security flag
+    """
+    reasons_text = " ".join(policy.reasons)
+    if any(s in reasons_text for s in ("always_deny", "security sensitive")):
+        return f"[{PALETTE['deny_bold']}]●[/{PALETTE['deny_bold']}]"
+    if any(s in reasons_text for s in ("always_allow", "active read lease", "active write lease")):
+        return f"[{PALETTE['approve']}]●[/{PALETTE['approve']}]"
+    score = policy.score or 0.0
+    if score >= 0.8:
+        return f"[{PALETTE['approve']}]●[/{PALETTE['approve']}]"
+    if score >= 0.3:
+        return f"[{PALETTE['info']}]●[/{PALETTE['info']}]"
+    return f"[{PALETTE['meta']}]◌[/{PALETTE['meta']}]"
 
 
 def _render_policy_snapshot(
@@ -379,18 +485,11 @@ def _render_policy_snapshot(
         label = _ACTION_LABELS.get(policy.action, policy.action)
         color = action_colors.get(policy.action, PALETTE["meta"])
         icon = action_icons.get(policy.action, "·")
-        reason = _user_friendly_reason(policy)
-        if reason:
-            print(
-                f"  [{color}]{icon}[/{color}] {path}  "
-                f"[{color}]{label}[/{color}]  "
-                f"[{PALETTE['meta']}]({reason})[/{PALETTE['meta']}]"
-            )
-        else:
-            print(
-                f"  [{color}]{icon}[/{color}] {path}  "
-                f"[{color}]{label}[/{color}]"
-            )
+        dot = _trust_dot(policy)
+        print(
+            f"  [{color}]{icon}[/{color}] {path}  "
+            f"[{color}]{label}[/{color}]  {dot}"
+        )
 
 
 def _show_system_prompt(phase: WorkflowPhase, prompt_text: str) -> None:

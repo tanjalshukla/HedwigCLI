@@ -87,6 +87,30 @@ def doctor(
         print(str(exc))
         raise typer.Exit(code=2)
 
+    # Round-trip the noticer prompt so the LLM hypothesis path doesn't
+    # silently fail at the booth (malformed JSON → empty hypothesis bank).
+    try:
+        from ..session import ClaudeSession as _S
+        import json as _json
+        smoke = _S(system_prompt="You are a behavioral-pattern analyst. Return JSON only.")
+        smoke.add_user(
+            "Return a JSON array containing one object with driver=\"smoke\". "
+            "Wrap nothing else around it that wouldn't be valid JSON to extract."
+        )
+        raw = client._call(smoke, max_tokens=200, temperature=0)
+        # Use the same string-aware bracket-balanced extractor the noticer
+        # uses, so the smoke test passes whenever the real path would.
+        from ..hypothesis_bank import _extract_json_array
+        extracted = _extract_json_array(raw)
+        if extracted is None:
+            raise ValueError(f"no JSON array in response: {raw!r}")
+        parsed = _json.loads(extracted)
+        assert isinstance(parsed, list) and parsed and parsed[0].get("driver") == "smoke"
+        print("[bold green]Noticer round-trip OK[/bold green]")
+    except Exception as exc:
+        print("[yellow]Noticer round-trip failed[/yellow] — LLM hypotheses may not surface.")
+        print(str(exc))
+
 
 def ask(
     question: str = typer.Argument(..., help="Question for the model."),

@@ -318,6 +318,7 @@ def preference_to_dict(pref: Preference) -> dict[str, object]:
             "min_recent_approvals": pref.condition.min_recent_approvals,
             "session_position_min": pref.condition.session_position_min,
             "max_uncertainty_band": pref.condition.max_uncertainty_band,
+            "min_recent_verification_failures": pref.condition.min_recent_verification_failures,
         },
         "action": pref.action.value,
         "scope": {
@@ -371,6 +372,7 @@ def preference_from_dict(data: dict[str, object]) -> Preference:
             min_recent_approvals=c.get("min_recent_approvals"),
             session_position_min=c.get("session_position_min"),
             max_uncertainty_band=c.get("max_uncertainty_band"),
+            min_recent_verification_failures=c.get("min_recent_verification_failures"),
         ),
         action=PreferenceAction(data.get("action", "full_checkin")),
         scope=Scope(
@@ -575,3 +577,78 @@ try:
     from .features import RiskSignals  # noqa: F401 — re-export
 except ImportError:
     pass
+
+
+# ---------------------------------------------------------------------------
+# Bridge: AutonomyPreferences (legacy coarse toggles) → Preference (5-dim).
+# Lives here because the output schema is the 5-dim taxonomy. The legacy
+# AutonomyPreferences type is imported only for typing.
+# ---------------------------------------------------------------------------
+
+# Topic → CHANGE_PATTERNS entries that carry the same semantic.
+# "security" maps via requires_security_sensitive=True instead of a pattern.
+_TOPIC_TO_CHANGE_PATTERNS: dict[str, tuple[str, ...]] = {
+    "api": ("api_change",),
+    "schema": ("data_model_change",),
+    "config": ("config_change",),
+    "test": ("test_generation",),
+    "security": (),
+    "signature": (),
+    "architecture": (),
+    "deployment": (),
+}
+
+
+def autonomy_prefs_to_preferences(prefs) -> "tuple[Preference, ...]":
+    """Convert an AutonomyPreferences into equivalent Preference objects.
+
+    One-way bridge. AutonomyPreferences continues to drive the threshold-shift
+    path; the returned Preferences feed the post-scorer override path so both
+    systems contribute to force_action_from_preferences().
+
+    Mapping:
+    - prefer_fewer_checkins=True   → AUTO_APPLY (path-scoped if scoped_paths set,
+                                     otherwise repo-scoped).
+    - allowed_checkin_topics       → one FULL_CHECKIN per topic, repo-scoped.
+                                     Trigger uses change_patterns, except
+                                     "security" which uses requires_security_sensitive.
+    - skip_low_risk_plan_checkpoint → not represented (plan-stage only).
+    """
+    lc = Lifecycle(provenance="inferred", confidence=1.0)
+    result: list[Preference] = []
+
+    if prefs.prefer_fewer_checkins:
+        scope = (
+            Scope(level="path", path_globs=prefs.scoped_paths)
+            if prefs.scoped_paths
+            else Scope(level="repo")
+        )
+        result.append(
+            Preference(
+                trigger=Trigger(stages=("apply",)),
+                condition=Condition(),
+                action=PreferenceAction.AUTO_APPLY,
+                scope=scope,
+                lifecycle=lc,
+            )
+        )
+
+    for topic in prefs.allowed_checkin_topics:
+        change_patterns = _TOPIC_TO_CHANGE_PATTERNS.get(topic, ())
+        is_security = topic == "security"
+        trigger = Trigger(
+            change_patterns=change_patterns,
+            requires_security_sensitive=True if is_security else None,
+            stages=("apply",),
+        )
+        result.append(
+            Preference(
+                trigger=trigger,
+                condition=Condition(),
+                action=PreferenceAction.FULL_CHECKIN,
+                scope=Scope(level="repo"),
+                lifecycle=lc,
+            )
+        )
+
+    return tuple(result)

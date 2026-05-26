@@ -185,34 +185,45 @@ class PrefStoreMixin:
         prompt: str,
         rationale: str,
         preference_json: str,
+        min_evidence: int | None = None,
     ) -> int:
-        """Insert a new pending candidate. Returns its id."""
+        """Insert a new pending candidate. Returns its id.
+
+        ``min_evidence`` may raise the surfacing floor for this candidate
+        (never lowers it below the global MIN_EVIDENCE). NULL = use global.
+        """
         now = int(time.time())
         with self._connect() as conn:
             cur = conn.execute(
                 """
                 INSERT INTO hypothesis_candidates
                     (repo_root, session_id, driver, source, prompt, rationale,
-                     preference_json, evidence_for, evidence_against, status, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0, 'pending', ?)
+                     preference_json, evidence_for, evidence_against, status,
+                     created_at, min_evidence)
+                VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0, 'pending', ?, ?)
                 """,
-                (repo_root, session_id, driver, source, prompt, rationale, preference_json, now),
+                (repo_root, session_id, driver, source, prompt, rationale,
+                 preference_json, now, min_evidence),
             )
         return int(cur.lastrowid)
 
     def get_pending_hypothesis_candidates(
         self, repo_root: str, session_id: str
     ) -> list[sqlite3.Row]:
+        # Scoped to repo, not session: hypotheses are repo-level (so seeded
+        # candidates from the seed_demo session, and candidates from prior
+        # live sessions, can both accumulate evidence in the current session).
+        del session_id
         with self._connect() as conn:
             return conn.execute(
                 """
                 SELECT id, driver, source, prompt, rationale, preference_json,
-                       evidence_for, evidence_against, status
+                       evidence_for, evidence_against, status, min_evidence
                 FROM hypothesis_candidates
-                WHERE repo_root = ? AND session_id = ? AND status = 'pending'
+                WHERE repo_root = ? AND status = 'pending'
                 ORDER BY created_at ASC
                 """,
-                (repo_root, session_id),
+                (repo_root,),
             ).fetchall()
 
     def update_hypothesis_evidence(
@@ -243,15 +254,21 @@ class PrefStoreMixin:
     def candidate_driver_exists(
         self, repo_root: str, session_id: str, driver: str
     ) -> bool:
-        """True if a candidate with this driver is already in the bank for this session."""
+        """True if a candidate with this driver is already in the bank for this repo.
+
+        Repo-scoped to match get_pending_hypothesis_candidates: the bank's
+        invariant is "no duplicate drivers per repo," not per session.
+        Session_id retained in signature for legacy callers.
+        """
+        del session_id
         with self._connect() as conn:
             row = conn.execute(
                 """
                 SELECT 1 FROM hypothesis_candidates
-                WHERE repo_root = ? AND session_id = ? AND driver = ?
-                  AND status NOT IN ('pruned', 'rejected', 'declined')  -- legacy: 'pruned' kept for old DBs
+                WHERE repo_root = ? AND driver = ?
+                  AND status NOT IN ('pruned', 'rejected', 'declined')
                 LIMIT 1
                 """,
-                (repo_root, session_id, driver),
+                (repo_root, driver),
             ).fetchone()
         return row is not None

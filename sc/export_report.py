@@ -373,6 +373,88 @@ def _pushback_distribution(trust_db: TrustDB, repo_root: str) -> str:
     return "".join(out)
 
 
+_HYPO_STATUS_LABEL = {
+    "pending": ("Watching", "#7a6f00", "#fff8c5"),
+    "ready_to_surface": ("Surfaced", "#0a5d2c", "#cdf2d9"),
+    "confirmed": ("Confirmed", "#0a5d2c", "#a8e6c1"),
+    "declined": ("Declined", "#7a1f1f", "#fadcdc"),
+    "rejected": ("Rejected by evidence", "#7a1f1f", "#fadcdc"),
+}
+
+_HYPO_SOURCE_LABEL = {
+    "rule_based": ("matched a known pattern", "#0e6b8a"),
+    "llm_generated": ("spotted by Hedwig", "#8a2c8a"),
+}
+
+
+def _hypothesis_bank_section(trust_db: TrustDB, repo_root: str) -> str:
+    """Render the hypothesis bank grouped by source.
+
+    The terminal keeps things short. Researchers and developers who want
+    full provenance — citations, evidence ratios, status — read the bank
+    here. Mirrors `hw observe hypotheses` but with full prompts/rationale.
+    """
+    with trust_db._connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT id, session_id, driver, source, prompt, rationale,
+                   evidence_for, evidence_against, status, created_at
+            FROM hypothesis_candidates
+            WHERE repo_root = ?
+            ORDER BY created_at DESC
+            """,
+            (repo_root,),
+        ).fetchall()
+
+    if not rows:
+        return '<p class="empty">No hypotheses generated for this repo yet.</p>'
+
+    n_rule = sum(1 for r in rows if r["source"] == "rule_based")
+    n_llm = sum(1 for r in rows if r["source"] == "llm_generated")
+    n_surfaced = sum(1 for r in rows if r["status"] in ("ready_to_surface", "confirmed"))
+
+    parts: list[str] = []
+    parts.append(
+        "<p style='color:#666; font-size:14px; margin-top:0;'>"
+        f"<strong>{len(rows)}</strong> total candidates · "
+        f"<strong>{n_rule}</strong> matched a known pattern · "
+        f"<strong>{n_llm}</strong> spotted by Hedwig · "
+        f"<strong>{n_surfaced}</strong> surfaced for confirmation."
+        "</p>"
+    )
+    parts.append("<table style='font-size:13px;'>")
+    parts.append(
+        "<thead><tr>"
+        "<th>Origin</th><th>Driver</th><th>Status</th>"
+        "<th>Evidence</th><th>Question to developer</th><th>Rationale</th>"
+        "</tr></thead><tbody>"
+    )
+    for r in rows:
+        src = r["source"] or ""
+        src_label, src_color = _HYPO_SOURCE_LABEL.get(src, (src or "—", "#666"))
+        status_label, fg, bg = _HYPO_STATUS_LABEL.get(
+            r["status"] or "", (r["status"] or "—", "#444", "#eee")
+        )
+        ef = int(r["evidence_for"])
+        ea = int(r["evidence_against"])
+        total = ef + ea
+        ev = f"{ef}/{total}" if total else "0/0"
+        confidence = f" · {ef / total:.0%}" if total else ""
+        parts.append(
+            "<tr>"
+            f"<td><span style='color:{src_color}; font-weight:600;'>{_esc(src_label)}</span></td>"
+            f"<td><code>{_esc(r['driver'])}</code></td>"
+            f"<td><span style='background:{bg}; color:{fg}; padding:2px 8px; "
+            f"border-radius:10px; font-size:12px; font-weight:600;'>{_esc(status_label)}</span></td>"
+            f"<td class='num'>{ev}{confidence}</td>"
+            f"<td>{_esc(r['prompt'])}</td>"
+            f"<td style='color:#555; font-size:12.5px;'>{_esc(r['rationale'])}</td>"
+            "</tr>"
+        )
+    parts.append("</tbody></table>")
+    return "".join(parts)
+
+
 def generate_html_report(trust_db: TrustDB, repo_root: str) -> str:
     """Return the full HTML report as a single string."""
     now = datetime.now().strftime("%Y-%m-%d %H:%M")
@@ -416,6 +498,21 @@ def generate_html_report(trust_db: TrustDB, repo_root: str) -> str:
         "prior failure in the session predicts failure reports at 3.4× baseline.</p>"
     )
     parts.append(_trigger_firings_section(trust_db, repo_root))
+    parts.append("</div>")
+
+    # Hypothesis bank (rule-based + LLM noticer).
+    parts.append("<h2>Hypothesis bank</h2>")
+    parts.append("<div class='card'>")
+    parts.append(
+        "<p style='color:#666; font-size:14px; margin-top:0;'>"
+        "Each candidate is a guess about the developer's preferences, "
+        "backed by evidence from real interaction traces. Some come from "
+        "<strong style='color:#0e6b8a;'>known patterns</strong> the rule-based "
+        "generators flag; others are <strong style='color:#8a2c8a;'>spotted by "
+        "Hedwig</strong> reading the trace digest. Either way, nothing becomes "
+        "a preference until the developer confirms.</p>"
+    )
+    parts.append(_hypothesis_bank_section(trust_db, repo_root))
     parts.append("</div>")
 
     # Learned coefficient drift.

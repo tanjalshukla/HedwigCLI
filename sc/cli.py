@@ -23,6 +23,7 @@ from .commands.admin import (
 from .commands.observe import (
     clear_traces,
     export,
+    hypotheses,
     leases,
     personas,
     preferences,
@@ -107,6 +108,7 @@ rules_app.command("guidelines-clear")(guidelines_clear)
 observe_app.command("leases")(leases)
 observe_app.command("traces")(traces)
 observe_app.command("preferences")(preferences)
+observe_app.command("hypotheses")(hypotheses)
 observe_app.command("preferences-revoke")(preferences_revoke)
 observe_app.command("preferences-clear")(preferences_clear)
 observe_app.command("clear-traces")(clear_traces)

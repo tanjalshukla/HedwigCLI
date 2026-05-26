@@ -96,9 +96,12 @@ class PolicyClassifier:
     _calibrator: IsotonicRegression | None = None
     _calib_X: list[float] = None  # type: ignore[assignment]
     _calib_y: list[int] = None    # type: ignore[assignment]
-    # Trace IDs of regret events already applied to this classifier. Stored
-    # in-memory only (not persisted) so regrets are corrected at most once
-    # per session. Prevents O(N) re-application on every turn.
+    # Trace IDs of regret events already applied to this classifier. Persisted
+    # alongside the model so a regret is corrected exactly once across the
+    # repo's lifetime. The classifier is reloaded from SQLite every apply turn,
+    # so an in-memory-only set would reset between turns and re-apply the same
+    # negative gradient on every turn (inflating sample_count and skewing the
+    # learned scorer).
     _corrected_regret_ids: set[int] = None  # type: ignore[assignment]
 
     def __post_init__(self) -> None:
@@ -149,6 +152,21 @@ class PolicyClassifier:
         """True once enough real decisions have been incorporated."""
         return self.sample_count >= MIN_SAMPLES_FOR_LEARNED
 
+    def decide(
+        self,
+        pi: "PolicyInput",
+        proceed_threshold: float,
+        flag_threshold: float,
+    ) -> "PolicyDecision":
+        from .policy import PolicyDecision, _bucket
+        score = self.score(pi)
+        action = _bucket(score, proceed_threshold, flag_threshold)
+        return PolicyDecision(
+            action=action,
+            score=score,
+            reasons=(f"learned-policy score {score:.3f} ({self.sample_count} real samples)",),
+        )
+
     def coef_delta(self) -> dict[str, float]:
         """Signed drift of each coefficient relative to the cold-seed state."""
         current = self.clf.coef_[0]
@@ -158,22 +176,19 @@ class PolicyClassifier:
         }
 
     def __getstate__(self) -> dict:
-        # Exclude _corrected_regret_ids from the pickle — it is per-session
-        # in-memory state that must start fresh each session. Persisting it
-        # would permanently suppress re-correction for those trace IDs across
-        # all future sessions, and would crash on unpickling an old blob that
-        # predates this field (pickle restores __dict__ directly, bypassing
-        # __post_init__).
+        # Persist _corrected_regret_ids so a regret is replayed exactly once
+        # across the repo's lifetime. Storing the set is cheap (ints) and
+        # bounded by the number of auto-approves the user has regretted.
         state = self.__dict__.copy()
-        state["_corrected_regret_ids"] = None
+        if state.get("_corrected_regret_ids") is None:
+            state["_corrected_regret_ids"] = set()
         return state
 
     def __setstate__(self, state: dict) -> None:
         self.__dict__.update(state)
-        # Re-initialize transient fields regardless of what was stored.
-        # Guards for _calib_X/_calib_y/_calibrator handle old pickle blobs
-        # predating those fields being added to the dataclass.
-        self._corrected_regret_ids = set()
+        # Old pickle blobs predate _corrected_regret_ids; default to empty.
+        if not hasattr(self, "_corrected_regret_ids") or self._corrected_regret_ids is None:
+            self._corrected_regret_ids = set()
         if not hasattr(self, "_calib_X") or self._calib_X is None:
             self._calib_X = []
         if not hasattr(self, "_calib_y") or self._calib_y is None:

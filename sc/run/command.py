@@ -16,6 +16,7 @@ from ..agent_client import ClaudeClient
 from ..cli_shared import read_file_context as _read_file_context, resolve_config as _resolve_config
 from ..config import SAConfig, autonomy_profile, config_dir
 from ..plan_gate import decide_plan_checkpoint
+from ..preference_inference import classify_pushback
 from ..policy import PolicyDecision
 from ..prompt_builder import build_run_system_prompt
 from ..repo import RepoError, get_repo_root
@@ -97,13 +98,36 @@ def _resolve_intent_declaration(
             with _model_status(
                 "intent",
                 initial_thought=f'reading: "{_task_preview}"',
-            ):
+            ) as _intent_status_ctx:
                 response = client.declare_intent(
                     session,
                     task=task,
                     max_tokens=config.max_tokens,
                     temperature=config.temperature,
                 )
+                # Keep the spinner alive across plan-gate evaluation — DB
+                # reads + estimate_blast_radius can take a few seconds on a
+                # cold repo, and the gap between intent-return and plan
+                # prompt looked like a freeze to the developer.
+                if isinstance(response, IntentDeclaration):
+                    from ..run.ui import push_thought as _push_thought
+                    _push_thought("weighing the plan")
+                    _early_candidate = response
+                    _early_autonomy = trust_db.autonomy_preferences(repo_root_str)
+                    _early_checkpoint = decide_plan_checkpoint(
+                        trust_db=trust_db,
+                        repo_root=repo_root_str,
+                        declaration=_early_candidate,
+                        strict=profile.strict_plan_gate,
+                        max_auto_files=profile.plan_checkpoint_max_files,
+                        autonomy_preferences=_early_autonomy,
+                        repo_root_path=repo_root,
+                        spec_required=spec_context is not None,
+                    )
+                else:
+                    _early_candidate = None
+                    _early_autonomy = None
+                    _early_checkpoint = None
         except Exception as exc:
             print("[red]Failed to obtain valid intent declaration.[/red]")
             print(str(exc))
@@ -157,17 +181,21 @@ def _resolve_intent_declaration(
             continue
 
         candidate = response
-        autonomy_preferences = trust_db.autonomy_preferences(repo_root_str)
-        checkpoint = decide_plan_checkpoint(
-            trust_db=trust_db,
-            repo_root=repo_root_str,
-            declaration=candidate,
-            strict=profile.strict_plan_gate,
-            max_auto_files=profile.plan_checkpoint_max_files,
-            autonomy_preferences=autonomy_preferences,
-            repo_root_path=repo_root,
-            spec_required=spec_context is not None,
-        )
+        if _early_checkpoint is not None and _early_candidate is candidate:
+            autonomy_preferences = _early_autonomy
+            checkpoint = _early_checkpoint
+        else:
+            autonomy_preferences = trust_db.autonomy_preferences(repo_root_str)
+            checkpoint = decide_plan_checkpoint(
+                trust_db=trust_db,
+                repo_root=repo_root_str,
+                declaration=candidate,
+                strict=profile.strict_plan_gate,
+                max_auto_files=profile.plan_checkpoint_max_files,
+                autonomy_preferences=autonomy_preferences,
+                repo_root_path=repo_root,
+                spec_required=spec_context is not None,
+            )
         if checkpoint.required:
             intent_rendered_during_checkpoint = True
             prompt_started = time.time()
@@ -217,12 +245,49 @@ def _resolve_intent_declaration(
                 response_time_ms=response_time_ms,
                 edit_distance=None,
                 user_feedback_text=plan_feedback,
+                pushback_type=(
+                    None if plan_decision == "approve"
+                    else classify_pushback(
+                        user_decision=(
+                            "deny" if plan_decision == "deny" else "approve"
+                        ),
+                        edit_distance=None,
+                        user_feedback_text=plan_feedback,
+                    ).value
+                ),
                 check_in_initiator="policy",
                 participant_id=study_context.participant_id,
                 study_run_id=study_context.study_run_id,
                 study_task_id=study_context.study_task_id,
                 autonomy_mode=study_context.autonomy_mode,
             )
+            # Feed plan-stage pushback into the hypothesis bank. Without this
+            # call, scope_constraint feedback at plan checkpoint never reaches
+            # update_evidence — apply_stage.py was the only feeder.
+            if plan_decision != "approve":
+                from ..hypothesis_bank import update_evidence as _hb_update
+                _plan_trace = {
+                    "pushback_type": classify_pushback(
+                        user_decision=("deny" if plan_decision == "deny" else "approve"),
+                        edit_distance=None,
+                        user_feedback_text=plan_feedback,
+                    ).value,
+                    "user_decision": "revise" if plan_decision == "revise" else "deny",
+                    "blast_radius": len(candidate.planned_files),
+                    "rubber_stamp": 0,
+                    "response_time_ms": response_time_ms,
+                    "verification_passed": None,
+                }
+                try:
+                    _hb_update(
+                        trust_db=trust_db,
+                        repo_root=repo_root_str,
+                        session_id=run_session_id,
+                        trace=_plan_trace,
+                    )
+                except Exception as _exc:
+                    import sys as _sys
+                    print(f"[plan] hypothesis update failed: {_exc}", file=_sys.stderr)
             feedback.note_decision(
                 plan_decision == "approve",
                 change_patterns=["plan_checkpoint"] if plan_decision != "approve" else None,
@@ -511,6 +576,10 @@ def run(
     except RuntimeError as exc:
         print(f"[red]{exc}[/red]")
         raise typer.Exit(code=1)
+
+    if not touched_files:
+        # No-op task — generate_updates already printed the ✓ banner.
+        raise typer.Exit(code=0)
 
     new_files = [path for path in touched_files if not (repo_root / path).exists()]
     if new_files and not _confirm_create_files(new_files):

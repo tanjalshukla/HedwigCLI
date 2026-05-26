@@ -6,6 +6,8 @@ from __future__ import annotations
 # both retry once on invalid JSON and validate check-in quality before accepting.
 
 import json
+import re
+import time
 from typing import Any
 
 from anthropic import AnthropicBedrock
@@ -102,6 +104,158 @@ AUTONOMY_RATIONALE_SCHEMA = {
 }
 
 
+def _is_retryable(exc: Exception) -> bool:
+    """True if a Bedrock failure is worth retrying (transient throttle/network)."""
+    name = type(exc).__name__
+    if name in {"RateLimitError", "APIConnectionError", "APITimeoutError",
+                "ThrottlingException", "ServiceUnavailableException",
+                "InternalServerError", "ModelStreamErrorException"}:
+        return True
+    status = getattr(exc, "status_code", None)
+    if status in (429, 500, 502, 503, 504):
+        return True
+    text = str(exc).lower()
+    return (
+        "throttl" in text
+        or "timeout" in text
+        or "temporarily" in text
+        or "empty response" in text
+    )
+
+
+def _friendly_bedrock_error(exc: Exception) -> Exception:
+    """Wrap a fatal Bedrock failure with booth-friendly guidance, preserving the cause."""
+    name = type(exc).__name__
+    text = str(exc)
+    if "ExpiredToken" in text or "InvalidToken" in text or name == "NoCredentialsError":
+        return RuntimeError(
+            "AWS credentials expired or missing. Run: aws sso login --profile <PROFILE>, then retry."
+        )
+    if "AccessDenied" in text or name == "AccessDeniedException":
+        return RuntimeError(
+            "Bedrock access denied for this model/region. Check IAM permissions and inference profile ARN."
+        )
+    if _is_retryable(exc):
+        return RuntimeError(
+            "Bedrock unavailable after several retries. Wait a moment and retry the same task."
+        )
+    return RuntimeError(f"Bedrock error: {text}")
+
+
+# Matches a JSON `"path": "..."` field as the structured-update stream lands.
+# Non-greedy on the value, tolerant of escaped quotes via lookbehind on `\\`.
+_PATH_FIELD_RE = re.compile(r'"path"\s*:\s*"((?:[^"\\]|\\.)*)"')
+
+
+def _scan_latest_path(accumulated: str, announced: set[str]) -> str | None:
+    """Return the most recent `"path": "..."` value not yet announced, or None.
+
+    Used by the streaming progress UI to label which file is currently being
+    written. Only completed (closed-quote) path fields are returned, so we
+    never announce a partial filename mid-token.
+    """
+    latest: str | None = None
+    for match in _PATH_FIELD_RE.finditer(accumulated):
+        candidate = match.group(1)
+        if candidate and candidate not in announced:
+            latest = candidate
+    return latest
+
+
+def _scan_completed_files(accumulated: str, start: int) -> tuple[list[tuple[str, str]], int]:
+    """Scan the streaming JSON for `{path, content}` objects whose `content`
+    string has fully closed. Returns (completed_files, new_start_offset).
+
+    Approach: walk character-by-character from ``start``, track whether we
+    are inside a JSON string (with backslash awareness), and look for
+    ``"path": "..."`` followed by ``"content": "..."`` where the content
+    string's closing quote has landed. When we see a complete pair, emit it
+    and advance the cursor past the closing quote so we don't re-emit on
+    the next tick.
+
+    This is intentionally tolerant — we don't validate the surrounding
+    array structure, we just harvest the (path, content) pairs as they
+    finalize. The full json.loads at the end of the stream is still the
+    source of truth for the apply step.
+    """
+    out: list[tuple[str, str]] = []
+    i = start
+    n = len(accumulated)
+
+    def _read_string(idx: int) -> tuple[str | None, int]:
+        # idx points at the opening quote. Return (decoded, idx_after_close)
+        # or (None, idx) if the string hasn't fully closed yet.
+        if idx >= n or accumulated[idx] != '"':
+            return None, idx
+        j = idx + 1
+        buf: list[str] = []
+        while j < n:
+            ch = accumulated[j]
+            if ch == "\\":
+                if j + 1 >= n:
+                    return None, idx
+                nxt = accumulated[j + 1]
+                escapes = {"n": "\n", "t": "\t", "r": "\r", '"': '"',
+                           "\\": "\\", "/": "/", "b": "\b", "f": "\f"}
+                if nxt in escapes:
+                    buf.append(escapes[nxt])
+                    j += 2
+                    continue
+                if nxt == "u":
+                    if j + 6 > n:
+                        return None, idx
+                    try:
+                        buf.append(chr(int(accumulated[j + 2:j + 6], 16)))
+                    except ValueError:
+                        buf.append(accumulated[j:j + 6])
+                    j += 6
+                    continue
+                buf.append(nxt)
+                j += 2
+                continue
+            if ch == '"':
+                return "".join(buf), j + 1
+            buf.append(ch)
+            j += 1
+        return None, idx
+
+    while i < n:
+        # Find next "path" key.
+        key_idx = accumulated.find('"path"', i)
+        if key_idx == -1:
+            break
+        # Skip past the key, find the colon, then the opening quote.
+        j = key_idx + len('"path"')
+        while j < n and accumulated[j] in ' \t\n\r':
+            j += 1
+        if j >= n or accumulated[j] != ":":
+            break
+        j += 1
+        while j < n and accumulated[j] in ' \t\n\r':
+            j += 1
+        path_value, after_path = _read_string(j)
+        if path_value is None:
+            break  # path string not yet closed; come back next tick
+        # Now find the "content" key after the path string.
+        content_idx = accumulated.find('"content"', after_path)
+        if content_idx == -1:
+            break
+        k = content_idx + len('"content"')
+        while k < n and accumulated[k] in ' \t\n\r':
+            k += 1
+        if k >= n or accumulated[k] != ":":
+            break
+        k += 1
+        while k < n and accumulated[k] in ' \t\n\r':
+            k += 1
+        content_value, after_content = _read_string(k)
+        if content_value is None:
+            break  # content string still streaming; pick up next tick
+        out.append((path_value, content_value))
+        i = after_content
+    return out, i
+
+
 # raised during generate_updates when the model voluntarily pauses for guidance
 class ModelCheckInRequired(RuntimeError):
     def __init__(self, message: CheckInMessage) -> None:
@@ -110,9 +264,17 @@ class ModelCheckInRequired(RuntimeError):
 
 
 class ClaudeClient:
+    # Per-request timeout (seconds) for Bedrock. Code-generation calls can
+    # legitimately take 20-30s on a heavy plan; 60s is well above that and
+    # well below the "Hedwig is hung" threshold a booth visitor will tolerate.
+    _REQUEST_TIMEOUT_SEC = 60.0
+
     def __init__(self, model_id: str, region: str) -> None:
         self.model_id = model_id
-        self.client = AnthropicBedrock(aws_region=region)
+        self.client = AnthropicBedrock(
+            aws_region=region,
+            timeout=self._REQUEST_TIMEOUT_SEC,
+        )
 
     # handles both dict-style and object-style response content blocks
     def _response_text(self, response: Any) -> str:
@@ -135,15 +297,98 @@ class ClaudeClient:
                 return "".join(block.get("text", "") for block in blocks)
         return str(response)
 
-    def _call(self, session: ClaudeSession, max_tokens: int, temperature: float) -> str:
-        response = self.client.messages.create(
-            model=self.model_id,
-            max_tokens=max_tokens,
-            temperature=temperature,
-            system=session.effective_system_prompt(),
-            messages=session.messages,
-        )
-        return self._response_text(response)
+    # Retry budget for throttling / transient connection errors. Booth conditions
+    # (shared wifi, Bedrock peak load) make a no-retry client a demo liability.
+    _RETRY_DELAYS = (0.5, 1.5, 4.0)
+
+    def _call(
+        self,
+        session: ClaudeSession,
+        max_tokens: int,
+        temperature: float,
+        on_file: "callable | None" = None,
+    ) -> str:
+        # Streaming Bedrock call. Tokens arrive as text deltas; we accumulate
+        # them and surface live progress through push_thought so the UI never
+        # looks frozen during long generations. Falls through to the same
+        # retry / empty-response / friendly-error handling as before.
+        last_exc: Exception | None = None
+        for attempt, delay in enumerate((0.0,) + self._RETRY_DELAYS):
+            if delay:
+                time.sleep(delay)
+            try:
+                chunks: list[str] = []
+                last_scan_at = time.time()
+                announced_paths: set[str] = set()
+                file_scan_offset = 0
+                emitted_files: set[str] = set()
+                announce = None
+                try:
+                    from .run.ui import announce_above_spinner as _announce
+                    announce = _announce
+                except Exception:
+                    announce = None
+
+                with self.client.messages.stream(
+                    model=self.model_id,
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                    system=session.effective_system_prompt(),
+                    messages=session.messages,
+                ) as stream:
+                    for delta in stream.text_stream:
+                        if delta:
+                            chunks.append(delta)
+                        now = time.time()
+                        # Throttle path-scans to ~3/s. We only surface a new
+                        # filename as it starts streaming — char counts and
+                        # generic "streaming" labels are noise to a developer.
+                        if now - last_scan_at <= 0.35:
+                            continue
+                        last_scan_at = now
+                        accumulated = "".join(chunks)
+                        new_path = _scan_latest_path(accumulated, announced_paths)
+                        if new_path is not None:
+                            announced_paths.add(new_path)
+                            if announce and on_file is None:
+                                # Only show the durable "writing" line when
+                                # nobody else is rendering the file's diff.
+                                try:
+                                    announce(f"  [dim]→ writing[/dim] {new_path}")
+                                except Exception:
+                                    pass
+                        # Emit fully-closed (path, content) pairs as soon as
+                        # they finalize, so the caller can render diffs
+                        # one-by-one instead of after the whole JSON parses.
+                        if on_file is not None:
+                            completed, file_scan_offset = _scan_completed_files(
+                                accumulated, file_scan_offset
+                            )
+                            for fpath, fcontent in completed:
+                                if fpath in emitted_files:
+                                    continue
+                                emitted_files.add(fpath)
+                                try:
+                                    on_file(fpath, fcontent)
+                                except Exception:
+                                    pass
+                text = "".join(chunks)
+                if not text or not text.strip():
+                    raise RuntimeError("Bedrock returned an empty response")
+                return text
+            except Exception as exc:
+                last_exc = exc
+                if not _is_retryable(exc) or attempt == len(self._RETRY_DELAYS):
+                    raise _friendly_bedrock_error(exc) from exc
+                # Best-effort booth-friendly status; never fail the call on render error.
+                try:
+                    from .run.ui import push_thought
+                    push_thought(f"Bedrock busy — retrying in {self._RETRY_DELAYS[attempt]:.1f}s")
+                except Exception:
+                    pass
+        # Unreachable: loop either returns or raises. Defensive re-raise.
+        assert last_exc is not None
+        raise last_exc
 
     def _call_with_repair(
         self,
@@ -365,7 +610,10 @@ class ClaudeClient:
             "If any file is optional, remove it.\n\n"
             "Expected change types should reflect the likely implementation categories.\n"
             "If a spec is provided, requirements_covered must map the plan back to concrete spec items.\n"
-            "If you suspect the implementation may need to diverge from the prompt or spec, list that in potential_deviations.\n\n"
+            "potential_deviations is for concrete divergences from the user's request or the spec — "
+            "things you plan to do that the user did not ask for, or asked for but you intend to skip. "
+            "Leave it empty unless there is a real divergence. Do NOT use it for design musings, "
+            "alternative approaches you considered but rejected, or commentary on the plan itself.\n\n"
             "Use check_in when you must choose between multiple valid approaches,\n"
             "or when design intent is ambiguous.\n\n"
             "Check-in quality requirements:\n"
@@ -422,6 +670,7 @@ class ClaudeClient:
         max_tokens: int,
         temperature: float,
         repair_hint: str | None = None,
+        on_file: "callable | None" = None,
     ) -> dict[str, str]:
         decl_json = declaration.model_dump_json(indent=2)
         context_blocks: list[str] = []
@@ -448,7 +697,15 @@ class ClaudeClient:
             ) + patch_prompt
         session.add_user(patch_prompt)
         for attempt in range(2):
-            raw = self._call(session, max_tokens=max_tokens, temperature=temperature)
+            # Only stream-render on the first attempt; on a repair retry the
+            # caller has already seen partial diffs from the bad response.
+            stream_cb = on_file if attempt == 0 else None
+            raw = self._call(
+                session,
+                max_tokens=max_tokens,
+                temperature=temperature,
+                on_file=stream_cb,
+            )
             session.add_assistant(raw)
             try:
                 payload = json.loads(raw)
@@ -478,6 +735,10 @@ class ClaudeClient:
                         raise ValueError("path and content must be strings.")
                     updates[path] = content
                 return updates
+            except ModelCheckInRequired:
+                # Legitimate model-initiated check-in — propagate to the caller,
+                # never swallow into the JSON-repair retry loop.
+                raise
             except Exception as exc:
                 if attempt == 1:
                     raise

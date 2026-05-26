@@ -46,6 +46,42 @@ class PolicyInput:
     model_confidence_avg: float | None = None
     model_confidence_samples: int = 0
 
+    @classmethod
+    def from_signals(
+        cls,
+        history,
+        risk,
+        *,
+        recent_denials: int,
+        files_in_action: int,
+        verification_failure_rate: float | None = None,
+        model_confidence_avg: float | None = None,
+        model_confidence_samples: int = 0,
+    ) -> "PolicyInput":
+        """Build a PolicyInput from a PolicyHistory + RiskSignals pair.
+
+        Single source of truth for assembling scorer inputs from the standard
+        history/risk objects. Callers reconstructing a synthetic PolicyInput
+        (e.g. regret correction from a stored trace row) should construct
+        directly rather than through this factory.
+        """
+        return cls(
+            prior_approvals=history.effective_approvals,
+            prior_denials=history.denials,
+            avg_response_ms=history.avg_response_ms,
+            avg_edit_distance=history.avg_edit_distance or 0.0,
+            diff_size=risk.diff_size,
+            blast_radius=risk.blast_radius,
+            is_new_file=risk.is_new_file,
+            is_security_sensitive=risk.is_security_sensitive,
+            change_pattern=risk.change_pattern,
+            recent_denials=recent_denials,
+            files_in_action=files_in_action,
+            verification_failure_rate=verification_failure_rate,
+            model_confidence_avg=model_confidence_avg,
+            model_confidence_samples=model_confidence_samples,
+        )
+
 
 @dataclass(frozen=True)
 class PolicyDecision:
@@ -61,6 +97,20 @@ class PolicyScorer(Protocol):
 
     def score(self, pi: "PolicyInput") -> float: ...
     def ready(self) -> bool: ...
+    def decide(
+        self,
+        pi: "PolicyInput",
+        proceed_threshold: float,
+        flag_threshold: float,
+    ) -> "PolicyDecision": ...
+
+
+def _bucket(score: float, proceed_threshold: float, flag_threshold: float) -> PolicyAction:
+    if score >= proceed_threshold:
+        return "proceed"
+    if score >= flag_threshold:
+        return "proceed_flag"
+    return "check_in"
 
 
 def select_scorer(
@@ -188,14 +238,18 @@ class HeuristicScorer:
     what the system uses before the learned scorer has enough real data."""
 
     def score(self, pi: "PolicyInput") -> float:
-        # decide_action also computes an action label and reasons. The
-        # scoring path here discards those — callers that want them should
-        # keep calling decide_action directly. This adapter exists so that
-        # the learned and heuristic paths share one interface.
         return decide_action(pi, proceed_threshold=0.0, flag_threshold=0.0).score
 
     def ready(self) -> bool:
         return True
+
+    def decide(
+        self,
+        pi: "PolicyInput",
+        proceed_threshold: float,
+        flag_threshold: float,
+    ) -> PolicyDecision:
+        return decide_action(pi, proceed_threshold=proceed_threshold, flag_threshold=flag_threshold)
 
 
 _heuristic_scorer = HeuristicScorer()

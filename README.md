@@ -87,10 +87,10 @@ sc/                     # core package
     apply_ui.py         # apply-stage rendering (separated from logic)
     hypothesis_ui.py    # hypothesis confirmation panel
     retrospective.py    # post-session calibration
-  commands/             # CLI commands (hw observe, hw rules, hw status, hw learning)
+  commands/             # CLI commands (hw observe, hw rules, hw doctor)
 
 demo_recipe_api/        # booth demo fixture (recipe API — open-ended, visitor-extensible)
-tests/                  # 266 tests, ~4s full suite
+tests/                  # 288 tests, ~3s full suite
 ```
 
 ## Observability
@@ -100,9 +100,9 @@ hw observe report     # prose summary: actions, check-ins, regret, learning stat
 hw observe weights    # classifier coefficient drift from cold-start
 hw observe personas   # session intensity breakdown
 hw observe export --html  # full HTML report for researchers
-hw status             # what this session looks like right now
-hw learning           # what Hedwig has learned about this repo
 ```
+
+Inside the REPL, `/prefs` shows accepted preferences and pending hypotheses with confidence bars (the developer-facing view of what Hedwig has learned).
 
 ## Testing
 

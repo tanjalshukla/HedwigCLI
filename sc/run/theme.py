@@ -39,9 +39,10 @@ PALETTE = {
     # Attention without alarm (soft check-in, flagged-for-review, defer).
     "attention": "yellow",
     "attention_bold": "bold yellow",
-    # Meta / rationale / secondary text.
-    "meta": "dim white",
-    "meta_italic": "dim italic",
+    # Meta / rationale / secondary text. White (not dim) so it stays legible
+    # at booth viewing distance; italic carries the "secondary" feel.
+    "meta": "white",
+    "meta_italic": "italic white",
     # Success / done — slightly different from approve, used for post-state.
     "done": "bright_green",
 }

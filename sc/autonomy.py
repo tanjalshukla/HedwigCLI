@@ -19,10 +19,6 @@ from dataclasses import dataclass
 from fnmatch import fnmatch
 import json
 from pathlib import PurePosixPath
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from .preferences import Preference
 
 
 _CHECKIN_TOPIC_KEYWORDS: dict[str, tuple[str, ...]] = {
@@ -296,91 +292,6 @@ def adjusted_policy_thresholds(
     return adjusted_proceed, adjusted_flag
 
 
-# ---------------------------------------------------------------------------
-# Map AutonomyPreferences → equivalent Preference objects.
-# ---------------------------------------------------------------------------
-
-# Topic → CHANGE_PATTERNS entries that carry the same semantic.
-# "security" maps to no change_pattern but uses requires_security_sensitive=True.
-# Topics without a tight change_pattern match use empty tuples (broad trigger).
-_TOPIC_TO_CHANGE_PATTERNS: dict[str, tuple[str, ...]] = {
-    "api": ("api_change",),
-    "schema": ("data_model_change",),
-    "config": ("config_change",),
-    "test": ("test_generation",),
-    "security": (),          # handled via requires_security_sensitive=True
-    "signature": (),         # no fine-grained change_pattern; broad trigger is fine
-    "architecture": (),
-    "deployment": (),
-}
-
-
-def autonomy_prefs_to_preferences(prefs: "AutonomyPreferences") -> "tuple[Preference, ...]":
-    """Convert an AutonomyPreferences into equivalent Preference objects.
-
-    This is a one-way, non-destructive bridge.  AutonomyPreferences continues
-    to exist and drive the threshold-shift path; the returned Preferences feed
-    the post-scorer override path in apply_stage so both systems contribute to
-    the final forced-action decision.
-
-    Mapping rules (see instructions in CLAUDE.md):
-    - prefer_fewer_checkins=True  → AUTO_APPLY Preference, repo-scoped,
-                                    optionally narrowed by scoped_paths.
-    - allowed_checkin_topics      → one FULL_CHECKIN Preference per topic,
-                                    repo-scoped, Trigger uses change_patterns
-                                    (or requires_security_sensitive for "security").
-    - scoped_paths                → narrows the AUTO_APPLY preference via
-                                    scope=Scope(level="path", path_globs=...).
-                                    If prefer_fewer_checkins is False, no
-                                    AUTO_APPLY preference is emitted even if
-                                    scoped_paths is non-empty.
-    - skip_low_risk_plan_checkpoint → not represented here (plan-stage only).
-    """
-    from .preferences import (
-        Lifecycle,
-        Preference,
-        PreferenceAction,
-        Scope,
-        Trigger,
-        Condition,
-    )
-
-    result: list[Preference] = []
-    lc = Lifecycle(provenance="inferred", confidence=1.0)
-
-    # AUTO_APPLY: fires when prefer_fewer_checkins is set.
-    if prefs.prefer_fewer_checkins:
-        if prefs.scoped_paths:
-            scope = Scope(level="path", path_globs=prefs.scoped_paths)
-        else:
-            scope = Scope(level="repo")
-        result.append(
-            Preference(
-                trigger=Trigger(stages=("apply",)),
-                condition=Condition(),
-                action=PreferenceAction.AUTO_APPLY,
-                scope=scope,
-                lifecycle=lc,
-            )
-        )
-
-    # FULL_CHECKIN per allowed_checkin_topic.
-    for topic in prefs.allowed_checkin_topics:
-        change_patterns = _TOPIC_TO_CHANGE_PATTERNS.get(topic, ())
-        is_security = topic == "security"
-        trigger = Trigger(
-            change_patterns=change_patterns,
-            requires_security_sensitive=True if is_security else None,
-            stages=("apply",),
-        )
-        result.append(
-            Preference(
-                trigger=trigger,
-                condition=Condition(),
-                action=PreferenceAction.FULL_CHECKIN,
-                scope=Scope(level="repo"),
-                lifecycle=lc,
-            )
-        )
-
-    return tuple(result)
+# Re-export the AutonomyPreferences → Preference bridge from its new home in
+# preferences.py. Kept here so existing callers don't need to change imports.
+from .preferences import autonomy_prefs_to_preferences  # noqa: F401, E402

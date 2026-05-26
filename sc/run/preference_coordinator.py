@@ -35,13 +35,14 @@ class PreferenceMatch:
 class PreferenceCoordinator:
     """Resolves preference overrides on top of a scorer-produced PolicyDecision.
 
-    Override semantics (preserved verbatim from prior inline logic):
+    Override semantics:
       - ``full_checkin`` tightens ``proceed`` / ``proceed_flag`` to ``check_in``
         but never loosens an already-``check_in`` decision.
       - ``soft_checkin`` shifts a non-check_in to ``proceed_flag``.
-      - ``auto_apply`` only fires when the scorer decided ``check_in`` —
-        loosening it to ``proceed`` (this is how ``prefer_fewer_checkins``
-        from ``AutonomyPreferences`` reaches the cascade).
+      - ``auto_apply`` is intentionally a no-op at this layer. The invariant
+        documented in CLAUDE.md is "preferences add caution but never remove
+        it"; ``prefer_fewer_checkins`` reaches the cascade as a threshold
+        shift in ``adjusted_policy_thresholds``, not as a post-scorer override.
       - Hard constraints (score == -1000 / -500) skip the scorer entirely
         and never reach this coordinator.
     """
@@ -154,11 +155,10 @@ class PreferenceCoordinator:
                 reasons=decision.reasons + ("soft-checkin trigger matched",),
             )
 
-        if action_value == "auto_apply" and decision.action == "check_in":
-            return PolicyDecision(
-                action="proceed",
-                score=decision.score,
-                reasons=decision.reasons + ("autonomy preference: proceed autonomously",),
-            )
-
+        # auto_apply intentionally never loosens a check_in here. The
+        # threshold-shift path in adjusted_policy_thresholds carries
+        # prefer_fewer_checkins; allowing a post-scorer loosen would
+        # silently bypass scorer-driven check-ins on high-risk writes
+        # and contradict the "preferences add caution but never remove"
+        # invariant.
         return decision

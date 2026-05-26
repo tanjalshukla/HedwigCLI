@@ -8,13 +8,11 @@ signals (pushback patterns, review timing, verification failures) accumulate
 and the hypothesis bank and online classifier update continuously.
 
 Slash commands:
-  /status       What Hedwig thinks about this session right now
-  /learning     What Hedwig has learned about this repo
   /prefs        Active confirmed preferences
   /rules        List or add rules (/rules add <natural language rule>)
   /observe      Repo activity (/observe report | traces | weights | personas)
   /oversight    Set oversight level (hands-on / balanced / delegating)
-  /reset        Clear session state, keep repo history
+  /new-session  Clear session state, keep repo history
   /help         Show this list
   /exit         Exit
 
@@ -33,6 +31,7 @@ from uuid import uuid4
 import typer
 from rich import print
 from rich.console import Console
+from rich.prompt import Prompt
 from .oversight_toggle import OPTIONS as _OVERSIGHT_OPTIONS, _TO_INTENSITY, _label_from_intensity
 
 from ..cli_shared import read_file_context as _read_file_context, resolve_config as _resolve_config
@@ -45,15 +44,74 @@ from .helpers import StudyContext, _load_spec_context
 from .theme import PALETTE
 
 
+_SLASH_SUBCOMMANDS = {
+    "/observe": ["report", "traces", "weights", "personas", "leases", "export"],
+    "/rules": ["add", "list"],
+    "/oversight": ["hands-on", "balanced", "delegating"],
+}
+
+
+def _build_repl_session():
+    """Lazy-build a prompt_toolkit PromptSession with slash-command completion.
+
+    Falls back to ``None`` if prompt_toolkit isn't installed or the terminal
+    doesn't support it (e.g. pipes, dumb TTYs); the caller will then use
+    plain ``input()``.
+    """
+    try:
+        from prompt_toolkit import PromptSession
+        from prompt_toolkit.completion import Completer, Completion
+        from prompt_toolkit.history import InMemoryHistory
+    except Exception:
+        return None
+
+    class _SlashCompleter(Completer):
+        def get_completions(self, document, complete_event):
+            text = document.text_before_cursor
+            if not text.startswith("/"):
+                return
+            parts = text.split(" ", 1)
+            verb = parts[0]
+            # First token: complete slash command names.
+            if len(parts) == 1:
+                for name in _SLASH_COMMANDS:
+                    if name.startswith(verb):
+                        yield Completion(
+                            name,
+                            start_position=-len(verb),
+                            display_meta=_SLASH_COMMANDS[name],
+                        )
+                return
+            # Subcommand position.
+            subs = _SLASH_SUBCOMMANDS.get(verb)
+            if not subs:
+                return
+            sub_prefix = parts[1].split(" ", 1)[0]
+            for sub in subs:
+                if sub.startswith(sub_prefix):
+                    yield Completion(sub, start_position=-len(sub_prefix))
+
+    try:
+        return PromptSession(
+            completer=_SlashCompleter(),
+            history=InMemoryHistory(),
+            complete_while_typing=True,
+        )
+    except Exception:
+        return None
+
+
 _SLASH_COMMANDS = {
-    "/status":        "What Hedwig thinks about this session",
-    "/learning":      "What Hedwig has learned about this repo",
+    "/status":        "What Hedwig thinks about this session right now",
     "/prefs":         "Your saved preferences and patterns Hedwig is watching for",
     "/rules":         "Add or list rules  (/rules add <rule> | /rules list)",
     "/observe":       "Repo activity  (/observe report | traces | weights | personas | export [--html])",
     "/oversight":     "Set oversight level (hands-on / balanced / delegating)",
     "/retrospective": "Session wrap-up — where I was too loose or too cautious",
-    "/reset":         "Mark a session boundary (history is preserved)",
+    "/new-session":   "Mark a session boundary (history is preserved)",
+    "/doctor":        "Verify AWS identity and Bedrock connectivity",
+    "/reset-demo":    "Clear all governance state (booth use — wipes trust.db)",
+    "/seed-demo":     "Load hand-authored prior history (booth use — pre-warm classifier + hypothesis)",
     "/help":          "Show this list",
     "/exit":          "Exit Hedwig",
 }
@@ -66,6 +124,7 @@ def _handle_slash(
     repo_root_str: str,
     run_session_id: str,
     pinned_intensity: str | None,
+    config=None,
 ) -> tuple[bool, str | None]:
     """Handle a slash command. Returns (should_continue, new_pinned_intensity)."""
     console = Console()
@@ -94,11 +153,6 @@ def _handle_slash(
                 )
         return False, pinned_intensity
 
-    if verb == "/help":
-        for name, desc in _SLASH_COMMANDS.items():
-            console.print(f"  [{PALETTE['info_bold']}]{name:<12}[/{PALETTE['info_bold']}] {desc}")
-        return True, pinned_intensity
-
     if verb == "/status":
         from ..commands.status import status as _status_cmd
         try:
@@ -107,18 +161,18 @@ def _handle_slash(
             pass
         return True, pinned_intensity
 
-    if verb == "/learning":
-        from ..commands.learning import learning as _learning_cmd
-        try:
-            _learning_cmd()
-        except SystemExit:
-            pass
+    if verb == "/help":
+        _w = max(len(n) for n in _SLASH_COMMANDS) + 2
+        for name, desc in _SLASH_COMMANDS.items():
+            console.print(f"  [{PALETTE['info_bold']}]{name:<{_w}}[/{PALETTE['info_bold']}] {desc}")
         return True, pinned_intensity
 
     if verb == "/prefs":
+        import textwrap as _tw
         from rich.panel import Panel as _P
         from rich.text import Text as _T
         from .theme import panel_title as _pt
+        from ..hypothesis_bank import MIN_EVIDENCE as _MIN_EVIDENCE
         _body = _T()
 
         # Accepted preferences.
@@ -133,53 +187,66 @@ def _handle_slash(
                 if learned:
                     _body.append(f"  ✦ {learned.headline}\n", style=PALETTE["learn"])
 
-        # Pending hypotheses with confidence bars.
-        pending = trust_db.get_pending_hypothesis_candidates(repo_root_str, run_session_id)
-        if pending:
+        # Pending and rejected hypotheses — repo-scoped (not session-scoped),
+        # so seeded hypotheses and prior-session candidates also surface here.
+        with trust_db._connect() as _conn:
+            _pending = _conn.execute(
+                """SELECT prompt, evidence_for, evidence_against FROM hypothesis_candidates
+                   WHERE repo_root = ? AND status = 'pending'
+                   ORDER BY (evidence_for + evidence_against) DESC, created_at ASC""",
+                (repo_root_str,),
+            ).fetchall()
+            _rejected = _conn.execute(
+                """SELECT prompt, evidence_for, evidence_against FROM hypothesis_candidates
+                   WHERE repo_root = ? AND status = 'rejected'""",
+                (repo_root_str,),
+            ).fetchall()
+
+        # Render each hypothesis in two visual rows:
+        #   row 1: bar + pct  (left column, fixed width)
+        #   row 2: prompt sentence, indented under the bar, wrapped softly.
+        # This avoids Rich panel re-wrapping breaking a single-line layout.
+        _PROMPT_WIDTH = 70
+        _INDENT = " " * 4
+
+        def _wrap_prompt(text: str) -> str:
+            normalized = " ".join((text or "").split())
+            return _tw.fill(
+                normalized,
+                width=_PROMPT_WIDTH,
+                initial_indent=_INDENT,
+                subsequent_indent=_INDENT,
+            )
+
+        def _bar_block(prompt_text: str, evf: int) -> None:
+            progress = min(evf / _MIN_EVIDENCE, 1.0) if _MIN_EVIDENCE > 0 else 0.0
+            filled = int(progress * 10)
+            bar = "█" * filled + "░" * (10 - filled)
+            _body.append(f"  {bar}  ", style=PALETTE["meta"])
+            _body.append(f"{int(progress * 100):>3}%   ", style=PALETTE["info_bold"])
+            _body.append(f"{evf}/{_MIN_EVIDENCE} traces\n", style=PALETTE["meta"])
+            _body.append(f"{_wrap_prompt(prompt_text)}\n\n", style="white")
+
+        if _pending:
             if accepted:
                 _body.append("\n")
-            _body.append("Watching for  ", style=PALETTE["info_bold"])
-            _body.append("(confidence from your recent decisions)\n", style=PALETTE["meta"])
-            _DRIVER_LABELS = {
-                "scope_constraint":   "narrowing scope on multi-file changes",
-                "failure_reactive":   "checking in after failures",
-                "deliberate_reviewer":"reviewing changes carefully",
-                "rapid_approver":     "approving quickly without review",
-                "positive_redirect":  "redirecting toward better approaches",
-            }
-            for c in pending:
-                total = int(c["evidence_for"]) + int(c["evidence_against"])
-                driver = _DRIVER_LABELS.get(c["driver"], c["driver"].replace("_", " "))
-                if total > 0:
-                    conf = int(c["evidence_for"]) / total
-                    filled = int(conf * 10)
-                    bar = "█" * filled + "░" * (10 - filled)
-                    _body.append(f"  {bar} ", style=PALETTE["meta"])
-                    _body.append(f"{conf:.0%}", style=PALETTE["info_bold"])
-                    _body.append(f"  {driver}\n", style="white")
-                else:
-                    _body.append(f"  {'░' * 10} ", style=PALETTE["meta"])
-                    _body.append("new", style=PALETTE["meta"])
-                    _body.append(f"  {driver}\n", style="white")
+            _body.append("Watching  ", style=PALETTE["info_bold"])
+            _body.append(f"(evidence toward surfacing: {_MIN_EVIDENCE} traces needed)\n",
+                         style=PALETTE["meta"])
+            for c in _pending:
+                _bar_block(c["prompt"], int(c["evidence_for"]))
 
-        # Rejected candidates.
-        with trust_db._connect() as _conn:
-            _rejected = _conn.execute(
-                """SELECT driver, evidence_for, evidence_against FROM hypothesis_candidates
-                   WHERE repo_root = ? AND session_id = ? AND status = 'rejected'""",
-                (repo_root_str, run_session_id),
-            ).fetchall()
         if _rejected:
-            if accepted or pending:
+            if accepted or _pending:
                 _body.append("\n")
-            _body.append("Considered but not enough evidence yet\n", style=PALETTE["meta"])
+            _body.append("Set aside (not enough evidence yet)\n", style=PALETTE["meta"])
             for r in _rejected:
-                total = int(r["evidence_for"]) + int(r["evidence_against"])
-                conf = int(r["evidence_for"]) / total if total else 0
-                driver = r["driver"].replace("_", " ")
-                _body.append(f"  ✗ {driver}  ({conf:.0%} of {total} traces)\n", style=PALETTE["meta"])
+                evf = int(r["evidence_for"])
+                total = evf + int(r["evidence_against"])
+                _body.append(f"  ✗  {evf}/{total}   {_wrap_prompt(r['prompt'])}\n",
+                             style=PALETTE["meta"])
 
-        if not accepted and not pending and not _rejected:
+        if not accepted and not _pending and not _rejected:
             _body.append("No preferences yet — patterns appear as you work.", style=PALETTE["meta_italic"])
 
         console.print(_P(_body, title=_pt("learn", "preferences"), border_style=PALETTE["learn"], padding=(1, 2)))
@@ -249,16 +316,25 @@ def _handle_slash(
         return True, pinned_intensity
 
     if verb == "/observe":
-        sub = parts[1].lower() if len(parts) > 1 else "report"
-        from ..commands.observe import report, traces, weights, personas, leases, export
-        html_flag = "--html" in parts
+        from ..commands.observe import (
+            report, traces, weights, personas, leases, export,
+        )
+        # Accept multiple subcommands on the same line ("/observe report export
+        # --html") by scanning all args; last-known-subcommand wins. Also
+        # tolerate -html as an alias for --html since visitors mistype.
+        known = {"report", "traces", "weights", "personas", "leases", "export"}
+        sub = "report"
+        for p in parts[1:]:
+            if p.lower() in known:
+                sub = p.lower()
+        html_flag = any(p in ("--html", "-html") for p in parts)
         _obs_map = {
-            "report":   lambda: report(json_out=False, verbose=False),
-            "traces":   lambda: traces(limit=20, json_out=False),
-            "weights":  lambda: weights(verbose=False),
-            "personas": lambda: personas(limit=5, verbose=False),
-            "leases":   lambda: leases(json_out=False),
-            "export":   lambda: export(out=Path(".sc/exports"), session_id=None, html_report=html_flag, open_browser=True),
+            "report":      lambda: report(json_out=False, verbose=False),
+            "traces":      lambda: traces(limit=20, json_out=False),
+            "weights":     lambda: weights(verbose=False),
+            "personas":    lambda: personas(limit=5, verbose=False),
+            "leases":      lambda: leases(json_out=False),
+            "export":      lambda: export(out=Path(".sc/exports"), session_id=None, html_report=html_flag, open_browser=True),
         }
         fn = _obs_map.get(sub)
         if fn:
@@ -270,8 +346,81 @@ def _handle_slash(
             print(f"[{PALETTE['meta']}]usage: /observe [report|traces|weights|personas|leases|export [--html]][/{PALETTE['meta']}]")
         return True, pinned_intensity
 
-    if verb == "/reset":
+    if verb == "/new-session":
         print(f"[{PALETTE['attention']}]Session cleared. Repo history and learned state preserved.[/{PALETTE['attention']}]")
+        return True, pinned_intensity
+
+    if verb == "/doctor":
+        from ..commands.admin import doctor as _doctor_cmd
+        # _doctor_cmd's signature uses typer.Option defaults; calling it
+        # directly leaks OptionInfo objects. Pass real values from config.
+        try:
+            _doctor_cmd(
+                model_id=getattr(config, "model_id", None),
+                region=getattr(config, "aws_region", None),
+                prompt="Say OK and nothing else.",
+            )
+        except SystemExit:
+            pass
+        return True, pinned_intensity
+
+    if verb == "/reset-demo":
+        # Booth-only: wipe all per-repo governance state so the next visitor
+        # starts cold. Keeps the file on disk; just clears every table.
+        try:
+            confirm = Prompt.ask(
+                f"[{PALETTE['attention_bold']}]Wipe all governance state for this repo?[/{PALETTE['attention_bold']}]"
+                f" [{PALETTE['meta']}](traces, leases, prefs, hypotheses, model)[/{PALETTE['meta']}]",
+                choices=["y", "n"],
+                default="n",
+            )
+        except (KeyboardInterrupt, EOFError):
+            print(f"\n[{PALETTE['meta']}]cancelled.[/{PALETTE['meta']}]")
+            return True, pinned_intensity
+        if confirm != "y":
+            print(f"[{PALETTE['meta']}]cancelled.[/{PALETTE['meta']}]")
+            return True, pinned_intensity
+        with trust_db._connect() as _conn:
+            for _table in (
+                "decisions", "decision_traces", "leases", "read_leases",
+                "autonomy_preferences", "confirmed_preferences",
+                "hypothesis_candidates", "policy_models", "policy_model_snapshots",
+                # Added 2026-05-25: these tables also accumulate per-repo
+                # learned state. Without wiping them, plan revisions,
+                # learned guidelines, and any /rules add from the previous
+                # booth visitor leak into the next visitor's session.
+                "plan_revisions", "logic_notes", "behavioral_guidelines",
+                "hard_constraints",
+            ):
+                try:
+                    _conn.execute(f"DELETE FROM {_table} WHERE repo_root = ?", (repo_root_str,))
+                except Exception:
+                    pass
+        print(f"[{PALETTE['approve_bold']}]✓ governance state cleared — ready for next visitor.[/{PALETTE['approve_bold']}]")
+        return True, pinned_intensity
+
+    if verb == "/seed-demo":
+        # Booth-only: load a hand-authored prior-history bundle so the
+        # classifier is past MIN_SAMPLES_FOR_LEARNED and one hypothesis is
+        # near surface threshold. Tagged session_id='seed_demo' so /observe
+        # and the HTML export can separate seeded from live activity.
+        from ..demo_seed import seed_demo, SEED_SESSION_ID
+        try:
+            result = seed_demo(trust_db, repo_root_str)
+        except Exception as exc:
+            print(f"[{PALETTE['deny']}]seed failed: {exc}[/{PALETTE['deny']}]")
+            return True, pinned_intensity
+        if result["already_seeded"]:
+            print(
+                f"[{PALETTE['meta']}]already seeded — run /reset-demo first if you want to reseed.[/{PALETTE['meta']}]"
+            )
+            return True, pinned_intensity
+        print(
+            f"[{PALETTE['approve_bold']}]✓ seeded[/{PALETTE['approve_bold']}]"
+            f"  [{PALETTE['meta']}]· {result['traces']} traces · "
+            f"classifier pre-warmed ({result['updates']} updates) · "
+            f"1 hypothesis at evidence 2/3 · session_id={SEED_SESSION_ID}[/{PALETTE['meta']}]"
+        )
         return True, pinned_intensity
 
     print(f"[{PALETTE['deny']}]Unknown command '{verb}'. Type /help for a list.[/{PALETTE['deny']}]")
@@ -370,6 +519,7 @@ def run_repl(
     threshold = permanent_threshold if permanent_threshold is not None else config.permanent_approval_threshold
     client = ClaudeClient(model_id=config.model_id, region=config.aws_region)
     pinned_intensity: str | None = None  # None = auto-infer
+    pt_session = _build_repl_session()
 
     try:
         spec_context = _load_spec_context(repo_root, spec, config.read_max_chars)
@@ -378,23 +528,46 @@ def run_repl(
         raise typer.Exit(code=1)
 
     while True:
-        # Print the prompt label with Rich markup, then read input directly.
-        if pinned_intensity:
-            _olabel = _label_from_intensity(pinned_intensity)
-            _pin_color = PALETTE["learn"] if _olabel == "hands-on" else PALETTE["info"]
-            console.print(
-                f"\n[{PALETTE['info_bold']}]hedwig[/{PALETTE['info_bold']}]"
-                f" [{_pin_color}][{_olabel}][/{_pin_color}]",
-                end=" ",
-            )
+        # When prompt_toolkit is available, render the label inline as part
+        # of the pt prompt so its completion menu lays out cleanly.
+        if pt_session is not None:
+            from prompt_toolkit.formatted_text import ANSI
+            # ANSI escapes: \x1b[1;36m = bold cyan, \x1b[2;37m = dim, \x1b[0m = reset.
+            # Matches the Rich-styled label used by the fallback path.
+            _BOLD_CYAN = "\x1b[1;36m"
+            _DIM = "\x1b[2;37m"
+            _RESET = "\x1b[0m"
+            if pinned_intensity:
+                _olabel = _label_from_intensity(pinned_intensity)
+                label = f"\n{_BOLD_CYAN}hedwig{_RESET} {_DIM}[{_olabel}]{_RESET} "
+            else:
+                label = f"\n{_BOLD_CYAN}hedwig{_RESET} "
+            try:
+                raw = pt_session.prompt(ANSI(label)).strip()
+            except (KeyboardInterrupt, EOFError):
+                print(f"\n[{PALETTE['meta']}]goodbye.[/{PALETTE['meta']}]")
+                break
         else:
-            console.print(f"\n[{PALETTE['info_bold']}]hedwig[/{PALETTE['info_bold']}]", end=" ")
-
-        try:
-            raw = input().strip()
-        except (KeyboardInterrupt, EOFError):
-            print(f"\n[{PALETTE['meta']}]goodbye.[/{PALETTE['meta']}]")
-            break
+            # Fallback: Rich markup label + plain input().
+            if pinned_intensity:
+                _olabel = _label_from_intensity(pinned_intensity)
+                _pin_color = (
+                    PALETTE["learn"] if _olabel == "hands-on"
+                    else PALETTE["info"] if _olabel == "delegating"
+                    else PALETTE["meta"]
+                )
+                console.print(
+                    f"\n[{PALETTE['info_bold']}]hedwig[/{PALETTE['info_bold']}]"
+                    f" [{_pin_color}][{_olabel}][/{_pin_color}]",
+                    end=" ",
+                )
+            else:
+                console.print(f"\n[{PALETTE['info_bold']}]hedwig[/{PALETTE['info_bold']}]", end=" ")
+            try:
+                raw = input().strip()
+            except (KeyboardInterrupt, EOFError):
+                print(f"\n[{PALETTE['meta']}]goodbye.[/{PALETTE['meta']}]")
+                break
 
         if not raw:
             continue
@@ -408,6 +581,7 @@ def run_repl(
                 repo_root_str=repo_root_str,
                 run_session_id=run_session_id,
                 pinned_intensity=pinned_intensity,
+                config=config,
             )
             if not should_continue:
                 print(f"[{PALETTE['meta']}]goodbye.[/{PALETTE['meta']}]")
@@ -449,6 +623,9 @@ def run_repl(
                 spec_context=spec_context,
             )
         except typer.Exit:
+            continue
+        except KeyboardInterrupt:
+            print(f"\n[{PALETTE['meta']}]cancelled.[/{PALETTE['meta']}]")
             continue
         except (ValueError, RuntimeError, KeyError, AttributeError) as exc:
             print(f"[{PALETTE['deny']}]Error during planning: {exc}[/{PALETTE['deny']}]")
@@ -500,8 +677,16 @@ def run_repl(
             )
         except typer.Exit:
             continue
+        except KeyboardInterrupt:
+            print(f"\n[{PALETTE['meta']}]cancelled.[/{PALETTE['meta']}]")
+            continue
         except RuntimeError as exc:
             print(f"[{PALETTE['deny']}]{exc}[/{PALETTE['deny']}]")
+            continue
+
+        if not touched_files:
+            # No-op task (already-complete signal from generate_updates). The
+            # ✓ banner was already printed; just loop back to the prompt.
             continue
 
         new_files = [p for p in touched_files if not (repo_root / p).exists()]
@@ -536,6 +721,11 @@ def run_repl(
             if exc.exit_code != 0:
                 raise  # hard constraint deny — propagate so the REPL doesn't silently swallow it
             continue  # soft deny (code=0) — loop back to prompt
+        except KeyboardInterrupt:
+            # Ctrl+C inside an apply prompt — treat as deny + return to REPL
+            # rather than letting it tear down the whole session.
+            print(f"\n[{PALETTE['meta']}]cancelled — apply skipped.[/{PALETTE['meta']}]")
+            continue
 
         _apply_updates_and_verify(
             repo_root=repo_root,

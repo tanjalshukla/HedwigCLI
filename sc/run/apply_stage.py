@@ -1,6 +1,29 @@
 from __future__ import annotations
 
-"""Apply-stage policy decisions and write/verification execution for `hw run`."""
+"""Apply-stage policy decisions and write/verification execution for `hw run`.
+
+The apply cascade follows the same four steps as the read cascade in
+``read_stage.py`` — hard constraints → leases → PolicyScorer → preference
+override — and shares ``helpers._resolve_pre_scorer`` and
+``helpers._policy_decision_for_file`` for the first three. What this stage
+adds on top of that shared cascade and the read stage does not:
+
+* **Regret corrections** — replay regret events as negative classifier
+  signal once per trace_id (``_apply_regret_corrections``).
+* **Hypothesis pipeline** — seed/score/surface/generate
+  (``_run_hypothesis_pipeline``).
+* **Classifier online updates** — every developer decision becomes a
+  ``partial_fit`` call (``_update_classifier``).
+* **Atomic write + verification** — apply the patch, run hooks, persist
+  verification outcome (``_apply_updates_and_verify``).
+* **Stricter thresholds** and the full ``PreferenceCoordinator`` override
+  (defaults + autonomy-derived + confirmed prefs).
+
+Unifying the read and apply cascades into one parameterized module is
+parked post-conference (see BRAINSTORM.md): the shared work already lives
+in ``helpers``, and the differences listed above are intentional asymmetries
+between read-stage and apply-stage authority.
+"""
 
 import hashlib
 import json
@@ -30,8 +53,7 @@ from .helpers import (
     _apply_feedback_learning,
     _collect_change_metrics,
     _constraint_index,
-    _hard_constraint_decision,
-    _lease_decision,
+    _resolve_pre_scorer,
     _normalize_new_content,
     _policy_decision_for_file,
 )
@@ -138,7 +160,11 @@ def _apply_regret_corrections(
             recent_denials=recent_apply_denials,
             files_in_action=1,
         )
-        classifier.update(pi, approved=False)
+        # count_sample=False: regret replay is a corrective gradient, not a
+        # new developer decision — it must not push the classifier across the
+        # MIN_SAMPLES_FOR_LEARNED threshold or distort the learned-vs-heuristic
+        # transition.
+        classifier.update(pi, approved=False, count_sample=False)
         classifier._corrected_regret_ids.add(regret_key)
         corrections += 1
 
@@ -182,16 +208,9 @@ def _update_classifier(
         risk = apply_risk.get(path)
         if history is None or risk is None:
             continue
-        pi = PolicyInput(
-            prior_approvals=history.effective_approvals,
-            prior_denials=history.denials,
-            avg_response_ms=history.avg_response_ms,
-            avg_edit_distance=history.avg_edit_distance or 0.0,
-            diff_size=risk.diff_size,
-            blast_radius=risk.blast_radius,
-            is_new_file=risk.is_new_file,
-            is_security_sensitive=risk.is_security_sensitive,
-            change_pattern=risk.change_pattern,
+        pi = PolicyInput.from_signals(
+            history,
+            risk,
             recent_denials=recent_apply_denials,
             files_in_action=len(files),
         )
@@ -292,6 +311,29 @@ class _SessionContext:
     pushback_counts: dict[str, int]
 
 
+def _load_confirmed_preferences(
+    trust_db: TrustDB, repo_root_str: str, run_session_id: str
+) -> list[Preference]:
+    """Decode session-confirmed Preference rows. Skips rows that didn't
+    accept the hypothesis or whose payload no longer round-trips."""
+    confirmed: list[Preference] = []
+    for row in trust_db.confirmed_preferences_for_session(repo_root_str, run_session_id):
+        try:
+            payload = json.loads(row["preference_json"])
+        except (json.JSONDecodeError, KeyError, ValueError):
+            continue
+        if not payload.get("accepted"):
+            continue
+        pref_dict = payload.get("preference")
+        if pref_dict is None:
+            continue
+        try:
+            confirmed.append(preference_from_dict(pref_dict))
+        except (TypeError, ValueError, KeyError):
+            continue
+    return confirmed
+
+
 def _build_session_context(
     *,
     trust_db: TrustDB,
@@ -346,21 +388,7 @@ def _build_session_context(
     )
     autonomy_derived_prefs = autonomy_prefs_to_preferences(autonomy_preferences)
 
-    confirmed_prefs: list = []
-    for row in trust_db.confirmed_preferences_for_session(repo_root_str, run_session_id):
-        try:
-            payload = json.loads(row["preference_json"])
-        except (json.JSONDecodeError, KeyError, ValueError):
-            continue
-        if not payload.get("accepted"):
-            continue
-        pref_dict = payload.get("preference")
-        if pref_dict is None:
-            continue
-        try:
-            confirmed_prefs.append(preference_from_dict(pref_dict))
-        except (TypeError, ValueError, KeyError):
-            continue
+    confirmed_prefs = _load_confirmed_preferences(trust_db, repo_root_str, run_session_id)
 
     # Session position over apply-stage turns only (consistent with n_turns).
     session_position = min(session_summary.n_turns / 20.0, 1.0)
@@ -387,7 +415,7 @@ def _build_session_context(
     )
 
 
-def _run_hypothesis_pipeline(
+def _accumulate_hypothesis_evidence(
     *,
     ctx: _SessionContext,
     trust_db: TrustDB,
@@ -395,14 +423,8 @@ def _run_hypothesis_pipeline(
     run_session_id: str,
     client: ClaudeClient | None,
 ) -> None:
-    """Hypothesis bank pipeline (Trial-Error-Explain loop).
-
-    1. Seed new rule-based candidates (don't surface yet — evidence needed).
-    2. Score the latest apply-stage trace against pending candidates.
-    3. Surface the highest-confidence candidate if threshold reached.
-    4. Every LLM_GENERATION_INTERVAL turns, ask Claude for novel candidates
-       (runs in a background thread so it never adds latency).
-    """
+    """Evidence side of the hypothesis bank: seed candidates, score the latest
+    trace, and kick off background LLM generation. Never surfaces UI."""
     seed_candidates_from_session(
         trust_db=trust_db,
         repo_root=repo_root_str,
@@ -413,7 +435,6 @@ def _run_hypothesis_pipeline(
         inferred_persona=ctx.effective_persona,
     )
 
-    # Score the most recent apply-stage trace.
     if ctx.apply_row_dicts:
         update_evidence(
             trust_db=trust_db,
@@ -422,22 +443,46 @@ def _run_hypothesis_pipeline(
             trace=ctx.apply_row_dicts[-1],
         )
 
-    # Background LLM generation — daemon so it never blocks the main path.
+    from ..hypothesis_bank import LLM_GENERATION_INTERVAL as _NOTICER_TICK
+    n_turns = ctx.session_summary.n_turns
+    if n_turns > 0 and n_turns % _NOTICER_TICK == 0 and client is not None:
+        from .theme import PALETTE as _P
+        from rich import print as _rprint
+        _rprint(
+            f"[{_P['meta_italic']}]hedwig · noticing patterns…[/{_P['meta_italic']}]"
+        )
+
+    def _noticer_safe(**kwargs):
+        try:
+            maybe_generate_llm_hypotheses(**kwargs)
+        except Exception as exc:  # daemon thread — never crash the parent
+            import sys as _sys
+            print(f"[noticer] background failure: {exc}", file=_sys.stderr)
+
     threading.Thread(
-        target=maybe_generate_llm_hypotheses,
+        target=_noticer_safe,
         kwargs=dict(
             trust_db=trust_db,
             repo_root=repo_root_str,
             session_id=run_session_id,
             session_summary=ctx.session_summary,
-            turn_count=ctx.session_summary.n_turns,
+            turn_count=n_turns,
             client=client,
         ),
         daemon=True,
     ).start()
 
-    # Surface the highest-confidence ready candidate — gated on intensity
-    # (delegating sessions don't get interrupted; evidence still accumulates).
+
+def _surface_ready_hypothesis(
+    *,
+    ctx: _SessionContext,
+    trust_db: TrustDB,
+    repo_root_str: str,
+    run_session_id: str,
+) -> None:
+    """Confirmation side: surface the highest-confidence ready candidate and
+    persist the developer's accept/reject. Gated on intensity — delegating
+    sessions don't get interrupted; evidence still accumulates upstream."""
     if ctx.effective_persona.value == "delegating":
         return
 
@@ -452,21 +497,12 @@ def _run_hypothesis_pipeline(
         return
 
     # Brief pause before the hypothesis panel so it lands as a distinct moment
-    # rather than scrolling past with the preceding output. Lives here rather
-    # than inside render_hypothesis_confirmation so the render function stays
-    # side-effect-free and testable without timing concerns.
+    # rather than scrolling past with the preceding output.
     import sys as _sys
     if _sys.stdin.isatty():
         import time as _time
         _time.sleep(0.5)
     confirmation = render_hypothesis_confirmation(hypothesis)
-    mark_candidate_surfaced(
-        trust_db=trust_db,
-        repo_root=repo_root_str,
-        session_id=run_session_id,
-        driver=hypothesis.driver,
-        confirmed=confirmation.confirmed,
-    )
     payload = (
         {
             "accepted": True,
@@ -476,11 +512,51 @@ def _run_hypothesis_pipeline(
         if confirmation.confirmed
         else {"accepted": False, "driver": hypothesis.driver}
     )
-    trust_db.save_confirmed_preference(
+    # Persist preference first; only mark the candidate surfaced if the save
+    # succeeds. Otherwise the candidate would be left as 'confirmed' with no
+    # backing preference row and re-surfacing would be impossible.
+    try:
+        trust_db.save_confirmed_preference(
+            repo_root=repo_root_str,
+            session_id=run_session_id,
+            preference_json=json.dumps(payload),
+            driver=hypothesis.driver,
+        )
+    except Exception as exc:
+        import sys as _sys
+        print(f"[apply] preference save failed: {exc}", file=_sys.stderr)
+        return
+    mark_candidate_surfaced(
+        trust_db=trust_db,
         repo_root=repo_root_str,
         session_id=run_session_id,
-        preference_json=json.dumps(payload),
         driver=hypothesis.driver,
+        confirmed=confirmation.confirmed,
+    )
+
+
+def _run_hypothesis_pipeline(
+    *,
+    ctx: _SessionContext,
+    trust_db: TrustDB,
+    repo_root_str: str,
+    run_session_id: str,
+    client: ClaudeClient | None,
+) -> None:
+    """Trial-Error-Explain loop: accumulate evidence, then surface a ready
+    candidate if one exists. Composed of two halves so each is testable."""
+    _accumulate_hypothesis_evidence(
+        ctx=ctx,
+        trust_db=trust_db,
+        repo_root_str=repo_root_str,
+        run_session_id=run_session_id,
+        client=client,
+    )
+    _surface_ready_hypothesis(
+        ctx=ctx,
+        trust_db=trust_db,
+        repo_root_str=repo_root_str,
+        run_session_id=run_session_id,
     )
 
 
@@ -608,26 +684,22 @@ def _evaluate_apply_stage(
         apply_risk[path] = risk
 
         constraint = apply_constraints.get(path)
-        if constraint is not None:
-            decision, lease_label, outcome = _hard_constraint_decision(constraint, "write")
-            if outcome != "passthrough":
-                apply_leases[path] = lease_label
-                apply_policies[path] = decision
-                if outcome == "deny":
-                    denied_apply.append(path)
-                elif outcome == "check_in":
-                    prompt_required = True
-                # outcome == "allow" needs no per-file side effect at the apply
-                # stage: the decision itself (proceed @ score 900) is enough,
-                # and there is no symmetric "auto_apply" list (writes are always
-                # rendered through render_apply_auto_approved later).
-                continue
-
         lease = active_apply.get(path)
-        apply_leases[path] = lease.lease_type if lease else None
-        if lease is not None:
-            apply_policies[path] = _lease_decision(lease, "write")
+        pre = _resolve_pre_scorer(constraint=constraint, lease=lease, access_type="write")
+        if pre is not None:
+            decision, lease_label, outcome = pre
+            apply_leases[path] = lease_label
+            apply_policies[path] = decision
+            if outcome == "deny":
+                denied_apply.append(path)
+            elif outcome == "check_in":
+                prompt_required = True
+            # outcome == "allow" / "lease" needs no per-file side effect at
+            # the apply stage: the decision itself is enough, and there is no
+            # symmetric "auto_apply" list (writes always rendered through
+            # render_apply_auto_approved later).
             continue
+        apply_leases[path] = None
 
         if config.adaptive_policy_enabled:
             proceed_threshold, flag_threshold = adjusted_policy_thresholds(

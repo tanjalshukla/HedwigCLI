@@ -87,8 +87,8 @@ A preference has five dimensions. Each captures something the older 4-field sche
 
 ### PreferenceAction
 
-- **Precise:** Fixed enum — `AUTO_APPLY` / `LIGHT_CONFIRM` / `FULL_CHECKIN` / `DEFER_TO_BATCH`.
-- **Plain:** What Hedwig should actually do when this preference matches — just do it, a quick yes/no, a full pause with explanation, or save for a batch review.
+- **Precise:** Fixed enum — `AUTO_APPLY` / `SOFT_CHECKIN` / `FULL_CHECKIN`.
+- **Plain:** What Hedwig should actually do when this preference matches — just do it, a quick non-blocking panel, or a full pause with explanation.
 
 ### Scope
 

@@ -352,6 +352,26 @@ class TestCorrectedRegretIds(unittest.TestCase):
                 recent_apply_denials=1,
             )
 
+            # Round-trip the classifier through SQLite (mirrors the real apply
+            # turn flow: load_policy_model → _apply_regret_corrections →
+            # save_policy_model). _corrected_regret_ids must survive the
+            # pickle round-trip; otherwise the dedup guard never matches and
+            # every turn re-applies all prior session regrets.
+            clf_reloaded = type(clf).from_bytes(clf.to_bytes())
+            corrections_after_reload = _apply_regret_corrections(
+                classifier=clf_reloaded,
+                trust_db=db,
+                repo_root_str=repo,
+                session_row_dicts=session_rows,
+                recent_apply_denials=1,
+            )
+            self.assertEqual(
+                corrections_after_reload,
+                0,
+                "Regret corrections must survive a pickle round-trip — "
+                "otherwise every apply turn re-applies all session regrets.",
+            )
+
             self.assertEqual(corrections_first, 1, "Expected exactly one regret correction on first call")
             self.assertEqual(corrections_second, 0, "Second call must not re-apply already-corrected regret")
             self.assertEqual(

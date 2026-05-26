@@ -155,6 +155,71 @@ def traces(
     print(table)
 
 
+def hypotheses(
+    json_out: bool = typer.Option(False, "--json", help="Output hypotheses as JSON."),
+):
+    """Show the hypothesis bank, grouped by source.
+
+    Lets you see which candidates came from rule-based generators versus
+    the LLM noticer, with status (pending / ready / confirmed / rejected).
+    """
+    repo_root = require_repo_root()
+    trust_db = open_trust_db(repo_root)
+    repo_root_str = str(repo_root)
+    with trust_db._connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT id, session_id, driver, source, prompt, rationale,
+                   evidence_for, evidence_against, status, created_at
+            FROM hypothesis_candidates
+            WHERE repo_root = ?
+            ORDER BY created_at DESC
+            LIMIT 100
+            """,
+            (repo_root_str,),
+        ).fetchall()
+
+    payload = [dict(r) for r in rows]
+    if json_out:
+        print(json.dumps(payload, indent=2, default=str))
+        return
+
+    if not rows:
+        print("[dim]No hypotheses recorded for this repo yet.[/dim]")
+        return
+
+    table = Table(title="Hypothesis bank", show_lines=False)
+    table.add_column("source", no_wrap=True)
+    table.add_column("driver", no_wrap=True)
+    table.add_column("status")
+    table.add_column("ev (for/total)")
+    table.add_column("prompt")
+    src_color = {
+        "rule_based": "cyan",
+        "llm_generated": "magenta",
+    }
+    status_color = {
+        "ready_to_surface": "green",
+        "confirmed": "green",
+        "pending": "yellow",
+        "rejected": "red",
+        "declined": "red",
+    }
+    for r in rows:
+        total = int(r["evidence_for"]) + int(r["evidence_against"])
+        ev = f"{r['evidence_for']}/{total}" if total else "0/0"
+        src = r["source"] or "-"
+        st = r["status"] or "-"
+        table.add_row(
+            f"[{src_color.get(src, 'white')}]{src}[/{src_color.get(src, 'white')}]",
+            r["driver"],
+            f"[{status_color.get(st, 'white')}]{st}[/{status_color.get(st, 'white')}]",
+            ev,
+            _truncate_text(r["prompt"], max_len=70),
+        )
+    print(table)
+
+
 def preferences(
     json_out: bool = typer.Option(False, "--json", help="Output learned autonomy preferences as JSON."),
     verbose: bool = typer.Option(False, "--verbose", help="Show the full preference table + scoring bands."),
@@ -612,10 +677,10 @@ def weights(
 
     print(table)
     print(
-        f"[white]"
-        f"green ▲ = now more likely to auto-approve  "
-        f"red ▼ = now more likely to check in"
-        f"[/white]"
+        "[white]"
+        "green ▲ = now more likely to auto-approve  "
+        "red ▼ = now more likely to check in"
+        "[/white]"
     )
     if hidden_count > 0:
         print(
@@ -880,9 +945,9 @@ def report(
             )
         )
         print(
-            f"[{PALETTE['meta']}]Use[/{PALETTE['meta']}] hw observe report --verbose "
-            f"[{PALETTE['meta']}]for tables, or[/{PALETTE['meta']}] "
-            f"hw observe export --html "
+            f"[{PALETTE['meta']}]Use[/{PALETTE['meta']}] /observe traces "
+            f"[{PALETTE['meta']}]for the trace log, or[/{PALETTE['meta']}] "
+            f"/observe export --html "
             f"[{PALETTE['meta']}]for a browser report.[/{PALETTE['meta']}]"
         )
         return

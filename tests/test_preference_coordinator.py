@@ -91,7 +91,12 @@ class PreferenceCoordinatorTests(unittest.TestCase):
         # No new reason appended when scorer already said check_in.
         self.assertEqual(result.decision.reasons, ("scorer",))
 
-    def test_auto_apply_loosens_check_in_to_proceed(self) -> None:
+    def test_auto_apply_does_not_loosen_check_in(self) -> None:
+        # Invariant from CLAUDE.md: preferences add caution but never remove
+        # it. AUTO_APPLY's effect on prefer_fewer_checkins is carried by the
+        # threshold-shift path (adjusted_policy_thresholds), not by a
+        # post-scorer override. A scorer-driven check_in must survive
+        # regardless of any AUTO_APPLY preferences.
         auto_pref = Preference(
             trigger=Trigger(stages=("apply",)),
             condition=Condition(),
@@ -102,11 +107,8 @@ class PreferenceCoordinatorTests(unittest.TestCase):
         coord = _coordinator(autonomy=(auto_pref,))
         original = PolicyDecision(action="check_in", score=0.4, reasons=("scorer",))
         result = coord.apply_to_decision(decision=original, file_path="x.py", risk=_risk())
-        self.assertEqual(result.decision.action, "proceed")
-        self.assertIn(
-            "autonomy preference: proceed autonomously",
-            result.decision.reasons,
-        )
+        self.assertEqual(result.decision.action, "check_in")
+        self.assertEqual(result.decision.reasons, ("scorer",))
 
     def test_soft_checkin_shifts_proceed_to_proceed_flag(self) -> None:
         soft_pref = Preference(

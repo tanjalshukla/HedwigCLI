@@ -54,7 +54,46 @@ PRUNE_THRESHOLD    = 0.30   # evidence_for / total <= this → prune
 MIN_EVIDENCE       = 3
 
 # How often to run the LLM hypothesis generator (every N turns).
-LLM_GENERATION_INTERVAL = 10
+# Booth-tuned: 5 means a typical visitor hits one noticer fire during a
+# 5-minute demo. Production-tuned would be ~10 to limit Bedrock spend.
+LLM_GENERATION_INTERVAL = 5
+
+
+def _extract_json_array(raw: str) -> str | None:
+    """Extract the outermost JSON array from a possibly-noisy LLM response.
+
+    String-aware bracket balancing — a non-greedy regex locks onto inner
+    arrays like `evidence_trace_ids`, and a naive bracket counter
+    mis-counts when the LLM puts brackets inside string values like
+    "Should I [pause] X?". Returns the array substring (including the
+    outer brackets) or None if no balanced array is found.
+    """
+    start = raw.find("[")
+    if start < 0:
+        return None
+    depth = 0
+    in_string = False
+    escape = False
+    for i in range(start, len(raw)):
+        ch = raw[i]
+        if escape:
+            escape = False
+            continue
+        if ch == "\\":
+            escape = True
+            continue
+        if ch == '"':
+            in_string = not in_string
+            continue
+        if in_string:
+            continue
+        if ch == "[":
+            depth += 1
+        elif ch == "]":
+            depth -= 1
+            if depth == 0:
+                return raw[start : i + 1]
+    return None
 
 
 def _context_weight(driver: str, trace: DecisionTraceRow) -> float:
@@ -107,7 +146,7 @@ def _evidence_for_trace(driver: str, trace: DecisionTraceRow) -> tuple[int, int]
     response_ms = trace.get("response_time_ms") or 0
     verif = trace.get("verification_passed")
 
-    if driver == "scope_constraint":
+    if driver in ("scope_constraint", "scope_narrow_when_tests_bundled"):
         if pushback == PushbackType.SCOPE_CONSTRAINT.value:
             return 1, 0
         if decision.startswith("auto_approve") and blast > 1:
@@ -263,7 +302,13 @@ def update_evidence(
         new_against = int(row["evidence_against"]) + delta_against
         total = new_for + new_against
 
-        if total < MIN_EVIDENCE:
+        # Per-candidate floor (set by the LLM noticer for high-stakes
+        # hypotheses) raises the surfacing bar above MIN_EVIDENCE; it
+        # cannot lower it. NULL → use global.
+        candidate_floor = row["min_evidence"] if "min_evidence" in row.keys() else None
+        floor = max(MIN_EVIDENCE, int(candidate_floor)) if candidate_floor else MIN_EVIDENCE
+
+        if total < floor:
             continue
 
         confidence = new_for / total
@@ -296,11 +341,11 @@ def get_ready_hypothesis(
             SELECT id, driver, prompt, rationale, preference_json,
                    evidence_for, evidence_against
             FROM hypothesis_candidates
-            WHERE repo_root = ? AND session_id = ? AND status = 'ready_to_surface'
+            WHERE repo_root = ? AND status = 'ready_to_surface'
             ORDER BY evidence_for DESC
             LIMIT 1
             """,
-            (repo_root, session_id),
+            (repo_root,),
         ).fetchall()
 
     if not rows:
@@ -342,11 +387,49 @@ def mark_candidate_surfaced(
             """
             UPDATE hypothesis_candidates
             SET status = ?
-            WHERE repo_root = ? AND session_id = ? AND driver = ?
+            WHERE repo_root = ? AND driver = ?
               AND status = 'ready_to_surface'
             """,
-            (status, repo_root, session_id, driver),
+            (status, repo_root, driver),
         )
+
+
+_TRACE_DIGEST_LIMIT = 30
+
+
+def _format_trace_digest(traces: list) -> str:
+    """One line per trace: [id] file · stage · decision · pushback · note.
+
+    Truncated to the most recent _TRACE_DIGEST_LIMIT rows. Older rows are
+    summarized as a count, since the noticer cares about recent behavior.
+    """
+    if not traces:
+        return "(no traces yet)"
+    head = traces[:-_TRACE_DIGEST_LIMIT] if len(traces) > _TRACE_DIGEST_LIMIT else []
+    tail = traces[-_TRACE_DIGEST_LIMIT:]
+    lines: list[str] = []
+    if head:
+        lines.append(f"... {len(head)} earlier traces omitted ...")
+    for t in tail:
+        tid = t["id"]
+        path = (t["file_path"] or "")[-40:]
+        stage = t["stage"] or ""
+        decision = (t["user_decision"] or "")[:14]
+        pushback = (t["pushback_type"] or "")[:18]
+        note = (t["user_feedback_text"] or "").strip().replace("\n", " ")[:60]
+        bits = [f"[{tid}]", path, stage, decision]
+        if pushback:
+            bits.append(pushback)
+        if note:
+            bits.append(f'"{note}"')
+        lines.append(" · ".join(bits))
+    return "\n".join(lines)
+
+
+def _format_active_candidates(candidates: list) -> str:
+    if not candidates:
+        return "(none)"
+    return "\n".join(f"- {row['driver']}: {row['prompt']}" for row in candidates)
 
 
 def maybe_generate_llm_hypotheses(
@@ -358,64 +441,102 @@ def maybe_generate_llm_hypotheses(
     turn_count: int,
     client,
 ) -> list[int]:
-    """Every LLM_GENERATION_INTERVAL turns, ask Claude if it sees novel patterns.
+    """Every LLM_GENERATION_INTERVAL turns, ask Claude to read the trace
+    digest and propose novel hypotheses with cited evidence.
 
-    Returns IDs of newly added candidates. No-ops if client is None or if
-    the turn count isn't at an interval boundary.
+    Each candidate must cite ≥1 real trace ID; uncited or hallucinated cites
+    are dropped. Candidates citing ≥ MIN_EVIDENCE valid traces seed straight
+    into the bank with that evidence count, so high-confidence proposals
+    surface immediately. Lower-evidence proposals sit alongside rule-based
+    candidates and accumulate normally.
     """
     if client is None:
         return []
     if turn_count == 0 or turn_count % LLM_GENERATION_INTERVAL != 0:
         return []
 
+    traces = trust_db.session_traces(repo_root, session_id)
+    if len(traces) < MIN_EVIDENCE:
+        return []
+    valid_trace_ids = {int(t["id"]) for t in traces}
+    digest = _format_trace_digest(traces)
+    active = trust_db.get_pending_hypothesis_candidates(repo_root, session_id)
+    active_block = _format_active_candidates(active)
+
     prompt = (
-        f"You are analyzing a developer's interaction patterns with a coding agent.\n\n"
-        f"Session summary:\n"
-        f"- Turns: {session_summary.n_turns}\n"
-        f"- Approvals: {session_summary.n_approvals}, Denials: {session_summary.n_denials}\n"
-        f"- Failures reported: {session_summary.n_failures}\n"
-        f"- Feedback turns: {session_summary.n_feedback}\n"
-        f"- Mean review time: {session_summary.mean_review_seconds:.1f}s\n"
-        f"- Approval rate: {session_summary.approval_rate:.0%}\n\n"
-        "Generate up to 2 novel behavioral hypotheses about this developer's preferences "
-        "that are NOT already covered by these known patterns: "
-        "scope_constraint, failure_reactive, deliberate_reviewer, rapid_approver, positive_redirect.\n\n"
-        "For each hypothesis, return JSON:\n"
-        "{\"driver\": \"unique_name\", \"prompt\": \"question to ask developer\", "
-        "\"rationale\": \"one sentence why\"}\n\n"
-        "Return a JSON array. If no novel hypothesis is warranted, return []."
+        "You are reviewing how a developer interacts with a coding agent. "
+        "The agent has a hypothesis bank: each candidate is a guess about "
+        "the developer's preferences, backed by specific trace evidence. "
+        "Your job is to propose at most 2 NEW hypotheses the rule-based "
+        "generators missed. Skip if nothing rises above noise.\n\n"
+        f"Recent traces (each line is one decision):\n{digest}\n\n"
+        f"Already-pending candidates (do NOT duplicate):\n{active_block}\n\n"
+        "Rules:\n"
+        "- A hypothesis must cite specific trace IDs as evidence (the [id] "
+        "  prefix in each line). Without citations, your hypothesis is junk.\n"
+        "- Stay grounded in the developer's behavior or in properties of "
+        "  the code visible from these traces. Do not propose code-style "
+        "  refactors or architecture opinions.\n"
+        "- Skip drivers already covered by rule-based generators: "
+        "  scope_constraint, failure_reactive, deliberate_reviewer, "
+        "  rapid_approver, positive_redirect.\n\n"
+        "Output JSON array, each item:\n"
+        '{"driver": "snake_case_unique_name", '
+        '"prompt": "yes/no question to ask the developer", '
+        '"rationale": "one sentence grounded in the cited traces", '
+        '"evidence_trace_ids": [12, 17, 19], '
+        '"high_stakes": true}\n\n'
+        "Set high_stakes=true ONLY when wrongly applying this hypothesis "
+        "would touch security-sensitive paths (auth, secrets, credentials) "
+        "or proposes auto-approving without review. Otherwise omit it. "
+        "High-stakes hypotheses require more evidence before surfacing.\n\n"
+        "If nothing rises above noise, return []."
     )
 
     try:
-        import re
         from .session import ClaudeSession
-        _session = ClaudeSession(system_prompt="You are a behavioral pattern analyst. Return JSON only.")
+        _session = ClaudeSession(
+            system_prompt="You are a behavioral-pattern analyst. Return JSON only."
+        )
         _session.add_user(prompt)
-        raw = client._call(_session, max_tokens=400, temperature=0.3)
-        # Non-greedy: match the first complete [...] block.
-        # Greedy would span from first '[' to last ']', swallowing any
-        # markdown list in the LLM preamble before the actual JSON array.
-        match = re.search(r'\[.*?\]', raw, re.DOTALL)
-        if not match:
+        raw = client._call(_session, max_tokens=600, temperature=0.3)
+        extracted = _extract_json_array(raw)
+        if extracted is None:
             return []
-        candidates_data = json.loads(match.group())
+        candidates_data = json.loads(extracted)
     except Exception:
         return []
 
+    from .preferences import (
+        Condition, Lifecycle, Preference, PreferenceAction, Scope, Trigger
+    )
+
     new_ids: list[int] = []
     for item in candidates_data[:2]:
-        driver = item.get("driver", "").strip()
-        hyp_prompt = item.get("prompt", "").strip()
-        rationale = item.get("rationale", "").strip()
+        driver = (item.get("driver") or "").strip()
+        hyp_prompt = (item.get("prompt") or "").strip()
+        rationale = (item.get("rationale") or "").strip()
+        cited = item.get("evidence_trace_ids") or []
         if not driver or not hyp_prompt:
             continue
         if trust_db.candidate_driver_exists(repo_root, session_id, driver):
             continue
+        # Validate citations against the trace store. A hypothesis with no
+        # real traces backing it is dropped — that's the "no hallucinated
+        # evidence" gate. We keep candidates that cite ≥1 valid trace; the
+        # remaining citations get pruned silently.
+        # Accept int or float (JSON allows both for whole numbers).
+        valid_cites: list[int] = []
+        for tid in cited:
+            if isinstance(tid, bool):  # bool is a subclass of int — exclude
+                continue
+            if isinstance(tid, (int, float)):
+                t = int(tid)
+                if t in valid_trace_ids:
+                    valid_cites.append(t)
+        if not valid_cites:
+            continue
 
-        # LLM-generated hypotheses use a generic SOFT_CHECKIN preference.
-        from .preferences import (
-            Condition, Lifecycle, Preference, PreferenceAction, Scope, Trigger
-        )
         pref = Preference(
             trigger=Trigger(stages=("apply",)),
             condition=Condition(),
@@ -423,15 +544,30 @@ def maybe_generate_llm_hypotheses(
             scope=Scope(level="repo"),
             lifecycle=Lifecycle(provenance="inferred_user_confirmed"),
         )
+        # High-stakes flag raises the surfacing floor for this candidate.
+        # Clamped: floor never drops below MIN_EVIDENCE, never above 2x.
+        # The LLM cannot lower the bar — only raise it.
+        high_stakes = bool(item.get("high_stakes"))
+        candidate_min_evidence = MIN_EVIDENCE * 2 if high_stakes else None
         cid = trust_db.add_hypothesis_candidate(
             repo_root=repo_root,
             session_id=session_id,
             driver=driver,
             source="llm_generated",
             prompt=hyp_prompt,
-            rationale=rationale,
+            rationale=rationale + f"  (cites traces: {', '.join(str(t) for t in valid_cites)})",
             preference_json=json.dumps(preference_to_dict(pref)),
+            min_evidence=candidate_min_evidence,
         )
+        # Seed evidence_for with the citation count so candidates with
+        # ≥ MIN_EVIDENCE real cites can surface on the next update_evidence
+        # tick. Below threshold, they accumulate like any other candidate.
+        if len(valid_cites) > 0:
+            trust_db.update_hypothesis_evidence(
+                cid, delta_for=len(valid_cites), delta_against=0
+            )
+            if len(valid_cites) >= MIN_EVIDENCE:
+                trust_db.set_hypothesis_status(cid, "ready_to_surface")
         new_ids.append(cid)
 
     return new_ids

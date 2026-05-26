@@ -27,7 +27,7 @@ _REASON_SENTENCES: dict[str, str] = {
     "failure-signal trigger: debug intent + prior failure this session": "something failed earlier in this debug session, so I want a closer look",
     "-risk:security sensitive": "this touches security-sensitive code",
     "-risk:large diff": "the change is large enough to be worth a second look",
-    "-risk:multi-file blast radius": "the change spans several files",
+    "-risk:multi-file blast radius": "many other files import this one, so changes here ripple",
     "-risk:large multi-file action": "this is a large multi-file change",
     "-risk:new file": "a new file is being introduced",
     "-risk:interface change": "this looks like an interface/API change",

@@ -416,6 +416,16 @@ class TrustDB(
                 "CREATE INDEX IF NOT EXISTS idx_hypothesis_candidates_repo_session "
                 "ON hypothesis_candidates (repo_root, session_id, status)"
             )
+            # Per-candidate evidence floor. NULL means use the global
+            # MIN_EVIDENCE; the LLM noticer may set this higher (never lower)
+            # for high-stakes hypotheses (e.g. anything proposing auto_apply
+            # or touching auth). Floor never moves below MIN_EVIDENCE.
+            self._ensure_column(
+                conn,
+                table="hypothesis_candidates",
+                column="min_evidence",
+                definition="INTEGER",
+            )
             migrations = [
                 ("policy_reasons_json", "TEXT"),
                 ("user_feedback_text", "TEXT"),

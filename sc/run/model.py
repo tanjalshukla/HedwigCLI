@@ -87,7 +87,10 @@ def _handle_model_checkin(
     print(panel_title("approve_request", stage))
     print(f"[{PALETTE['meta']}]{check_in.reason}[/{PALETTE['meta']}]")
     if check_in.recommendation:
-        print(f"[{PALETTE['meta']}]{check_in.recommendation}[/{PALETTE['meta']}]")
+        print(
+            f"[{PALETTE['info_bold']}]Recommendation:[/{PALETTE['info_bold']}] "
+            f"[{PALETTE['meta']}]{check_in.recommendation}[/{PALETTE['meta']}]"
+        )
 
     response_text = ""
     prompt_started = time.time()
@@ -103,7 +106,7 @@ def _handle_model_checkin(
             print(f"  [{PALETTE['meta']}]{idx}.[/{PALETTE['meta']}] {display_option}")
         choices = [str(i) for i in range(1, len(meaningful_options) + 1)] + ["d"]
         pick = Prompt.ask(
-            f"[{PALETTE['approve_bold']}]1[/{PALETTE['approve_bold']}]-{len(meaningful_options)} choose  [{PALETTE['deny_bold']}]d[/{PALETTE['deny_bold']}] deny",
+            f"[{PALETTE['approve_bold']}]1[/{PALETTE['approve_bold']}]-[{PALETTE['approve_bold']}]{len(meaningful_options)}[/{PALETTE['approve_bold']}] choose  [{PALETTE['deny_bold']}]d[/{PALETTE['deny_bold']}] deny",
             choices=choices,
             default=choices[0],
         )
@@ -215,12 +218,12 @@ def _generate_updates_with_repair(
 ) -> tuple[dict[str, str], str, list[str]]:
     update_error: str | None = None
     max_update_attempts = 3
-    max_model_checkins = 5
+    max_model_checkins = 1
     update_attempt = 0
     model_checkins = 0
-    _last_checkin_type: str | None = None  # deduplication guard
 
     while update_attempt < max_update_attempts:
+        _last_checkin_type: str | None = None  # reset per attempt — dedup is intra-attempt only
         try:
             session.system_prompt = build_run_system_prompt(
                 trust_db=trust_db,
@@ -242,6 +245,28 @@ def _generate_updates_with_repair(
             else:
                 _initial = "drafting edits"
             with _model_status("updates", initial_thought=_initial):
+                # Per-file streamed diff render. As each {path, content}
+                # finalizes inside the streaming JSON, render its diff
+                # immediately above the spinner so the user sees the patch
+                # arriving file-by-file (Claude-Code-style) instead of
+                # waiting for the whole response and then dumping.
+                from .diff_view import _render_unified_diff, mark_streamed
+                from rich.console import Console as _Console
+                _streamed: set[str] = set()
+                _diff_console = _Console()
+
+                def _on_file(fpath: str, fcontent: str) -> None:
+                    if fpath in _streamed:
+                        return
+                    _streamed.add(fpath)
+                    old = file_context.get(fpath, "")
+                    is_new = fpath not in file_context or not (repo_root / fpath).exists()
+                    try:
+                        _render_unified_diff(_diff_console, fpath, old, fcontent, is_new)
+                        mark_streamed(fpath)
+                    except Exception:
+                        pass
+
                 updates = client.generate_updates(
                     session,
                     declaration,
@@ -249,8 +274,24 @@ def _generate_updates_with_repair(
                     max_tokens=max_tokens,
                     temperature=temperature,
                     repair_hint=update_error,
+                    on_file=_on_file,
                 )
         except ModelCheckInRequired as exc:
+            # Auto-resolve phase_transition and uncertainty check-ins once we're
+            # already in implementation phase — the developer already approved
+            # the plan; asking about test style, import paths, or file placement
+            # is pure noise at this point.
+            _impl_auto_approve_types = {"phase_transition", "uncertainty"}
+            if (
+                exc.message.check_in_type in _impl_auto_approve_types
+                and current_phase == "implementation"
+            ):
+                _last_checkin_type = exc.message.check_in_type
+                session.add_user(
+                    "Plan approved — proceed with your best judgment. "
+                    "Do not ask about test style, fixture design, import paths, or file placement."
+                )
+                continue
             # Deduplicate: if the model sends the same check-in type twice in a row
             # (e.g. two consecutive phase_transition check-ins), auto-approve the
             # second one silently rather than prompting again.
@@ -318,9 +359,16 @@ def _generate_updates_with_repair(
             continue
         patch_text, touched_files = _build_patch_from_updates(repo_root, updates)
         if not patch_text or not touched_files:
-            update_error = "No changes found in updates."
-            update_attempt += 1
-            continue
+            # The model concluded no edits are needed (e.g. task already
+            # satisfied by current code, or developer picked a no-op
+            # check-in option). Don't loop with an error prompt — that just
+            # confuses the model into inventing changes. Exit cleanly.
+            from .theme import PALETTE as _P
+            print(
+                f"\n[{_P['approve_bold']}]✓ task complete[/{_P['approve_bold']}]"
+                f"  [{_P['meta']}]· no changes needed[/{_P['meta']}]"
+            )
+            return {}, "", []
         try:
             validate_touched_files(repo_root, touched_files, allowed_files)
         except PatchValidationError as exc:

@@ -109,13 +109,16 @@ def status(
     trust_db = open_trust_db(repo_root)
     repo_root_str = str(repo_root)
 
-    # Find the most recent session for this repo.
+    # Find the most recent *live* session for this repo. Seeded demo traces
+    # (session_id='seed_demo') are pre-history, not a real session — they
+    # warm the classifier and hypothesis bank but should never appear as
+    # "what's happening in this session right now."
     with trust_db._connect() as conn:
         row = conn.execute(
             """
             SELECT session_id
             FROM decision_traces
-            WHERE repo_root = ?
+            WHERE repo_root = ? AND session_id != 'seed_demo'
             ORDER BY created_at DESC
             LIMIT 1
             """,

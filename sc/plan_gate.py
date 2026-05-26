@@ -82,8 +82,6 @@ def decide_plan_checkpoint(
     multi_action_reason = len(material_actions) > 1
     if multi_action_reason:
         reasons.append("plan includes multiple action types")
-    if declaration.potential_deviations:
-        reasons.append("plan anticipates possible deviations")
     if spec_required and not declaration.requirements_covered:
         reasons.append("spec provided but plan does not map work to requirements")
 
