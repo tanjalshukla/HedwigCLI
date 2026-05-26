@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from recipe_api.errors import AppError
 from recipe_api.models import Ingredient, Recipe
-from recipe_api.store import get_recipe as load_recipe, list_recipes as load_recipes, next_recipe_id, remove_recipe, save_recipe, search_by_tag as store_search_by_tag
+from recipe_api.store import get_recipe as load_recipe, list_recipes as load_recipes, next_recipe_id, remove_recipe, save_recipe
 
 TITLE_MAX_LENGTH = 150
 DEFAULT_SERVINGS = 4
@@ -16,11 +16,6 @@ def list_recipes() -> list[Recipe]:
 
 def get_recipe(recipe_id: str) -> Recipe:
     return _require_recipe(recipe_id)
-
-
-def search_recipes_by_tag(tag: str) -> list[Recipe]:
-    """Return all recipes whose tags contain *tag* (case-insensitive)."""
-    return store_search_by_tag(tag)
 
 
 def create_recipe(

@@ -86,12 +86,6 @@ def get_recipe(recipe_id: str) -> Recipe | None:
     return _RECIPES.get(recipe_id)
 
 
-def search_by_tag(tag: str) -> list[Recipe]:
-    """Return all recipes whose tags contain *tag* (case-insensitive)."""
-    needle = tag.strip().lower()
-    return [r for r in _RECIPES.values() if needle in (t.lower() for t in r.tags)]
-
-
 def save_recipe(recipe: Recipe) -> None:
     _RECIPES[recipe.id] = recipe
 
