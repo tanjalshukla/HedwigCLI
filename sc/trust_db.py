@@ -452,6 +452,11 @@ class TrustDB(
                 # is *for* (context_provision, structured_spec_input, etc.),
                 # regardless of whether it technically counts as pushback.
                 ("turn_purpose", "TEXT"),
+                # Adversarial-reviewer signals (advisory). model_risk_score is
+                # in [0, 1]; NULL on rows recorded before this column existed
+                # or when the reviewer was unavailable. Never load-bearing.
+                ("model_risk_score", "REAL"),
+                ("model_risk_rationale", "TEXT"),
             ]
             for column, definition in migrations:
                 self._ensure_column(
