@@ -120,6 +120,7 @@ Heuristic scoring from `policy.py`. The current weights are an explicit baseline
 | Session | Recent denials | -0.7 per (max 3) | |
 | Quality | Verification failure rate >30% | -0.6 | From trace history |
 | Quality | Low model confidence (<0.40, 3+ samples) | -0.3 | From trace history |
+| Quality | Adversarial-reviewer score (advisory) | ±0.3 max | `model_risk_score` from `model_risk.assess_risk_via_model`; mapped to [-1, +1] around the 0.5 "no opinion" default and weighted 0.3. Apply-stage only. Failure default 0.5 contributes nothing. |
 
 **Scoring band behavior (three tiers):**
 
@@ -137,7 +138,7 @@ These numeric thresholds remain implementation details. Lab participants should 
 
 The policy engine includes an online logistic regression classifier (`ml_policy.py`) that personalizes approval decisions to each developer's observed behavior. It runs alongside the heuristic scorer and activates once 10 real developer decisions have been recorded.
 
-**Feature vector (13 dimensions):**
+**Feature vector (14 dimensions):**
 
 | Feature | Source | Rationale |
 |---------|--------|-----------|
@@ -154,10 +155,11 @@ The policy engine includes an online logistic regression classifier (`ml_policy.
 | `verification_failure_rate` | Trace history | Files with frequent test failures get tighter oversight |
 | `model_confidence_avg` | Trace history | Aggregated model self-reported confidence on this file |
 | `change_pattern_risk` | `features.py` | Semantic change class (api_change, config_change, test_generation, …) mapped to a risk scalar |
+| `model_risk_score` | `model_risk.py` | Advisory adversarial-reviewer score in [0, 1]. Apply-stage only. Defaults to 0.5 ("no opinion") on Bedrock error, JSON parse failure, schema validation failure, or timeout — failure mode never silently flips a decision. |
 
 **Cold start:** At `hw init` time, `build_cold_classifier()` creates an uninitialized `SGDClassifier` seeded with a single zero+one pair so `partial_fit` has seen both classes. No synthetic labels are generated. The `HeuristicScorer` in `policy.py` carries all cold-start behavior until real developer decisions accumulate. This makes the claim *"we learn from real traces, not fabricated priors"* defensible end-to-end — there is no synthetic data in the learning path.
 
-**Online update rule:** After each developer decision (approve or deny at a check-in prompt, or approve-all on an auto-approved batch), the classifier receives one `partial_fit(x, y)` call. The feature vector at decision time is the same 13 features used for scoring. No batch retraining or offline collection period is required.
+**Online update rule:** After each developer decision (approve or deny at a check-in prompt, or approve-all on an auto-approved batch), the classifier receives one `partial_fit(x, y)` call. The feature vector at decision time is the same 14 features used for scoring. No batch retraining or offline collection period is required.
 
 **Minimum sample gate:** `select_scorer()` returns the heuristic scorer until `PolicyClassifier.sample_count >= MIN_SAMPLES_FOR_LEARNED` (10). This prevents the learned scorer from acting on samples too small to generalize. The threshold is visible at any time via `hw observe weights`. Which scorer fired is recorded in `PolicyDecision.reasons` and persisted into `decision_traces` so longitudinal analysis can separate heuristic-era decisions from learned-era decisions.
 
