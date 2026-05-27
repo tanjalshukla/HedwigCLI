@@ -579,6 +579,24 @@ def run(
 
     if not touched_files:
         # No-op task — generate_updates already printed the ✓ banner.
+        # But evidence may have accumulated to ready_to_surface during the
+        # plan stage (e.g. scope-narrow pushback at plan checkpoint). Without
+        # surfacing here, the candidate sits invisibly in ready_to_surface
+        # status forever — apply_stage's surface call never runs on no-op tasks.
+        try:
+            from .apply_stage import _surface_ready_hypothesis_after_no_op
+            _surface_ready_hypothesis_after_no_op(
+                trust_db=trust_db,
+                repo_root_str=repo_root_str,
+                run_session_id=run_session_id,
+            )
+        except Exception:
+            pass
+        _finalize_run(
+            trust_db=trust_db,
+            repo_root=repo_root_str,
+            session_id=run_session_id,
+        )
         raise typer.Exit(code=0)
 
     new_files = [path for path in touched_files if not (repo_root / path).exists()]

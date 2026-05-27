@@ -10,6 +10,10 @@ without touching approval logic.
 """
 
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from ..trust_db import TrustDB
 
 from rich import print
 
@@ -32,6 +36,71 @@ from .ui import (
 )
 
 
+_TASK_INTENT_PHRASE = {
+    "debug": "debugging task",
+    "refactor": "refactor task",
+    "create": "new feature",
+    "test": "writing tests",
+    "understand": "exploration task",
+    "other": "general task",
+}
+
+_PERSONA_PHRASE = {
+    "active": "working alongside you",
+    "delegating": "letting Hedwig drive",
+    "unknown": "calibrating your style",
+}
+
+
+def render_session_read_line(*, task_intent: str | None, persona: str | None) -> None:
+    intent_text = _TASK_INTENT_PHRASE.get((task_intent or "").lower())
+    persona_text = _PERSONA_PHRASE.get((persona or "").lower())
+    parts = [p for p in (intent_text, persona_text) if p]
+    if not parts:
+        return
+    line = ", ".join(parts)
+    print(f"  [{PALETTE['meta']}]Reading session as: {line}[/{PALETTE['meta']}]")
+
+
+def render_cochange_lines(*, trust_db: TrustDB, repo_root: str, touched_files: list[str]) -> None:
+    """Per planned file, dim line listing the top-2 historically co-changed files.
+    Silent when there's no signal — never renders a placeholder."""
+    try:
+        from ..cochange import cochanged_files
+    except Exception:
+        return
+    for path in touched_files:
+        try:
+            pairs = cochanged_files(trust_db, repo_root, path, min_count=2, limit=2)
+        except Exception:
+            continue
+        if not pairs:
+            continue
+        rendered = ", ".join(f"{p} ({n})" for p, n in pairs)
+        print(f"  [{PALETTE['meta']}]{path} — historically co-changes with: {rendered}[/{PALETTE['meta']}]")
+
+
+def render_context_retrieved_line() -> None:
+    try:
+        from . import context_capture as _ctx
+        last = _ctx.last()
+    except Exception:
+        return
+    n_notes = len(last.logic_notes)
+    n_guides = len(last.guidelines)
+    n_fb = len(last.feedback)
+    if (n_notes + n_guides + n_fb) == 0:
+        return
+    bits: list[str] = []
+    if n_notes:
+        bits.append(f"{n_notes} repo note{'s' if n_notes != 1 else ''}")
+    if n_guides:
+        bits.append(f"{n_guides} guideline{'s' if n_guides != 1 else ''}")
+    if n_fb:
+        bits.append(f"{n_fb} past correction{'s' if n_fb != 1 else ''}")
+    print(f"  [{PALETTE['meta']}]Context retrieved: {', '.join(bits)}[/{PALETTE['meta']}]")
+
+
 def render_apply_policy_snapshot(
     *,
     touched_files: list[str],
@@ -41,6 +110,10 @@ def render_apply_policy_snapshot(
     denied_apply: list[str],
     milestone_reasons: tuple[str, ...],
     apply_risk: dict[str, RiskSignals] | None = None,
+    task_intent: str | None = None,
+    persona: str | None = None,
+    trust_db=None,
+    repo_root: str | None = None,
 ) -> None:
     # When a diff panel will follow immediately, suppress the pre-diff file list —
     # it's redundant. Only force-show for hard-constraint denials and milestone gates
@@ -53,6 +126,10 @@ def render_apply_policy_snapshot(
         policies=policies,
         force=force,
     )
+    render_session_read_line(task_intent=task_intent, persona=persona)
+    render_context_retrieved_line()
+    if trust_db is not None and repo_root:
+        render_cochange_lines(trust_db=trust_db, repo_root=repo_root, touched_files=touched_files)
     if apply_risk:
         for path in touched_files:
             risk = apply_risk.get(path)

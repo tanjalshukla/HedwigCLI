@@ -37,7 +37,7 @@ class RiskSignals:
     is_security_sensitive: bool
     is_new_file: bool
     diff_size: int
-    # Advisory model-reviewer signals. NOT a veto; scorers weight this small.
+    # Advisory model-reviewer signals
     model_risk_score: float = 0.5
     model_risk_rationale: str = ""
 

@@ -43,6 +43,50 @@ def _constraint_text(read_policy: str | None, write_policy: str | None) -> str:
     return f"read={read_policy}, write={write_policy}"
 
 
+def synthesize_repo_summary(
+    *,
+    trust_db: TrustDB,
+    repo_root: str,
+    logic_note_lines: list[str],
+    feedback_snippets: list[str],
+) -> str:
+    """One-paragraph "what we've learned about this repo" lead.
+
+    Pure string templating over already-retrieved data — no Bedrock call,
+    no new query path. Returns "" when there's nothing meaningful to say.
+    Surfaced at the top of the system prompt and in `/context`.
+    """
+    import json as _json
+    from .commands.status import _humanize_preference
+
+    fragments: list[str] = []
+
+    pref_rows = trust_db.confirmed_preferences_for_repo(repo_root)
+    pref_headlines: list[str] = []
+    for r in pref_rows:
+        try:
+            payload = _json.loads(r["preference_json"])
+        except Exception:
+            continue
+        learned = _humanize_preference(payload, scope="this repo")
+        if learned and learned.headline:
+            pref_headlines.append(learned.headline.rstrip("."))
+        if len(pref_headlines) >= 3:
+            break
+    if pref_headlines:
+        fragments.append("Confirmed preferences: " + "; ".join(pref_headlines) + ".")
+
+    notes = [n.strip().rstrip(".") for n in logic_note_lines if n and n.strip()][:2]
+    if notes:
+        fragments.append("Repo facts: " + "; ".join(notes) + ".")
+
+    fb = [f.strip().rstrip(".") for f in feedback_snippets if f and f.strip()][:1]
+    if fb:
+        fragments.append("Recent developer feedback: " + fb[0] + ".")
+
+    return " ".join(fragments)
+
+
 def build_run_system_prompt(
     *,
     trust_db: TrustDB,
@@ -84,6 +128,25 @@ def build_run_system_prompt(
     guideline_lines = [item.guideline for item in guidelines]
     logic_note_lines = [item.note for item in logic_notes]
     feedback_lines = [f"Developer said: {text}" for text in feedback_snippets]
+
+    repo_summary = synthesize_repo_summary(
+        trust_db=trust_db,
+        repo_root=repo_root,
+        logic_note_lines=logic_note_lines,
+        feedback_snippets=list(feedback_snippets),
+    )
+
+    try:
+        from .run import context_capture as _ctx
+        _ctx.record(
+            logic_notes=logic_note_lines,
+            guidelines=guideline_lines,
+            feedback=list(feedback_snippets),
+            task_text=task_text,
+            summary=repo_summary,
+        )
+    except Exception:
+        pass
     autonomy_lines = autonomy_preferences.prompt_lines()
     access_lines: list[str] = [
         f"Recent read actions: {access_stats.read_actions}",
@@ -146,10 +209,16 @@ def build_run_system_prompt(
 
     file_tree = _repo_file_tree(repo_root, max_files=40)
 
+    summary_block = (
+        f"What we've learned about this repo:\n{repo_summary}\n\n"
+        if repo_summary else ""
+    )
+
     return (
         "MODE: CODE\n"
         "You are a coding agent operating under strict external governance. "
         "The CLI is the enforcement authority.\n\n"
+        f"{summary_block}"
         "Repository file tree (use these exact paths — do not invent paths):\n"
         f"{file_tree}\n\n"
         "Response protocol — STRICT SCHEMA RULES:\n"

@@ -3,9 +3,7 @@
 Shared vocabulary for the project. Every concept has two forms:
 
 - **Precise** — the definition we use in code, docs, and with each other.
-- **Plain** — the one-line version for advisors, reviewers, or a non-technical collaborator. If we can't write the plain version, the concept isn't ready.
-
-Discipline: any new term gets both forms at the same time. If you find yourself translating on the fly in an email, the plain version should be added here.
+- **Plain** — the one-line version for reviewers, or a non-technical collaborator.
 
 ---
 
@@ -164,8 +162,8 @@ A deployable proactive check-in trigger, grounded in finding 2 of the SWE-chat a
 
 ### Hypothesis bank
 
-- **Precise:** A per-session SQLite table (`hypothesis_candidates`) that stores generated hypothesis candidates with evidence counts. Rule-based detectors and an optional LLM generator seed candidates; each new trace scores `+1 for` or `+1 against` every pending candidate. Candidates are surfaced when `evidence_for / total ≥ 0.70` over ≥5 traces; pruned when `≤ 0.30`. Implements the Trial-Error-Explain loop.
-- **Plain:** Hedwig watches patterns without asking immediately. It waits until it has enough evidence that a pattern is real, then surfaces one question. Patterns that get contradicted are silently dropped.
+- **Precise:** A per-session SQLite table (`hypothesis_candidates`) that stores generated hypothesis candidates with evidence counts. Two generators seed candidates: rule-based detectors that run every apply turn (`preference_inference.py`), and an intermittent LLM noticer (`maybe_generate_llm_hypotheses`) that fires every `LLM_GENERATION_INTERVAL` turns and is supplemental — disabling it does not break the loop. Each new trace scores `+1 for` or `+1 against` every pending candidate. Candidates are surfaced when `evidence_for / total ≥ SURFACE_CONFIDENCE` (0.70) over ≥ `MIN_EVIDENCE` (3) traces; pruned when `≤ PRUNE_THRESHOLD` (0.30). LLM-proposed candidates may raise their own bar by marking `high_stakes` (clamps to `2 × MIN_EVIDENCE`), and an LLM candidate citing ≥ `MIN_EVIDENCE` real `decision_traces.id`s is promoted directly to `ready_to_surface`. Implements the Trial-Error-Explain loop.
+- **Plain:** Hedwig watches patterns without asking immediately. It waits until it has enough evidence that a pattern is real, then surfaces one question. Patterns that get contradicted are silently dropped. Two sources propose patterns: deterministic rules every turn, and an LLM that occasionally reads recent traces and can raise its own bar for risky guesses.
 
 ### Evidence accumulation
 

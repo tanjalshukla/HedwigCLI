@@ -14,8 +14,7 @@ a deterministic risk assessor, a heuristic scorer for cold start, an online
 logistic classifier with isotonic calibration that takes over after ten real
 decisions, and a hypothesis bank that lets the developer confirm or reject
 inferred preferences before they ever affect behavior. Everything is local
-and per-repo; no synthetic training data, no claims of "learning" without
-the classifier behind them.
+and per-repo.
 
 ## 2. The five-concept anchor
 
@@ -111,6 +110,18 @@ A single `hw run "Add a unit test for foo"` from keystroke to wrap-up:
   intent_declaration**. Returns `(score in [0,1], rationale)`; defaults
   to `(0.5, "")` on every failure path (Bedrock down, parse failure,
   schema mismatch, timeout). Advisory only — never load-bearing.
+- **`should_review`** (`sc/model_risk.py`) — gate in front of the
+  reviewer call to keep Bedrock cost in check. Returns True only if at
+  least one trigger holds: new file, security-sensitive,
+  `blast_radius >= 4`, `diff_size >= 80`, change_pattern in
+  {`api_change`, `data_model_change`, `config_change`,
+  `dependency_update`}, or no prior history on this file. Otherwise the
+  reviewer is skipped and the score stays at the 0.5 no-opinion default
+  (which contributes zero to the heuristic). A per-`hw run` budget of
+  **5 reviewer calls** caps pathological "edit 30 files at once" turns;
+  when the cap binds, a single dim line surfaces in the apply panel.
+  Net effect on a representative apply stage: ~50–70% reduction in
+  reviewer call volume vs. unconditional invocation.
 - **`HeuristicScorer`** (`sc/policy.py`) — cold-start; weighted sum of
   RiskSignals + a ±0.3 nudge from `model_risk_score` around the 0.5
   no-opinion midpoint. Weights are documented in `SPEC.md`'s weight
@@ -260,25 +271,161 @@ developer decision and must not push the classifier past
 checked on every reload. Regret events also surface in
 `/retrospective` (`sc/run/retrospective.py`) and the HTML export.
 
-## 9. Token / context retrieval
+## 9. Context retrieval — what Hedwig pulls into every prompt
 
-`sc/prompt_builder.py::build_run_system_prompt` retrieves three
-categories from `RuleStore` and ranks them by relevance to the
-current task:
+Every `hw run` rebuilds the system prompt from scratch by reading
+repo-scoped memory. This is what makes Hedwig feel like it
+*remembers* your project across sessions without ever claiming to
+"learn." All retrieval lives in `sc/prompt_builder.py::build_run_system_prompt`.
 
-- **Logic notes** — repo-specific facts ("this project's tests live
-  in `tests/`, not `test/`").
-- **Behavioral guidelines** — soft rules that shape the agent's
-  prose ("explain before patching").
-- **Feedback snippets** — verbatim developer feedback from past
-  sessions, retrieved when phrasing or context lines up.
+**The three retrieval categories** (each pulled from `RuleStore` in
+`sc/store/rule_store.py`):
 
-Ranking is keyword-overlap with the task prompt (see
-`rule_store.py`); the budget is fixed so a long history doesn't
-crowd out new context. Hard constraints, active leases, and the
-AutonomyPreferences mode are folded in on top.
+- **Logic notes** (`relevant_logic_notes`, rule_store.py:360) —
+  repo-specific facts the developer has taught Hedwig over time.
+  *"This project's tests live in `tests/`, not `test/`."*
+  *"`recipe-1` through `recipe-4` are seed fixtures; don't renumber."*
+  Limit: 3 per task.
+- **Behavioral guidelines** (`relevant_behavioral_guidelines`,
+  rule_store.py:467) — soft prose-shaping rules. *"Explain before
+  patching."* *"Avoid speculative refactors."* Limit: 6 per task.
+- **Feedback snippets** (`relevant_feedback_snippets`,
+  rule_store.py:528) — verbatim developer feedback from past
+  sessions, retrieved when phrasing or context lines up. *"You said:
+  'don't add error handling for things that can't fail.'"* Limit: 4
+  per task.
 
-## 10. Persistence
+**Ranking.** Keyword overlap between the task prompt and each candidate
+row's text. The implementation is in `rule_store.py`; ties are broken
+by recency. The fixed per-category budget means a long history
+doesn't crowd out new context.
+
+**What else gets folded in** (top of the system prompt, not
+keyword-ranked because they're always relevant):
+
+- Hard constraints from `trust_db.hard_constraints` (always shown)
+- Active leases (so the agent knows what it's already trusted on)
+- `AutonomyPreferences` mode and `prompt_lines()` output
+- Trust summary: high-trust areas, low-trust areas, corrected patterns
+- A 40-file `_repo_file_tree` snapshot so the agent uses real paths
+- Workflow phase guidance (`research` / `planning` / `implementation` / `review`)
+- Calibration signal — *"your recent check-ins were mostly accepted,
+  keep surfacing high-impact decisions"* vs. *"your check-ins are
+  often denied, ask fewer."*
+
+**The session-start summary** (`synthesize_repo_summary`,
+`prompt_builder.py`). Before the per-task ranked snippets, the
+prompt opens with a short paragraph: *"Confirmed preferences: I'll
+check in before multi-file changes; I'll soft-check-in on small
+follow-ups. Repo facts: tests live in tests/; recipes are seeded
+with id recipe-1..4. Recent developer feedback: avoid speculative
+refactors."* Pure string templating over the top 3 confirmed
+preferences (humanized via `_humanize_preference`), top 2 logic
+notes, and 1 most-relevant feedback snippet. No Bedrock call, no
+new query — composed from data already retrieved. Empty string when
+nothing meaningful to say (fresh repo). The agent gets a coherent
+high-level picture before the detail; reasoning quality on the
+first turn improves because it isn't piecing the picture together
+from bullets. Surfaced in `/context` as a *"What we've learned about
+this repo"* lead block.
+
+**Surfacing retrieval to the developer.** Three layers:
+
+1. **Apply-panel inline line** (`sc/run/apply_ui.py::render_context_retrieved_line`).
+   One dim line under every apply policy snapshot:
+   *"Context retrieved: 3 repo notes, 2 guidelines, 1 past correction."*
+   Singular/plural handled. Suppressed silently when nothing was retrieved.
+
+2. **`/context` REPL command** (`sc/run/repl.py`). Full panel showing
+   the task, then bulleted sections — repo notes, behavioral
+   guidelines, past developer feedback — each item truncated to 100
+   chars. Footer: *"Ranked by keyword overlap with the task."* Use
+   it at the booth to walk a visitor through what the agent actually
+   saw on the previous turn.
+
+3. **Capture mechanism** (`sc/run/context_capture.py`). A
+   process-local singleton (`_LAST: LastContext`) that
+   `build_run_system_prompt` writes to immediately after retrieval.
+   No schema change, no migration — the data lives only for the
+   lifetime of the REPL process. Read-only consumers
+   (`render_context_retrieved_line`, `/context`) read from it
+   downstream.
+
+**The session-read line** (`sc/run/apply_ui.py::render_session_read_line`)
+sits next to context retrieval in the apply panel. One dim line:
+*"Reading session as: refactor task, working alongside you."* Two
+plain-English phrases come from translating `TaskIntent` and
+`UserPersona`, both of which are inferred per turn (see §5
+"Session signals"). Silent if neither is meaningfully set.
+
+## 10. Co-change graph — files that move together
+
+A second axis of "remembering your project" lives in
+`sc/cochange.py`. Where retrieval surfaces *what was said* about a
+codebase, co-change surfaces *what was done* — which files
+historically move together when a developer is working on a task.
+
+**Definition.** A file pair is considered to co-change if both files
+appear under the same `task` (apply stage) in `decision_traces`.
+*Task* — not `session_id` — is the grouping unit, because:
+
+- A single REPL session can span multiple unrelated tasks.
+- Seeded prior history (`seed_demo`) shares one `session_id` by
+  construction, which would collapse all co-change pairs.
+- The natural unit of "things changed together" is the developer's
+  task description, not the wall-clock session.
+
+**The query** (single SQL, indexed columns, sub-millisecond at
+demo scale):
+
+```sql
+SELECT file_path, COUNT(DISTINCT task) AS n_tasks
+FROM decision_traces
+WHERE repo_root = ?
+  AND stage = 'apply'
+  AND file_path != ?            -- not the source file
+  AND file_path != '__session__'
+  AND task IS NOT NULL AND task != ''
+  AND task IN (
+      SELECT DISTINCT task FROM decision_traces
+      WHERE repo_root = ? AND stage = 'apply'
+        AND file_path = ? AND task IS NOT NULL AND task != ''
+  )
+GROUP BY file_path
+HAVING n_tasks >= ?            -- min_count, default 2
+ORDER BY n_tasks DESC, file_path ASC
+LIMIT ?                        -- default 3
+```
+
+No new table, no migration — it's a derived view over data the trace
+store already holds. `cochanged_files()` returns the per-file
+adjacency; `cochange_graph()` returns the full repo-level
+adjacency dict for visualization.
+
+**Surfacing.** Two layers:
+
+1. **Apply-panel inline line** (`sc/run/apply_ui.py::render_cochange_lines`).
+   For each touched file at apply stage, one dim line:
+   *"`store.py` — historically co-changes with: `models.py` (2)"*.
+   Silent if the file has no co-change history meeting `min_count`.
+   This is the booth's answer to *"what does Hedwig actually
+   learn that CLAUDE.md can't?"* — a concrete, demonstrable
+   cross-session pattern.
+
+2. **`/cochange` REPL command** (`sc/run/repl.py`). Full graph view:
+   each file with co-change history, indented under it the top-3
+   neighbors with their session counts. Falls back to a
+   *"patterns appear as you edit files together"* message when the
+   repo has no qualifying pairs.
+
+**Why this is honest.** The graph is *descriptive*, not prescriptive
+— it doesn't change the cascade's verdict, doesn't shift thresholds,
+doesn't seed the classifier. It just tells the developer: *"in this
+repo's history, these files have moved together."* Acting on that
+information is the developer's call. Same governance philosophy as
+the hypothesis bank: surface patterns, let the human confirm.
+
+## 11. Persistence
 
 `sc/trust_db.py::TrustDB` is a thin facade over five focused mixins
 under `sc/store/`:
@@ -293,7 +440,7 @@ under `sc/store/`:
 
 Local files: `.sc/config.json`, `.sc/trust.db`. Both per-repo.
 
-## 11. Observability
+## 12. Observability
 
 - `/prefs` (REPL) — accepted preferences plus pending and rejected
   hypotheses with confidence bars; one panel for the whole picture.
@@ -305,7 +452,7 @@ Local files: `.sc/config.json`, `.sc/trust.db`. Both per-repo.
 - `hw observe export --html-report` — single-file researcher-grade
   dump (traces + weights + hypotheses + regret).
 
-## 12. Booth-friendly Q&A
+## 13. Booth-friendly Q&A
 
 **"Is this RL?"** No. It's a calibrated supervised classifier with
 online updates (`SGDClassifier(loss="log_loss")` + isotonic
@@ -350,3 +497,41 @@ are local — pickle on disk, sklearn in-process. Hedwig stays
 operational; what disappears is novel hypothesis surfacing and the
 adversarial reviewer's pushback, both of which were advisory to
 begin with.
+
+**"How does Hedwig manage context?"** Two layers. (1) A
+session-start synthesized paragraph — *"What we've learned about
+this repo"* — composed from the top confirmed preferences,
+top logic notes, and the most-relevant feedback snippet. The
+agent reads this before anything else, so it walks in oriented
+instead of piecing the picture together from bullets. (2) Per-task
+keyword-ranked retrieval from three categories: logic notes (repo
+facts), behavioral guidelines (soft prose rules), and developer
+feedback snippets (verbatim past corrections). Plus a 40-file
+repo tree, a non-numeric trust summary, hard constraints, active
+leases, and the autonomy mode. Visible to the developer: every
+apply panel shows a one-line *"Context retrieved: 3 repo notes,
+2 guidelines, 1 past correction"* summary, and `/context` in the
+REPL shows exactly what was pulled — including the synthesized
+lead paragraph.
+
+**"Does Hedwig learn cross-file patterns?"** Yes — see
+`/cochange`. A file pair is considered to co-change if both files
+appear under the same task in `decision_traces`. The query is one
+SQL statement over data the trace store already holds; no separate
+table or migration. At apply stage, each touched file gets a dim
+inline line: *"`store.py` — historically co-changes with
+`models.py` (2)"*. The graph is descriptive — it doesn't shift
+thresholds or seed the classifier — same governance philosophy as
+the hypothesis bank.
+
+**"Doesn't the adversarial reviewer double Bedrock cost?"** It would,
+unconditionally — so it isn't unconditional. `should_review` gates
+every call: the reviewer fires only when at least one risk signal
+warrants a second opinion (new file, security-sensitive, large blast
+radius, large diff, structural change pattern, or no prior history on
+this file). For familiar, low-risk, well-trusted edits the heuristic
+decides on its own and the reviewer never runs. A 5-call cap per
+`hw run` is the backstop. Roughly 50–70% of apply-stage files in a
+typical session don't trigger the gate; cold-start sessions trigger
+more (which is correct — that's exactly when an outside opinion adds
+the most signal).

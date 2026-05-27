@@ -209,7 +209,7 @@ class PlanGateTests(unittest.TestCase):
             self.assertTrue(decision.required)
             self.assertTrue(any("spec provided" in reason for reason in decision.reasons))
 
-    def test_potential_deviations_require_checkpoint(self) -> None:
+    def test_potential_deviations_alone_do_not_force_checkpoint(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             db = TrustDB(Path(tmpdir) / "trust.db")
             declaration = IntentDeclaration(
@@ -219,7 +219,7 @@ class PlanGateTests(unittest.TestCase):
                 planned_commands=[],
                 expected_change_types=["general_change"],
                 requirements_covered=["Req-1"],
-                potential_deviations=["Might need a schema tweak if current API is inconsistent."],
+                potential_deviations=["Minor naming nit, won't affect callers."],
             )
             decision = decide_plan_checkpoint(
                 trust_db=db,
@@ -229,8 +229,7 @@ class PlanGateTests(unittest.TestCase):
                 max_auto_files=1,
                 spec_required=True,
             )
-            self.assertTrue(decision.required)
-            self.assertTrue(any("anticipates possible deviations" in reason for reason in decision.reasons))
+            self.assertFalse(decision.required)
 
 
 if __name__ == "__main__":

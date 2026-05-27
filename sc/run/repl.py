@@ -7,14 +7,17 @@ A single session_id is shared across all tasks in the loop, so behavioral
 signals (pushback patterns, review timing, verification failures) accumulate
 and the hypothesis bank and online classifier update continuously.
 
-Slash commands:
-  /prefs        Active confirmed preferences
-  /rules        List or add rules (/rules add <natural language rule>)
-  /observe      Repo activity (/observe report | traces | weights | personas)
-  /oversight    Set oversight level (hands-on / balanced / delegating)
-  /new-session  Clear session state, keep repo history
-  /help         Show this list
-  /exit         Exit
+Slash commands (type /help for the full list):
+  /prefs          Active confirmed preferences + pending hypotheses
+  /context        What Hedwig pulled from repo memory for the last task
+  /cochange       Files that historically change together in this repo
+  /rules          List or add rules (/rules add <rule> | /rules list)
+  /observe        Repo activity (report | traces | weights | personas | export)
+  /oversight      Set oversight level (hands-on / balanced / delegating)
+  /retrospective  Session wrap-up — where Hedwig was too loose or too cautious
+  /new-session    Mark a session boundary (history is preserved)
+  /help           Show this list
+  /exit           Exit
 
 Typing a plain task runs it through the full governed pipeline.
 
@@ -104,6 +107,8 @@ def _build_repl_session():
 _SLASH_COMMANDS = {
     "/status":        "What Hedwig thinks about this session right now",
     "/prefs":         "Your saved preferences and patterns Hedwig is watching for",
+    "/context":       "Show what Hedwig pulled from repo memory for the last task",
+    "/cochange":      "Show files that historically change together in this repo",
     "/rules":         "Add or list rules  (/rules add <rule> | /rules list)",
     "/observe":       "Repo activity  (/observe report | traces | weights | personas | export [--html])",
     "/oversight":     "Set oversight level (hands-on / balanced / delegating)",
@@ -191,7 +196,7 @@ def _handle_slash(
         # so seeded hypotheses and prior-session candidates also surface here.
         with trust_db._connect() as _conn:
             _pending = _conn.execute(
-                """SELECT prompt, evidence_for, evidence_against, status FROM hypothesis_candidates
+                """SELECT prompt, rationale, evidence_for, evidence_against, status FROM hypothesis_candidates
                    WHERE repo_root = ? AND status IN ('pending', 'ready_to_surface')
                    ORDER BY (evidence_for + evidence_against) DESC, created_at ASC""",
                 (repo_root_str,),
@@ -218,14 +223,20 @@ def _handle_slash(
                 subsequent_indent=_INDENT,
             )
 
-        def _bar_block(prompt_text: str, evf: int) -> None:
+        def _bar_block(prompt_text: str, evf: int, rationale: str | None = None) -> None:
             progress = min(evf / _MIN_EVIDENCE, 1.0) if _MIN_EVIDENCE > 0 else 0.0
             filled = int(progress * 10)
             bar = "█" * filled + "░" * (10 - filled)
             _body.append(f"  {bar}  ", style=PALETTE["meta"])
             _body.append(f"{int(progress * 100):>3}%   ", style=PALETTE["info_bold"])
             _body.append(f"{evf}/{_MIN_EVIDENCE} traces\n", style=PALETTE["meta"])
-            _body.append(f"{_wrap_prompt(prompt_text)}\n\n", style="white")
+            _body.append(f"{_wrap_prompt(prompt_text)}\n", style="white")
+            if rationale:
+                rsummary = " ".join(rationale.split())
+                if len(rsummary) > 110:
+                    rsummary = rsummary[:107] + "..."
+                _body.append(f"{_INDENT}why: {rsummary}\n", style=PALETTE["meta_italic"])
+            _body.append("\n")
 
         if _pending:
             if accepted:
@@ -234,7 +245,7 @@ def _handle_slash(
             _body.append(f"(evidence toward surfacing: {_MIN_EVIDENCE} traces needed)\n",
                          style=PALETTE["meta"])
             for c in _pending:
-                _bar_block(c["prompt"], int(c["evidence_for"]))
+                _bar_block(c["prompt"], int(c["evidence_for"]), c["rationale"] if "rationale" in c.keys() else None)
 
         if _rejected:
             if accepted or _pending:
@@ -250,6 +261,87 @@ def _handle_slash(
             _body.append("No preferences yet — patterns appear as you work.", style=PALETTE["meta_italic"])
 
         console.print(_P(_body, title=_pt("learn", "preferences"), border_style=PALETTE["learn"], padding=(1, 2)))
+        return True, pinned_intensity
+
+    if verb == "/context":
+        from rich.panel import Panel as _P
+        from rich.text import Text as _T
+        from .theme import panel_title as _pt
+        try:
+            from . import context_capture as _cc
+            last = _cc.last()
+        except Exception:
+            console.print(f"[{PALETTE['meta']}]Context unavailable.[/{PALETTE['meta']}]")
+            return True, pinned_intensity
+        body = _T()
+        if last.total() == 0 and not last.summary:
+            body.append("No task run yet this session — context shows up after the first run.",
+                        style=PALETTE["meta_italic"])
+        else:
+            if last.task_text:
+                snippet = " ".join(last.task_text.split())
+                if len(snippet) > 90:
+                    snippet = snippet[:87] + "..."
+                body.append("For task: ", style=PALETTE["meta"])
+                body.append(f"{snippet}\n\n", style="white")
+
+            if last.summary:
+                import textwrap as _tw2
+                wrapped = _tw2.fill(last.summary, width=78, initial_indent="  ", subsequent_indent="  ")
+                body.append("What we've learned about this repo\n", style=PALETTE["info_bold"])
+                body.append(f"{wrapped}\n\n", style="white")
+
+            def _section(title: str, items: list[str]) -> None:
+                if not items:
+                    return
+                body.append(f"{title}\n", style=PALETTE["info_bold"])
+                for it in items:
+                    text = " ".join((it or "").split())
+                    if len(text) > 100:
+                        text = text[:97] + "..."
+                    body.append(f"  • {text}\n", style="white")
+                body.append("\n")
+
+            _section(f"Repo notes ({len(last.logic_notes)})", last.logic_notes)
+            _section(f"Behavioral guidelines ({len(last.guidelines)})", last.guidelines)
+            _section(f"Past developer feedback ({len(last.feedback)})", last.feedback)
+
+            body.append("Ranked by keyword overlap with the task.", style=PALETTE["meta_italic"])
+
+        console.print(_P(body, title=_pt("info", "context retrieved"),
+                         border_style=PALETTE["info"], padding=(1, 2)))
+        return True, pinned_intensity
+
+    if verb == "/cochange":
+        from rich.panel import Panel as _P
+        from rich.text import Text as _T
+        from .theme import panel_title as _pt
+        from ..cochange import cochange_graph
+
+        try:
+            graph = cochange_graph(trust_db, repo_root_str, min_count=2, limit_per_file=3)
+        except Exception:
+            graph = {}
+        body = _T()
+        if not graph:
+            body.append(
+                "No co-change history yet — patterns appear as you edit files together across sessions.",
+                style=PALETTE["meta_italic"],
+            )
+        else:
+            body.append("Files that have moved together across sessions\n\n", style=PALETTE["info_bold"])
+            for src in sorted(graph.keys()):
+                body.append(f"  {src}\n", style="white")
+                for nbr, n in graph[src]:
+                    body.append(f"    └─ {nbr}  ", style=PALETTE["meta"])
+                    body.append(f"({n} session{'s' if n != 1 else ''})\n", style=PALETTE["meta"])
+                body.append("\n")
+            body.append(
+                "Surfaced at plan stage when you edit a file with co-change history.",
+                style=PALETTE["meta_italic"],
+            )
+        console.print(_P(body, title=_pt("info", "co-change graph"),
+                         border_style=PALETTE["info"], padding=(1, 2)))
         return True, pinned_intensity
 
     if verb in ("/oversight", "/intensity"):

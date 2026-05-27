@@ -28,7 +28,7 @@ from typing import Literal
 
 
 # ---------------------------------------------------------------------------
-# Session-level signals — grounded in the SWE-chat analysis.
+# Session-level signals
 # ---------------------------------------------------------------------------
 
 
@@ -42,8 +42,7 @@ class CodingMode(str, Enum):
 
 
 class UserPersona(str, Enum):
-    """Session-level interaction style. Revised from the original 4-value
-    enum based on behavioral clustering of 5,776 sessions — the data supports
+    """Session-level interaction style. The data supports
     a 2-value intensity-based split, not persona-type labels."""
 
     DELEGATING = "delegating"  # short sessions, low pushback, high agent authorship
@@ -52,9 +51,7 @@ class UserPersona(str, Enum):
 
 
 class PushbackType(str, Enum):
-    """Per-turn pushback category. Extended from the original 4-value enum
-    based on topic analysis — 33% of real pushback messages didn't fit the
-    original categories. Two new values characterize what was missing."""
+    """Per-turn pushback category."""
 
     CORRECTION = "correction"               # user provides revised instructions
     REJECTION = "rejection"                 # user declines outright
@@ -143,7 +140,7 @@ class Condition:
     session state at decision time, not static action properties.
     """
 
-    # Inferred session-level signals (None = don't care).
+    # Inferred session-level signals 
     required_coding_mode: CodingMode | None = None
     required_persona: UserPersona | None = None
 

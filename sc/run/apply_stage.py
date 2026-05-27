@@ -816,6 +816,10 @@ def _evaluate_apply_stage(
         denied_apply=denied_apply,
         milestone_reasons=milestone_reasons,
         apply_risk=apply_risk,
+        task_intent=getattr(ctx.current_task_intent, "value", None),
+        persona=getattr(ctx.session_persona, "value", None),
+        trust_db=trust_db,
+        repo_root=repo_root_str,
     )
     history_context: AutonomyHistoryContext | None = None
     if not prompt_required and not denied_apply and not milestone_reasons:
