@@ -536,6 +536,65 @@ def _surface_ready_hypothesis(
     )
 
 
+def _surface_ready_hypothesis_after_no_op(
+    *,
+    trust_db: TrustDB,
+    repo_root_str: str,
+    run_session_id: str,
+) -> None:
+    """Surface a ready hypothesis when the apply path was skipped (no-op task).
+
+    Evidence can accumulate during plan-stage pushback even when the agent
+    decides no edits are needed. The normal surfacing path lives inside
+    _evaluate_apply_stage, which never runs on no-op tasks — without this,
+    a ready candidate gets stuck in ready_to_surface indefinitely.
+
+    No delegating gate here: on no-op tasks we have no session context to
+    infer intensity from, so we always surface if a candidate is ready.
+    """
+    hypothesis = get_ready_hypothesis(
+        trust_db=trust_db, repo_root=repo_root_str, session_id=run_session_id
+    )
+    if hypothesis is None:
+        return
+    if trust_db.session_has_confirmed_hypothesis(
+        repo_root_str, run_session_id, driver=hypothesis.driver
+    ):
+        return
+    import sys as _sys
+    if _sys.stdin.isatty():
+        import time as _time
+        _time.sleep(0.5)
+    confirmation = render_hypothesis_confirmation(hypothesis)
+    payload = (
+        {
+            "accepted": True,
+            "driver": hypothesis.driver,
+            "preference": preference_to_dict(hypothesis.proposed_preference),
+        }
+        if confirmation.confirmed
+        else {"accepted": False, "driver": hypothesis.driver}
+    )
+    try:
+        trust_db.save_confirmed_preference(
+            repo_root=repo_root_str,
+            session_id=run_session_id,
+            preference_json=json.dumps(payload),
+            driver=hypothesis.driver,
+        )
+    except Exception as exc:
+        import sys as _sys
+        print(f"[apply] preference save failed: {exc}", file=_sys.stderr)
+        return
+    mark_candidate_surfaced(
+        trust_db=trust_db,
+        repo_root=repo_root_str,
+        session_id=run_session_id,
+        driver=hypothesis.driver,
+        confirmed=confirmation.confirmed,
+    )
+
+
 def _run_hypothesis_pipeline(
     *,
     ctx: _SessionContext,

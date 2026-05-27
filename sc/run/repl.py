@@ -799,7 +799,17 @@ def run_repl(
 
         if not touched_files:
             # No-op task (already-complete signal from generate_updates). The
-            # ✓ banner was already printed; just loop back to the prompt.
+            # ✓ banner was already printed; surface any ready hypothesis then
+            # loop back to the prompt.
+            try:
+                from .apply_stage import _surface_ready_hypothesis_after_no_op
+                _surface_ready_hypothesis_after_no_op(
+                    trust_db=trust_db,
+                    repo_root_str=repo_root_str,
+                    run_session_id=run_session_id,
+                )
+            except Exception:
+                pass
             continue
 
         new_files = [p for p in touched_files if not (repo_root / p).exists()]
