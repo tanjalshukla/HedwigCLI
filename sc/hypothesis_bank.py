@@ -513,10 +513,14 @@ def maybe_generate_llm_hypotheses(
 
     new_ids: list[int] = []
     for item in candidates_data[:2]:
+        if not isinstance(item, dict):
+            continue
         driver = (item.get("driver") or "").strip()
         hyp_prompt = (item.get("prompt") or "").strip()
         rationale = (item.get("rationale") or "").strip()
         cited = item.get("evidence_trace_ids") or []
+        if not isinstance(cited, list):
+            cited = []
         if not driver or not hyp_prompt:
             continue
         if trust_db.candidate_driver_exists(repo_root, session_id, driver):

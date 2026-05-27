@@ -63,7 +63,13 @@ def run_verification(
     checks: list[VerificationCheck] = []
 
     if command:
-        argv = shlex.split(command)
+        try:
+            argv = shlex.split(command)
+        except ValueError as exc:
+            checks.append(VerificationCheck(
+                name="custom_verification", passed=False, output=f"malformed command: {exc}"
+            ))
+            argv = []
         if not argv:
             checks.append(VerificationCheck(
                 name="custom_verification", passed=False, output="verification command is empty"

@@ -191,8 +191,8 @@ def _handle_slash(
         # so seeded hypotheses and prior-session candidates also surface here.
         with trust_db._connect() as _conn:
             _pending = _conn.execute(
-                """SELECT prompt, evidence_for, evidence_against FROM hypothesis_candidates
-                   WHERE repo_root = ? AND status = 'pending'
+                """SELECT prompt, evidence_for, evidence_against, status FROM hypothesis_candidates
+                   WHERE repo_root = ? AND status IN ('pending', 'ready_to_surface')
                    ORDER BY (evidence_for + evidence_against) DESC, created_at ASC""",
                 (repo_root_str,),
             ).fetchall()
@@ -396,6 +396,27 @@ def _handle_slash(
                     _conn.execute(f"DELETE FROM {_table} WHERE repo_root = ?", (repo_root_str,))
                 except Exception:
                     pass
+        # Restore demo fixture files so the task "add a search-by-tag method"
+        # always has something real to add. Without this, code written by a
+        # prior demo run accumulates and the model finds nothing to do.
+        import subprocess as _sp
+        _demo_dir = str(Path(repo_root_str) / "demo_recipe_api")
+        try:
+            _sp.run(
+                ["git", "restore",
+                 "demo_recipe_api/recipe_api/store.py",
+                 "demo_recipe_api/recipe_api/service.py",
+                 "demo_recipe_api/tests/test_api.py"],
+                cwd=repo_root_str, capture_output=True,
+            )
+            # Do NOT use git clean here — test_store.py is untracked and
+            # would be permanently deleted on every reset.
+            _sp.run(
+                ["git", "restore", "demo_recipe_api/tests/test_api.py"],
+                cwd=repo_root_str, capture_output=True,
+            )
+        except Exception:
+            pass
         print(f"[{PALETTE['approve_bold']}]✓ governance state cleared — ready for next visitor.[/{PALETTE['approve_bold']}]")
         return True, pinned_intensity
 

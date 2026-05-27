@@ -47,9 +47,9 @@ _RECIPES: dict[str, Recipe] = {
             "Brown butter adds a nutty depth that takes these over the top."
         ),
         ingredients=[
-            Ingredient(name="all-purpose flour", amount="2¼ cups"),
+            Ingredient(name="all-purpose flour", amount="2\u00bc cups"),
             Ingredient(name="unsalted butter, browned and cooled", amount="1 cup"),
-            Ingredient(name="brown sugar, packed", amount="¾ cup"),
+            Ingredient(name="brown sugar, packed", amount="\u00be cup"),
             Ingredient(name="large eggs", amount="2"),
             Ingredient(name="semi-sweet chocolate chips", amount="2 cups"),
         ],
@@ -68,7 +68,7 @@ _RECIPES: dict[str, Recipe] = {
             Ingredient(name="sourdough bread, sliced thick", amount="2 slices"),
             Ingredient(name="ripe avocados", amount="2"),
             Ingredient(name="lemon juice", amount="1 tbsp"),
-            Ingredient(name="chilli flakes", amount="½ tsp"),
+            Ingredient(name="chilli flakes", amount="\u00bd tsp"),
             Ingredient(name="flaky sea salt", amount="to taste"),
         ],
         tags=["breakfast", "vegetarian"],
@@ -99,3 +99,11 @@ def next_recipe_id() -> str:
     while f"recipe-{n}" in _RECIPES:
         n += 1
     return f"recipe-{n}"
+
+
+def search_by_tag(tag: str | None) -> list[Recipe]:
+    """Return all recipes whose tags contain *tag* (case-insensitive)."""
+    if not tag or not tag.strip():
+        return []
+    needle = tag.strip().lower()
+    return [r for r in _RECIPES.values() if needle in (t.lower() for t in r.tags)]
