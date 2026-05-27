@@ -54,6 +54,19 @@ def _format_verify_cell(value: int | None) -> str:
 
 
 def _format_trace_row(row: dict) -> list[str]:
+    # Model-reviewer column. Older trace rows pre-date model_risk_score, and
+    # newer rows where the reviewer was unavailable also store NULL — both
+    # render as "-". When present we show "score / 'rationale snippet'".
+    model_risk_raw = row.get("model_risk_score") if isinstance(row, dict) else None
+    model_risk_rat = row.get("model_risk_rationale") if isinstance(row, dict) else None
+    if model_risk_raw is None:
+        model_risk_cell = "-"
+    elif model_risk_rat:
+        model_risk_cell = (
+            f"{float(model_risk_raw):.2f} {_truncate_text(str(model_risk_rat), max_len=30)}"
+        )
+    else:
+        model_risk_cell = f"{float(model_risk_raw):.2f}"
     return [
         str(row["id"]),
         _format_timestamp(int(row["created_at"])),
@@ -79,6 +92,7 @@ def _format_trace_row(row: dict) -> list[str]:
         if row["rubber_stamp"] == 1 and _is_approval_decision(str(row["user_decision"]))
         else "-",
         str(row["response_time_ms"] if row["response_time_ms"] is not None else "-"),
+        model_risk_cell,
     ]
 
 
@@ -146,6 +160,7 @@ def traces(
         "Review(s)",
         "Review",
         "Time(ms)",
+        "Model Risk",
     ]
     table = Table(title="Recent Traces")
     for column in columns:
@@ -615,6 +630,7 @@ def weights(
         "verification_failure_rate":"verification failure rate",
         "model_confidence_avg":     "model confidence",
         "change_pattern_risk":      "change pattern risk",
+        "model_risk_score":         "model reviewer (advisory)",
     }
 
     # Build per-feature rows with their deltas.
