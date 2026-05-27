@@ -122,6 +122,17 @@ Heuristic scoring from `policy.py`. The current weights are an explicit baseline
 | Quality | Low model confidence (<0.40, 3+ samples) | -0.3 | From trace history |
 | Quality | Adversarial-reviewer score (advisory) | ±0.3 max | `model_risk_score` from `model_risk.assess_risk_via_model`; mapped to [-1, +1] around the 0.5 "no opinion" default and weighted 0.3. Apply-stage only. Failure default 0.5 contributes nothing. |
 
+**Reviewer call budget.** The adversarial-reviewer Bedrock call is gated by `model_risk.should_review(risk, history)`. The reviewer fires only if at least one of the following holds; otherwise the call is skipped entirely and `model_risk_score` stays at its 0.5 default (zero contribution to the heuristic score):
+
+1. `risk.is_new_file` — no history for the path.
+2. `risk.is_security_sensitive` — security path or content hint.
+3. `risk.blast_radius >= 4` — many dependents touched.
+4. `risk.diff_size >= 80` — large diff.
+5. `risk.change_pattern in {api_change, data_model_change, config_change, dependency_update, security_change}`.
+6. `history.effective_approvals == 0 and history.denials == 0` — cold path.
+
+A per-stage cap of **5 reviewer calls per `_evaluate_apply_stage`** invocation acts as a backstop: once the budget is exhausted, remaining gated files fall back to the 0.5 default and a single dim line is rendered in the apply UI. The cap is loop-local — every `hw run` gets a fresh budget.
+
 **Scoring band behavior (three tiers):**
 
 | Score Range | Action | Developer Sees |
