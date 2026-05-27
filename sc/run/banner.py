@@ -28,6 +28,34 @@ OWL_LINES = [
 ]
 
 
+# Stage → palette key. Every value must be a key already in PALETTE
+# (theme.py is the single source of truth — no new colors here).
+# Mapping rationale:
+#   read    → info        (cyan; the default information family)
+#   plan    → meta        (white/secondary; planning is reflective, not active)
+#   apply   → learn_bold  (the headline action; the closest harmonious
+#                         accent we have to the poster's magenta/pink)
+#   verify  → approve_bold (bright green; verification is a confirm moment)
+#   report  → meta        (post-action wrap-up, secondary register)
+STAGE_PALETTE_KEYS: dict[str, str] = {
+    "read": "info",
+    "plan": "meta",
+    "apply": "learn_bold",
+    "verify": "approve_bold",
+    "report": "meta",
+}
+
+
+def _banner_word_style(stage: str | None) -> str:
+    """Return the Rich style string for the 'hedwig' word and the owl glyph
+    given a stage. Falls back to ``info_bold`` (legacy behavior) when no
+    stage is supplied or the stage is unknown."""
+    if stage is None:
+        return PALETTE["info_bold"]
+    key = STAGE_PALETTE_KEYS.get(stage, "info_bold")
+    return PALETTE[key]
+
+
 def render_banner(
     *,
     mode: str | None = None,
@@ -36,12 +64,20 @@ def render_banner(
     model_short: str | None = None,
     session_turn_count: int = 0,
     confirmed_pref_count: int = 0,
+    stage: str | None = None,
 ) -> None:
-    """Render the Hedwig owl plus session context to the right."""
+    """Render the Hedwig owl plus session context to the right.
+
+    ``stage`` (one of ``read``/``plan``/``apply``/``verify``/``report``)
+    shifts the color of the owl and the ``hedwig`` word; default of
+    ``None`` keeps the legacy cyan styling so existing call sites are
+    unaffected.
+    """
     console = _CONSOLE
+    word_style = _banner_word_style(stage)
 
     right_lines: list[str] = []
-    right_lines.append(f"[{PALETTE['info_bold']}]hedwig[/{PALETTE['info_bold']}]")
+    right_lines.append(f"[{word_style}]hedwig[/{word_style}]")
     if model_short:
         right_lines.append(f"[{PALETTE['meta']}]{model_short}[/{PALETTE['meta']}]")
     if mode:
@@ -82,9 +118,12 @@ def render_banner(
     while len(right_lines) < len(OWL_LINES):
         right_lines.append("")
 
+    # Owl glyph color tracks the same stage shift so the visual is unified.
+    # When no stage is passed, fall back to the legacy ``info`` cyan.
+    owl_style = word_style if stage is not None else PALETTE["info"]
     for owl_line, right in zip(OWL_LINES, right_lines):
         console.print(
-            f"[{PALETTE['info']}]{owl_line}[/{PALETTE['info']}]  {right}"
+            f"[{owl_style}]{owl_line}[/{owl_style}]  {right}"
         )
     console.print()
 
@@ -96,6 +135,7 @@ def render_session_start_banner(
     prior_session_summary: SessionSummary | None,
     pinned_intensity: str | None = None,
     confirmed_pref_count: int = 0,
+    stage: str | None = None,
 ) -> None:
     """Session-start variant — shows mode, inferred/pinned intensity, and
     confirmed preference count so the learning story lands immediately."""
@@ -120,4 +160,5 @@ def render_session_start_banner(
         model_short=model_short,
         session_turn_count=turns,
         confirmed_pref_count=confirmed_pref_count,
+        stage=stage,
     )
