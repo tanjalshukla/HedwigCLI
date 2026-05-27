@@ -44,6 +44,7 @@ from ..autonomy import (
 )
 from ..config import SAConfig, autonomy_profile
 from ..features import RiskSignals, assess_risk, change_type_label
+from ..model_risk import assess_risk_via_model
 from ..ml_policy import PolicyClassifier, build_cold_classifier
 from ..policy import PolicyDecision
 from .helpers import (
@@ -596,6 +597,12 @@ def _evaluate_apply_stage(
 
     def _risk_diff_sizes() -> dict[str, int | None]:
         return {p: r.diff_size for p, r in apply_risk.items()}
+
+    def _risk_model_review() -> dict[str, tuple[float, str]]:
+        return {
+            p: (r.model_risk_score, r.model_risk_rationale)
+            for p, r in apply_risk.items()
+        }
     denied_apply: list[str] = []
     recent_apply_denials = trust_db.recent_denials(
         repo_root_str,
@@ -681,6 +688,26 @@ def _evaluate_apply_stage(
             is_new_file=is_new_file,
             diff_size=diff_size,
         )
+        # Adversarial-reviewer pass — augments risk with an advisory
+        # model_risk_score. Apply-stage only (read-stage doesn't use this).
+        # Failures fall back to (0.5, "") so the deterministic signals stay
+        # authoritative; never a veto, never a loosener.
+        if client is not None:
+            model_score, model_rationale = assess_risk_via_model(
+                file_path=path,
+                diff_or_content=new_content,
+                file_context=old_content,
+                agent_client=client,
+            )
+            risk = RiskSignals(
+                change_pattern=risk.change_pattern,
+                blast_radius=risk.blast_radius,
+                is_security_sensitive=risk.is_security_sensitive,
+                is_new_file=risk.is_new_file,
+                diff_size=risk.diff_size,
+                model_risk_score=model_score,
+                model_risk_rationale=model_rationale,
+            )
         apply_risk[path] = risk
 
         constraint = apply_constraints.get(path)
@@ -774,6 +801,7 @@ def _evaluate_apply_stage(
         prompt_required=prompt_required,
         denied_apply=denied_apply,
         milestone_reasons=milestone_reasons,
+        apply_risk=apply_risk,
     )
     history_context: AutonomyHistoryContext | None = None
     if not prompt_required and not denied_apply and not milestone_reasons:
@@ -823,6 +851,7 @@ def _evaluate_apply_stage(
             blast_radius=len(touched_files),
             existing_leases=apply_leases,
             study_context=study_context,
+            model_risk_by_file=_risk_model_review(),
         )
         feedback.note_decision(False, change_patterns=[change_type_label(r) for r in apply_risk.values()])
         raise typer.Exit(code=1)
@@ -883,6 +912,7 @@ def _evaluate_apply_stage(
                 blast_radius=len(touched_files),
                 existing_leases=apply_leases,
                 study_context=study_context,
+                model_risk_by_file=_risk_model_review(),
             )
         # Record traces for check-in files with user's actual decision.
         prompted_decision = (
@@ -908,6 +938,7 @@ def _evaluate_apply_stage(
             user_feedback_text=apply_feedback,
             check_in_initiators=_policy_checkin_initiators(check_in_files, apply_policies),
             study_context=study_context,
+            model_risk_by_file=_risk_model_review(),
         )
         feedback.note_decision(
             approved,
@@ -1010,6 +1041,7 @@ def _evaluate_apply_stage(
         blast_radius=len(touched_files),
         existing_leases=apply_leases,
         study_context=study_context,
+        model_risk_by_file=_risk_model_review(),
     )
     feedback.note_decision(True)
     _update_classifier(

@@ -45,6 +45,10 @@ class PolicyInput:
     verification_failure_rate: float | None = None
     model_confidence_avg: float | None = None
     model_confidence_samples: int = 0
+    # Advisory model-reviewer score. 0.5 = "no opinion" (also the failure
+    # default from assess_risk_via_model). The deterministic signals above
+    # stay load-bearing; this is an additive feature both scorers consume.
+    model_risk_score: float = 0.5
 
     @classmethod
     def from_signals(
@@ -80,6 +84,7 @@ class PolicyInput:
             verification_failure_rate=verification_failure_rate,
             model_confidence_avg=model_confidence_avg,
             model_confidence_samples=model_confidence_samples,
+            model_risk_score=getattr(risk, "model_risk_score", 0.5),
         )
 
 
@@ -224,6 +229,26 @@ def decide_action(
             f"-quality:low model confidence {policy_input.model_confidence_avg:.2f} "
             f"({policy_input.model_confidence_samples} samples)"
         )
+
+    # --- adversarial reviewer signal (advisory) ---
+    # model_risk_score: 0.0 = looks safe, 1.0 = high risk, 0.5 = no opinion.
+    # Map to [-1, +1] (safe is positive, risky is negative) and weight 0.3 —
+    # small enough that the deterministic risk signals dominate, large enough
+    # to nudge a borderline decision. Skip when at the no-opinion default
+    # (which is also the documented failure fallback from
+    # assess_risk_via_model) so the heuristic doesn't pretend to have a
+    # signal it doesn't have.
+    if abs(policy_input.model_risk_score - 0.5) > 1e-9:
+        delta = (0.5 - policy_input.model_risk_score) * 2.0  # +1 safe / -1 risky
+        score += 0.3 * delta
+        if delta < 0:
+            reasons.append(
+                f"-risk:adversarial reviewer flagged {policy_input.model_risk_score:.2f}"
+            )
+        else:
+            reasons.append(
+                f"+risk:adversarial reviewer cleared {policy_input.model_risk_score:.2f}"
+            )
 
     # --- threshold comparison ---
     if score >= proceed_threshold:

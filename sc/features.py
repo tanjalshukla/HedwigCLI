@@ -21,13 +21,25 @@ from pathlib import Path
 
 @dataclass(frozen=True)
 class RiskSignals:
-    """Raw risk signals for one action. Consumers weight as they see fit."""
+    """Raw risk signals for one action. Consumers weight as they see fit.
+
+    The first five fields are the deterministic, load-bearing signals — every
+    scorer must keep weighting them. ``model_risk_score`` is an *advisory*
+    extension produced by an adversarial-reviewer pass over the diff (see
+    ``model_risk.assess_risk_via_model``). It defaults to 0.5 ("no opinion")
+    so existing callers and any failure mode (Bedrock error, JSON parse
+    failure, schema mismatch, timeout) never silently flip a decision —
+    only a successfully reviewed action contributes signal.
+    """
 
     change_pattern: str
     blast_radius: int
     is_security_sensitive: bool
     is_new_file: bool
     diff_size: int
+    # Advisory model-reviewer signals. NOT a veto; scorers weight this small.
+    model_risk_score: float = 0.5
+    model_risk_rationale: str = ""
 
 
 # Canonical change-pattern vocabulary. Scorers derive their weights from these;
