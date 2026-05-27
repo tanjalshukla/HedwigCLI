@@ -29,6 +29,55 @@ import hashlib
 import json
 from typing import Any
 
+from .features import RiskSignals
+from .trust_db import PolicyHistory
+
+
+# Change patterns for which the reviewer adds enough signal to justify the
+# Bedrock call even on a small/familiar diff. Mirrors apply_stage's
+# _HIGH_RISK_CHANGE_TYPES, plus "security_change" defensively (not currently
+# in CHANGE_PATTERNS, but cheap to keep aligned with the gate rationale).
+_REVIEWER_HIGH_RISK_PATTERNS = frozenset(
+    {
+        "api_change",
+        "data_model_change",
+        "config_change",
+        "dependency_update",
+        "security_change",
+    }
+)
+
+
+def should_review(*, risk: RiskSignals, history: PolicyHistory) -> bool:
+    """Gate for the adversarial-reviewer Bedrock call.
+
+    Returns True iff the reviewer is likely to add signal beyond the
+    deterministic ``RiskSignals``. Returning False short-circuits the
+    Bedrock call; the caller leaves ``model_risk_score`` at its 0.5
+    "no opinion" default, which contributes zero in the heuristic.
+
+    Trigger conditions (any one is enough):
+      1. New file — no history, reviewer adds value.
+      2. Security-sensitive path/content.
+      3. High blast radius (>= 4 dependents touched).
+      4. Large diff (>= 80 lines).
+      5. Inherently high-risk change pattern (api/data-model/config/dep/security).
+      6. No prior trust history for this file (cold path).
+    """
+    if risk.is_new_file:
+        return True
+    if risk.is_security_sensitive:
+        return True
+    if risk.blast_radius >= 4:
+        return True
+    if risk.diff_size >= 80:
+        return True
+    if risk.change_pattern in _REVIEWER_HIGH_RISK_PATTERNS:
+        return True
+    if history.effective_approvals == 0 and history.denials == 0:
+        return True
+    return False
+
 # Hard upper bound on file_context characters fed to the reviewer. The
 # reviewer benefits from seeing surrounding code but does not need the
 # whole file — and Bedrock latency scales with input size. 4_000 chars is

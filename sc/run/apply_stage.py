@@ -44,7 +44,7 @@ from ..autonomy import (
 )
 from ..config import SAConfig, autonomy_profile
 from ..features import RiskSignals, assess_risk, change_type_label
-from ..model_risk import assess_risk_via_model
+from ..model_risk import assess_risk_via_model, should_review
 from ..ml_policy import PolicyClassifier, build_cold_classifier
 from ..policy import PolicyDecision
 from .helpers import (
@@ -668,6 +668,13 @@ def _evaluate_apply_stage(
         session_id=run_session_id,
     )
 
+    # Per-stage budget for adversarial-reviewer calls. Cap at 5 invocations
+    # per `_evaluate_apply_stage` to keep Bedrock cost bounded even when
+    # many files would otherwise pass the should_review gate. Resets every
+    # `hw run` (counter is loop-local, not module-level).
+    reviewer_calls = 0
+    reviewer_skipped_due_to_cap = 0
+
     # Score each touched file independently, then aggregate to one approval decision.
     for path in touched_files:
         history = trust_db.policy_history(repo_root_str, path, stage="apply")
@@ -692,22 +699,26 @@ def _evaluate_apply_stage(
         # model_risk_score. Apply-stage only (read-stage doesn't use this).
         # Failures fall back to (0.5, "") so the deterministic signals stay
         # authoritative; never a veto, never a loosener.
-        if client is not None:
-            model_score, model_rationale = assess_risk_via_model(
-                file_path=path,
-                diff_or_content=new_content,
-                file_context=old_content,
-                agent_client=client,
-            )
-            risk = RiskSignals(
-                change_pattern=risk.change_pattern,
-                blast_radius=risk.blast_radius,
-                is_security_sensitive=risk.is_security_sensitive,
-                is_new_file=risk.is_new_file,
-                diff_size=risk.diff_size,
-                model_risk_score=model_score,
-                model_risk_rationale=model_rationale,
-            )
+        if client is not None and should_review(risk=risk, history=history):
+            if reviewer_calls >= 5:  # per-stage budget cap; see comment above
+                reviewer_skipped_due_to_cap += 1
+            else:
+                model_score, model_rationale = assess_risk_via_model(
+                    file_path=path,
+                    diff_or_content=new_content,
+                    file_context=old_content,
+                    agent_client=client,
+                )
+                reviewer_calls += 1
+                risk = RiskSignals(
+                    change_pattern=risk.change_pattern,
+                    blast_radius=risk.blast_radius,
+                    is_security_sensitive=risk.is_security_sensitive,
+                    is_new_file=risk.is_new_file,
+                    diff_size=risk.diff_size,
+                    model_risk_score=model_score,
+                    model_risk_rationale=model_rationale,
+                )
         apply_risk[path] = risk
 
         constraint = apply_constraints.get(path)
@@ -782,6 +793,9 @@ def _evaluate_apply_stage(
             prompt_required = True
         elif decision.action == "proceed_flag":
             flagged_auto_files.append(path)
+
+    if reviewer_skipped_due_to_cap > 0 and reviewer_calls >= 5:
+        print("[dim]model reviewer: 5/5 budget reached, skipping remainder[/dim]")
 
     milestone_reasons = _apply_milestone_reasons(
         declaration=declaration,

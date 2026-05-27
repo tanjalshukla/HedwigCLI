@@ -19,7 +19,9 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 from sc import model_risk
-from sc.model_risk import assess_risk_via_model
+from sc.features import RiskSignals
+from sc.model_risk import assess_risk_via_model, should_review
+from sc.trust_db import PolicyHistory
 
 
 def _fake_client(text_response: str | None = None, raise_exc: Exception | None = None) -> SimpleNamespace:
@@ -136,6 +138,79 @@ class AssessRiskViaModelTests(unittest.TestCase):
         self.assertNotIn("task_summary", user_text)
         self.assertNotIn("planned_files", user_text)
         self.assertNotIn("intent_declaration", user_text)
+
+
+def _risk(
+    *,
+    change_pattern: str = "general_change",
+    blast_radius: int = 1,
+    is_security_sensitive: bool = False,
+    is_new_file: bool = False,
+    diff_size: int = 10,
+) -> RiskSignals:
+    return RiskSignals(
+        change_pattern=change_pattern,
+        blast_radius=blast_radius,
+        is_security_sensitive=is_security_sensitive,
+        is_new_file=is_new_file,
+        diff_size=diff_size,
+    )
+
+
+def _history(*, approvals: int = 0, denials: int = 0, effective: float | None = None) -> PolicyHistory:
+    return PolicyHistory(
+        approvals=approvals,
+        denials=denials,
+        effective_approvals=float(approvals) if effective is None else effective,
+        rubber_stamp_approvals=0,
+        avg_response_ms=None,
+        avg_edit_distance=None,
+    )
+
+
+class ShouldReviewTests(unittest.TestCase):
+    def test_new_file_triggers_review(self) -> None:
+        self.assertTrue(should_review(risk=_risk(is_new_file=True), history=_history(approvals=5)))
+
+    def test_security_sensitive_triggers_review(self) -> None:
+        self.assertTrue(
+            should_review(risk=_risk(is_security_sensitive=True), history=_history(approvals=5))
+        )
+
+    def test_high_blast_radius_triggers_review(self) -> None:
+        self.assertTrue(should_review(risk=_risk(blast_radius=5), history=_history(approvals=5)))
+
+    def test_large_diff_triggers_review(self) -> None:
+        self.assertTrue(should_review(risk=_risk(diff_size=100), history=_history(approvals=5)))
+
+    def test_high_risk_change_pattern_triggers_review(self) -> None:
+        self.assertTrue(
+            should_review(risk=_risk(change_pattern="api_change"), history=_history(approvals=5))
+        )
+
+    def test_no_history_triggers_review(self) -> None:
+        self.assertTrue(should_review(risk=_risk(), history=_history()))
+
+    def test_familiar_low_risk_skips_review(self) -> None:
+        risk = _risk(
+            change_pattern="general_change",
+            blast_radius=1,
+            is_security_sensitive=False,
+            is_new_file=False,
+            diff_size=10,
+        )
+        history = _history(approvals=3, denials=0, effective=3.0)
+        self.assertFalse(should_review(risk=risk, history=history))
+
+    def test_blast_radius_threshold_inclusive(self) -> None:
+        history = _history(approvals=3, effective=3.0)
+        self.assertTrue(should_review(risk=_risk(blast_radius=4), history=history))
+        self.assertFalse(should_review(risk=_risk(blast_radius=3), history=history))
+
+    def test_diff_size_threshold_inclusive(self) -> None:
+        history = _history(approvals=3, effective=3.0)
+        self.assertTrue(should_review(risk=_risk(diff_size=80), history=history))
+        self.assertFalse(should_review(risk=_risk(diff_size=79), history=history))
 
 
 if __name__ == "__main__":
