@@ -40,6 +40,7 @@ def render_apply_policy_snapshot(
     prompt_required: bool,
     denied_apply: list[str],
     milestone_reasons: tuple[str, ...],
+    apply_risk: dict[str, RiskSignals] | None = None,
 ) -> None:
     # When a diff panel will follow immediately, suppress the pre-diff file list —
     # it's redundant. Only force-show for hard-constraint denials and milestone gates
@@ -52,6 +53,18 @@ def render_apply_policy_snapshot(
         policies=policies,
         force=force,
     )
+    if apply_risk:
+        for path in touched_files:
+            risk = apply_risk.get(path)
+            if risk is None or not risk.model_risk_rationale:
+                continue
+            # Advisory adversarial-reviewer line. Style consistent with the
+            # auto-approve summary's dim secondary rows.
+            print(
+                f"  [{PALETTE['meta']}]model reviewer  "
+                f"{risk.model_risk_score:.2f} — "
+                f"\"{risk.model_risk_rationale}\"[/{PALETTE['meta']}]"
+            )
 
 
 def render_apply_auto_approve_summary(

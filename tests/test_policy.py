@@ -112,5 +112,53 @@ class PolicyTests(unittest.TestCase):
         self.assertTrue(any("low model confidence" in reason for reason in decision.reasons))
 
 
+class AdversarialReviewerWeightTests(unittest.TestCase):
+    """The adversarial-reviewer score is small but real: pessimistic reviews
+    push the score down, optimistic reviews push it up, and the no-opinion
+    default contributes nothing. Documented at ±0.3 in SPEC.md."""
+
+    def _base(self, model_risk_score: float) -> PolicyInput:
+        return PolicyInput(
+            prior_approvals=2,
+            prior_denials=0,
+            avg_response_ms=5000,
+            avg_edit_distance=0.0,
+            diff_size=10,
+            blast_radius=1,
+            is_new_file=False,
+            is_security_sensitive=False,
+            change_pattern="general_change",
+            recent_denials=0,
+            files_in_action=1,
+            model_risk_score=model_risk_score,
+        )
+
+    def test_no_opinion_default_does_not_shift_score(self) -> None:
+        baseline = decide_action(self._base(0.5), 1.2, 0.3)
+        # No reason string mentions the reviewer when there's no opinion.
+        self.assertFalse(
+            any("adversarial reviewer" in r for r in baseline.reasons)
+        )
+
+    def test_high_risk_reviewer_subtracts(self) -> None:
+        baseline = decide_action(self._base(0.5), 1.2, 0.3)
+        risky = decide_action(self._base(1.0), 1.2, 0.3)
+        self.assertLess(risky.score, baseline.score)
+        # Documented ±0.3 max; (0.5 - 1.0)*2 * 0.3 = -0.3
+        self.assertAlmostEqual(risky.score - baseline.score, -0.3, places=4)
+        self.assertTrue(
+            any("adversarial reviewer flagged" in r for r in risky.reasons)
+        )
+
+    def test_low_risk_reviewer_adds(self) -> None:
+        baseline = decide_action(self._base(0.5), 1.2, 0.3)
+        safe = decide_action(self._base(0.0), 1.2, 0.3)
+        self.assertGreater(safe.score, baseline.score)
+        self.assertAlmostEqual(safe.score - baseline.score, 0.3, places=4)
+        self.assertTrue(
+            any("adversarial reviewer cleared" in r for r in safe.reasons)
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -105,6 +105,19 @@ class TestFeaturize(unittest.TestCase):
     def test_feature_names_length_matches_featurize(self) -> None:
         self.assertEqual(len(FEATURE_NAMES), len(featurize(_make_pi())))
 
+    def test_model_risk_score_present_and_passthrough(self) -> None:
+        # The advisory adversarial-reviewer feature is wired in, defaults to
+        # 0.5 ("no opinion"), and threads through unchanged when set explicitly.
+        self.assertIn("model_risk_score", FEATURE_NAMES)
+        idx = FEATURE_NAMES.index("model_risk_score")
+        self.assertAlmostEqual(featurize(_make_pi())[idx], 0.5)
+
+        from dataclasses import replace
+        pi_high = replace(_make_pi(), model_risk_score=0.9)
+        pi_low = replace(_make_pi(), model_risk_score=0.1)
+        self.assertAlmostEqual(featurize(pi_high)[idx], 0.9)
+        self.assertAlmostEqual(featurize(pi_low)[idx], 0.1)
+
 
 class TestWarmStart(unittest.TestCase):
     def setUp(self) -> None:

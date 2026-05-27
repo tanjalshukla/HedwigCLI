@@ -32,6 +32,7 @@ def _record_traces(
     model_assumptions_by_file: dict[str, list[str] | None] | None = None,
     check_in_initiators: dict[str, str | None] | None = None,
     study_context: StudyContext | None = None,
+    model_risk_by_file: dict[str, tuple[float, str]] | None = None,
 ) -> None:
     for path in files:
         history = histories[path]
@@ -61,6 +62,18 @@ def _record_traces(
         scorer_uncertainty = (
             abs(policy.score - 0.5) if policy.score is not None else None
         )
+        model_risk_score: float | None = None
+        model_risk_rationale: str | None = None
+        if model_risk_by_file is not None:
+            mr = model_risk_by_file.get(path)
+            if mr is not None:
+                score_val, rationale_val = mr
+                # Persist the score even at the no-opinion default — downstream
+                # analysis can filter by ``rationale != ''`` to find rows where
+                # the reviewer actually fired. Empty rationale → store NULL so
+                # the column reads cleanly.
+                model_risk_score = float(score_val)
+                model_risk_rationale = rationale_val or None
         trust_db.record_trace(
             repo_root=repo_root,
             session_id=session_id,
@@ -95,6 +108,8 @@ def _record_traces(
             pushback_type=pushback_type,
             scorer_uncertainty=scorer_uncertainty,
             turn_purpose=turn_purpose,
+            model_risk_score=model_risk_score,
+            model_risk_rationale=model_risk_rationale,
         )
 
 

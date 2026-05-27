@@ -102,6 +102,8 @@ class TraceStoreMixin:
         pushback_type: str | None = None,
         scorer_uncertainty: float | None = None,
         turn_purpose: str | None = None,
+        model_risk_score: float | None = None,
+        model_risk_rationale: str | None = None,
     ) -> None:
         now = int(time.time())
         if review_duration_seconds is None and response_time_ms is not None:
@@ -130,8 +132,9 @@ class TraceStoreMixin:
                     verification_passed, verification_checks_json, expected_behavior,
                     model_confidence_self_report, model_assumptions_json,
                     check_in_initiator, participant_id, study_run_id, study_task_id, autonomy_mode,
-                    pushback_type, scorer_uncertainty, turn_purpose, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    pushback_type, scorer_uncertainty, turn_purpose,
+                    model_risk_score, model_risk_rationale, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     repo_root,
@@ -169,6 +172,8 @@ class TraceStoreMixin:
                     pushback_type,
                     scorer_uncertainty,
                     turn_purpose,
+                    model_risk_score,
+                    model_risk_rationale,
                     now,
                 ),
             )
@@ -322,6 +327,7 @@ class TraceStoreMixin:
                     user_feedback_text, verification_passed, expected_behavior,
                     model_confidence_self_report, model_assumptions_json,
                     check_in_initiator, pushback_type, turn_purpose,
+                    model_risk_score, model_risk_rationale,
                     participant_id, study_run_id, study_task_id, autonomy_mode, created_at
                 FROM decision_traces
                 WHERE repo_root = ?

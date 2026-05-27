@@ -33,6 +33,10 @@ FEATURE_NAMES: list[str] = [
     "verification_failure_rate",
     "model_confidence_avg",
     "change_pattern_risk",
+    # Advisory adversarial-reviewer score in [0, 1]. Defaults to 0.5
+    # ("no opinion") on any failure in assess_risk_via_model, so the
+    # learned scorer treats missing signal as neutral rather than risky.
+    "model_risk_score",
 ]
 
 # Risk weight per change_pattern. Fed into featurize() so the learned scorer
@@ -73,6 +77,7 @@ def featurize(pi: "PolicyInput") -> np.ndarray:
             pi.verification_failure_rate if pi.verification_failure_rate is not None else 0.0,
             pi.model_confidence_avg if pi.model_confidence_avg is not None else 0.5,
             (_PATTERN_RISK.get(pi.change_pattern, 0.0) + 1.0) / 2.0,
+            float(pi.model_risk_score),
         ],
         dtype=np.float64,
     )
