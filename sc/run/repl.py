@@ -641,7 +641,11 @@ def _handle_slash(
             ("/retrospective", "Where Hedwig was too cautious or too loose this session"),
             ("/status",        "Current session: engagement level, coding mode, model state"),
         ]
+        from .banner import OWL_LINES
         _sc.print()
+        _owl_color = PALETTE["info_bold"]
+        for _owl_line in OWL_LINES:
+            _sc.print(f"[{_owl_color}]{_owl_line}[/{_owl_color}]")
         _sc.print(_Rule(
             f"[{PALETTE['info_bold']}]hedwig — what I've learned about this repo[/{PALETTE['info_bold']}]",
             style=PALETTE["info"],
