@@ -149,10 +149,18 @@ One task typed in the REPL from keystroke to wrap-up:
   no-opinion midpoint. Weights are documented in `SPEC.md`'s weight
   table; they are priors, not tuning knobs.
 - **`PolicyClassifier`** (`sc/ml_policy.py`) — `SGDClassifier(loss="log_loss")`
-  over the 14-feature vector (see `FEATURE_NAMES`). `update()`
-  partial-fits on each real decision; an `IsotonicRegression`
-  calibrator refits once 20 real decisions accumulate
-  (`_CALIBRATION_MIN_SAMPLES=20`). The classifier is pickled and
+  over 14 features (`FEATURE_NAMES`):
+
+  | Group | Features |
+  |---|---|
+  | History | `prior_approvals`, `prior_denials`, `avg_response_ms`, `avg_edit_distance` |
+  | Risk | `diff_size_log`, `blast_radius`, `is_new_file`, `is_security_sensitive`, `files_in_action` |
+  | Session | `recent_denials`, `verification_failure_rate`, `model_confidence_avg` |
+  | Pattern | `change_pattern_risk` (scalar mapping of change pattern) |
+  | Advisory | `model_risk_score` (second-opinion reviewer output) |
+
+  `update()` partial-fits on each real decision; an `IsotonicRegression`
+  calibrator refits once 20 real decisions accumulate. Pickled and
   reloaded from SQLite every apply turn.
 - **`select_scorer`** (`sc/policy.py`) — picks the learned adapter
   iff `PolicyClassifier.ready()` returns true

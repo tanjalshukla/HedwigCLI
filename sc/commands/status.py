@@ -144,7 +144,7 @@ def status(
             """
             SELECT session_id
             FROM decision_traces
-            WHERE repo_root = ? AND session_id NOT IN ('seed_demo', 'demo_prior_session')
+            WHERE repo_root = ? AND session_id != 'seed_demo'
             ORDER BY created_at DESC
             LIMIT 1
             """,

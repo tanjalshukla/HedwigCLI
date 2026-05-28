@@ -309,10 +309,7 @@ def _handle_slash(
         body = _T()
         if last.total() == 0 and not last.summary:
             body.append(
-                "After the first task, this shows exactly what Hedwig retrieved from repo memory "
-                "and injected into the agent's prompt — repo facts, behavioral guidelines, and "
-                "past corrections, ranked by keyword overlap with the task.\n\n"
-                "The repo memory is already seeded: run any task to see it populate.",
+                "Run a task to see what was retrieved from repo memory.",
                 style=PALETTE["meta_italic"],
             )
         else:
@@ -374,10 +371,6 @@ def _handle_slash(
                     body.append(f"    └─ {nbr}  ", style=PALETTE["meta"])
                     body.append(f"({n} session{'s' if n != 1 else ''})\n", style=PALETTE["meta"])
                 body.append("\n")
-            body.append(
-                "Surfaced at plan stage when you edit a file with co-change history.",
-                style=PALETTE["meta_italic"],
-            )
         console.print(_P(body, title=_pt("info", "co-change graph"),
                          border_style=PALETTE["info"], padding=(1, 2)))
         return True, pinned_intensity
@@ -683,7 +676,7 @@ def _handle_slash(
         _sc.print()
         _sc.print(_Rule(style=PALETTE["meta"]))
         _sc.print(
-            f"[{PALETTE['meta']}]Run /showcase any time to refresh. "
+            f"[{PALETTE['meta']}]"
             f"For full detail: hw observe export --html[/{PALETTE['meta']}]"
         )
         return True, pinned_intensity

@@ -106,7 +106,7 @@ _SEED_TRACES: tuple[SeedTrace, ...] = (
               "demo_recipe_api/recipe_api/service.py",
               "general_change", 8, 1, 1, 1,
               "check_in", 0.45, "approve"),
-    # 10-11: auth.py — security-sensitive, paused even with high prior approvals
+    # 10-11: auth.py — security-sensitive, approved after careful review
     SeedTrace("require api key on recipes", "apply", "write",
               "demo_recipe_api/recipe_api/auth.py",
               "api_change", 14, 1, 6, 0,
@@ -117,6 +117,26 @@ _SEED_TRACES: tuple[SeedTrace, ...] = (
               "api_change", 6, 1, 7, 0,
               "check_in", 0.68, "approve",
               review_duration_seconds=19.0),
+    # 10b-10d: auth.py denials — developer rejected risky auth changes,
+    # so the learned scorer treats auth.py as cautious territory.
+    SeedTrace("refactor auth middleware", "apply", "write",
+              "demo_recipe_api/recipe_api/auth.py",
+              "api_change", 45, 2, 7, 1,
+              "check_in", 0.75, "deny",
+              pushback_type=PushbackType.CORRECTION.value,
+              review_duration_seconds=8.0),
+    SeedTrace("add oauth support", "apply", "write",
+              "demo_recipe_api/recipe_api/auth.py",
+              "api_change", 38, 2, 7, 2,
+              "check_in", 0.80, "deny",
+              pushback_type=PushbackType.REJECTION.value,
+              review_duration_seconds=6.0),
+    SeedTrace("update token expiry", "apply", "write",
+              "demo_recipe_api/recipe_api/auth.py",
+              "api_change", 12, 1, 7, 3,
+              "check_in", 0.65, "deny",
+              pushback_type=PushbackType.SCOPE_CONSTRAINT.value,
+              review_duration_seconds=5.0),
     # 12-13: more low-risk approvals to push classifier past MIN_SAMPLES_FOR_LEARNED=10
     SeedTrace("recipe count helper", "apply", "write",
               "demo_recipe_api/recipe_api/service.py",
@@ -559,10 +579,7 @@ def seed_demo(trust_db: TrustDB, repo_root: str) -> dict:
     traces = load_seed_traces(trust_db, repo_root)
     _seed_prior_session(trust_db, repo_root)
     _seed_repo_memory(trust_db, repo_root)
-    # Pre-warm with count_sample=False: builds meaningful weight drift for
-    # /weights without crossing MIN_SAMPLES_FOR_LEARNED. The heuristic stays
-    # active for Task #1, preserving the first-write check-in in the demo arc.
-    updates = prewarm_classifier(trust_db, repo_root, count_sample=False)
+    updates = prewarm_classifier(trust_db, repo_root, count_sample=True)
     hypothesis_id = preseed_hypothesis(trust_db, repo_root)
     return {
         "already_seeded": False,

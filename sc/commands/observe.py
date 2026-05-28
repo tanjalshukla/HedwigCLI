@@ -587,25 +587,16 @@ def weights(
     if not personalized and not has_drift:
         console = Console()
         body = Text()
-        body.append(
-            "The decision model activates after 10 real decisions. "
-            "Currently using default rules. Weights will appear here once it takes over.\n\n",
-            style="white",
-        )
         filled = real_samples
         empty = 10 - real_samples
-        body.append("  Progress: ", style=PALETTE["meta"])
+        body.append("  ", style="white")
         body.append("█" * filled, style=PALETTE["approve"])
         body.append("░" * empty, style=PALETTE["meta"])
-        body.append(f"  {real_samples}/10\n\n", style=PALETTE["info"])
-        body.append(
-            "Keep approving and denying — each decision updates the model.",
-            style=PALETTE["meta_italic"],
-        )
+        body.append(f"  {real_samples}/10 decisions\n", style=PALETTE["info"])
         console.print(
             Panel(
                 body,
-                title=panel_title("info", "learning · warming up"),
+                title=panel_title("info", "decision model · not yet active"),
                 border_style=PALETTE["info"],
                 padding=(1, 2),
             )
@@ -615,25 +606,19 @@ def weights(
     # Has drift (or fully active) — show the drift table.
     console = Console()
     preamble_body = Text()
-    preamble_body.append(
-        "How the decision model has shifted from its starting point. "
-        "Each row shows one signal — ",
-        style="white",
-    )
     preamble_body.append("green ▲", style=PALETTE["approve"])
-    preamble_body.append(" means more likely to auto-approve, ", style="white")
+    preamble_body.append(" auto-approve  ", style="white")
     preamble_body.append("red ▼", style=PALETTE["deny"])
-    preamble_body.append(" means more likely to pause.", style="white")
+    preamble_body.append(" pause", style="white")
     if not personalized:
         preamble_body.append(
-            f"\n\nPre-warmed from prior history. Takes over from default rules after "
-            f"10 real decisions — {real_samples} so far.",
+            f"  ·  {real_samples}/10 decisions (default rules until then)",
             style=PALETTE["meta"],
         )
     preamble_title = (
-        f"decision model · {real_samples} decisions · active"
+        f"decision model · {real_samples} decisions"
         if personalized
-        else f"decision model · pre-warmed · {real_samples}/10 to activate"
+        else f"decision model · {real_samples}/10"
     )
     console.print(
         Panel(
@@ -645,9 +630,9 @@ def weights(
     )
 
     title_suffix = (
-        f"{real_samples} decisions · learned model active"
+        f"{real_samples} decisions · active"
         if personalized
-        else f"pre-warmed · {real_samples}/10 decisions to activate"
+        else f"{real_samples}/10 decisions"
     )
     table = Table(
         title=panel_title("observe", f"how my judgment has shifted · {title_suffix}"),
