@@ -126,7 +126,7 @@ def _context_weight(driver: str, trace: DecisionTraceRow) -> float:
         if response_ms > 0 and response_ms < 2000:
             return 1.5
         if response_ms > 10000:
-            return 1.5  # slow = strong contra-evidence
+            return 0.5  # slow = strong contra-evidence (low weight)
         return 1.0
 
     if driver == "deliberate_reviewer":
@@ -352,10 +352,34 @@ def get_ready_hypothesis(
         return None
 
     row = rows[0]
+    pref_data = {}
     try:
-        pref = preference_from_dict(json.loads(row["preference_json"]))
+        pref_data = json.loads(row["preference_json"]) if row["preference_json"] else {}
     except Exception:
-        return None
+        pass
+
+    candidate_type = pref_data.get("type", "preference")
+
+    if candidate_type == "behavioral_guideline":
+        # Behavioral guidelines don't have a Preference object; use a stub so the
+        # PreferenceHypothesis dataclass is satisfied. apply_stage routing reads
+        # preference_json directly and never dereferences proposed_preference for
+        # this type.
+        from .preferences import (
+            Condition, Lifecycle, Preference, PreferenceAction, Scope, Trigger
+        )
+        pref = Preference(
+            trigger=Trigger(stages=("apply",)),
+            condition=Condition(),
+            action=PreferenceAction.SOFT_CHECKIN,
+            scope=Scope(level="repo"),
+            lifecycle=Lifecycle(provenance="inferred_user_confirmed"),
+        )
+    else:
+        try:
+            pref = preference_from_dict(pref_data)
+        except Exception:
+            return None
 
     confidence = _candidate_confidence(
         int(row["evidence_for"]), int(row["evidence_against"])
@@ -465,31 +489,34 @@ def maybe_generate_llm_hypotheses(
 
     prompt = (
         "You are reviewing how a developer interacts with a coding agent. "
-        "The agent has a hypothesis bank: each candidate is a guess about "
-        "the developer's preferences, backed by specific trace evidence. "
-        "Your job is to propose at most 2 NEW hypotheses the rule-based "
-        "generators missed. Skip if nothing rises above noise.\n\n"
+        "Study the traces and propose up to 3 observations in any of these categories:\n"
+        "1. logic_note — a fact about the codebase visible from how files are used "
+        "   (e.g. 'tests live in demo_recipe_api/tests/', 'models.py and store.py always change together')\n"
+        "2. behavioral_guideline — a coding style pattern the developer consistently enforces "
+        "   (e.g. 'developer prefers small focused functions', 'developer avoids bundling test changes with service changes')\n"
+        "3. preference — a governance rule about when to pause "
+        "   (e.g. 'pause before writes to auth.py', 'soft-check-in on test file writes')\n\n"
         f"Recent traces (each line is one decision):\n{digest}\n\n"
         f"Already-pending candidates (do NOT duplicate):\n{active_block}\n\n"
         "Rules:\n"
-        "- A hypothesis must cite specific trace IDs as evidence (the [id] "
-        "  prefix in each line). Without citations, your hypothesis is junk.\n"
+        "- Each item must cite specific trace IDs as evidence (the [id] "
+        "  prefix in each line). Without citations, your observation is junk.\n"
         "- Stay grounded in the developer's behavior or in properties of "
-        "  the code visible from these traces. Do not propose code-style "
-        "  refactors or architecture opinions.\n"
+        "  the code visible from these traces.\n"
         "- Skip drivers already covered by rule-based generators: "
         "  scope_constraint, failure_reactive, deliberate_reviewer, "
         "  rapid_approver, positive_redirect.\n\n"
         "Output JSON array, each item:\n"
-        '{"driver": "snake_case_unique_name", '
-        '"prompt": "yes/no question to ask the developer", '
+        '{"type": "logic_note"|"behavioral_guideline"|"preference", '
+        '"text": "the content or yes/no question (for preference)", '
+        '"driver": "snake_case_unique_name", '
         '"rationale": "one sentence grounded in the cited traces", '
-        '"evidence_trace_ids": [12, 17, 19], '
-        '"high_stakes": true}\n\n'
-        "Set high_stakes=true ONLY when wrongly applying this hypothesis "
-        "would touch security-sensitive paths (auth, secrets, credentials) "
-        "or proposes auto-approving without review. Otherwise omit it. "
-        "High-stakes hypotheses require more evidence before surfacing.\n\n"
+        '"evidence_trace_ids": [12, 17, 19]}\n\n'
+        "For preference type only, also include:\n"
+        '  "high_stakes": true  — set ONLY when wrongly applying would touch '
+        "security-sensitive paths (auth, secrets, credentials) or proposes "
+        "auto-approving without review. Otherwise omit it. "
+        "High-stakes preferences require more evidence before surfacing.\n\n"
         "If nothing rises above noise, return []."
     )
 
@@ -499,7 +526,7 @@ def maybe_generate_llm_hypotheses(
             system_prompt="You are a behavioral-pattern analyst. Return JSON only."
         )
         _session.add_user(prompt)
-        raw = client._call(_session, max_tokens=600, temperature=0.3)
+        raw = client._call(_session, max_tokens=800, temperature=0.3)
         extracted = _extract_json_array(raw)
         if extracted is None:
             return []
@@ -512,20 +539,17 @@ def maybe_generate_llm_hypotheses(
     )
 
     new_ids: list[int] = []
-    for item in candidates_data[:2]:
+    for item in candidates_data[:3]:
         if not isinstance(item, dict):
             continue
         driver = (item.get("driver") or "").strip()
-        hyp_prompt = (item.get("prompt") or "").strip()
         rationale = (item.get("rationale") or "").strip()
         cited = item.get("evidence_trace_ids") or []
         if not isinstance(cited, list):
             cited = []
-        if not driver or not hyp_prompt:
+        if not driver:
             continue
-        if trust_db.candidate_driver_exists(repo_root, session_id, driver):
-            continue
-        # Validate citations against the trace store. A hypothesis with no
+        # Validate citations against the trace store. An observation with no
         # real traces backing it is dropped — that's the "no hallucinated
         # evidence" gate. We keep candidates that cite ≥1 valid trace; the
         # remaining citations get pruned silently.
@@ -539,6 +563,56 @@ def maybe_generate_llm_hypotheses(
                 if t in valid_trace_ids:
                     valid_cites.append(t)
         if not valid_cites:
+            continue
+
+        item_type = item.get("type", "preference")
+
+        if item_type == "logic_note":
+            # Auto-store directly — no confirmation needed.
+            text = (item.get("text") or "").strip()
+            if text and valid_cites:
+                file_paths = [
+                    str(t.get("file_path", ""))
+                    for t in traces
+                    if int(t.get("id", 0)) in set(valid_cites)
+                ]
+                trust_db.add_logic_notes(
+                    repo_root,
+                    source="llm_inferred",
+                    notes=[text],
+                    files=file_paths,
+                )
+            continue  # skip hypothesis_candidates entirely
+
+        elif item_type == "behavioral_guideline":
+            # Store as a pending guideline candidate — surfaced separately, not via evidence loop.
+            text = (item.get("text") or "").strip()
+            if not text or not valid_cites:
+                continue
+            if trust_db.candidate_driver_exists(repo_root, session_id, driver):
+                continue
+            cid = trust_db.add_hypothesis_candidate(
+                repo_root=repo_root,
+                session_id=session_id,
+                driver=driver,
+                source="llm_generated",
+                prompt=f"Save this as a coding style guideline: \"{text}\"",
+                rationale=rationale + f"  (cites traces: {', '.join(str(t) for t in valid_cites)})",
+                preference_json=json.dumps({"type": "behavioral_guideline", "text": text}),
+                min_evidence=None,
+            )
+            # Behavioral guidelines surface on any valid citation — they're
+            # LLM-observed facts about the codebase, not behavioral patterns
+            # that need multiple confirming sessions to validate.
+            trust_db.set_hypothesis_status(cid, "ready_to_surface")
+            new_ids.append(cid)
+            continue
+
+        # else: existing preference handling — unchanged in behavior.
+        hyp_prompt = (item.get("text") or item.get("prompt") or "").strip()
+        if not hyp_prompt:
+            continue
+        if trust_db.candidate_driver_exists(repo_root, session_id, driver):
             continue
 
         pref = Preference(

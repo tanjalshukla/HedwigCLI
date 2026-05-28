@@ -7,6 +7,7 @@ moments in Hedwig's demo (soft check-in and hypothesis confirmation) feel
 like the same family.
 """
 
+import json as _json
 from dataclasses import dataclass
 
 from rich.console import Console
@@ -39,6 +40,15 @@ def render_hypothesis_confirmation(
     """
     style = moment("learn")
 
+    # Detect behavioral_guideline type via the prompt text convention.
+    # The prompt for behavioral guidelines is prefixed with 'Save this as a
+    # coding style guideline:' by the noticer; that lets us adapt the UI
+    # without passing extra state through PreferenceHypothesis.
+    _is_guideline = hypothesis.prompt.startswith("Save this as a coding style guideline:")
+
+    panel_title_str = "I noticed a coding style pattern" if _is_guideline else "I noticed a pattern"
+    question = "Save this as a coding style guideline?" if _is_guideline else "Save this as a rule for future sessions?"
+
     body = Text()
     body.append("\n", style="white")
     body.append(hypothesis.prompt, style="bold white")
@@ -52,7 +62,7 @@ def render_hypothesis_confirmation(
     _CONSOLE.print(
         Panel(
             body,
-            title=panel_title("learn", "I noticed a pattern"),
+            title=panel_title("learn", panel_title_str),
             border_style=style.border,
             padding=(1, 2),
         )
@@ -63,7 +73,7 @@ def render_hypothesis_confirmation(
     )
     try:
         response = Prompt.ask(
-            f"[{PALETTE['learn_bold']}]Save this as a rule for future sessions?[/{PALETTE['learn_bold']}] (y/n)",
+            f"[{PALETTE['learn_bold']}]{question}[/{PALETTE['learn_bold']}] (y/n)",
             choices=["y", "n"],
             default="y",
         )
@@ -74,7 +84,8 @@ def render_hypothesis_confirmation(
 
     confirmed = response == "y"
     if confirmed:
-        _CONSOLE.print(f"[{PALETTE['learn_bold']}]✦ preference saved[/{PALETTE['learn_bold']}]")
+        _saved_label = "guideline saved" if _is_guideline else "preference saved"
+        _CONSOLE.print(f"[{PALETTE['learn_bold']}]✦ {_saved_label}[/{PALETTE['learn_bold']}]")
     return HypothesisConfirmation(
         confirmed=confirmed,
         explicit_denial=not confirmed,

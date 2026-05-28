@@ -20,17 +20,43 @@ While built for coding agents, the architecture generalizes to any agent operati
 
 **1. Oversight that adapts from real decisions, not config.** Every approve, deny, and pushback updates an online classifier, with the developer is the labeler. The system cold-starts with defensible defaults and shifts toward what *this developer* actually accepts. Run `/weights` at any point to see exactly which signals have shifted and in which direction.
 
-**2. A prompt that gets smarter over time.** Every task rebuilds the agent's system prompt from repo-scoped memory: rules the developer has added, past corrections, and facts about the codebase — retrieved by keyword overlap with the current task (and soon to be embedding retrieval). The agent opens each session with a "What we've learned about this repo" paragraph. It walks in with proper orientation to the codebase and developer preferences.
+**2. A memory layer that grows from both explicit input and observed behavior.** Every task rebuilds the agent's prompt from repo-scoped memory: hard rules and style guidelines the developer stated, repo facts and style patterns the LLM noticer inferred from trace history, and verbatim past corrections auto-accumulated from prior sessions. All retrieved by keyword overlap with the current task. The agent opens each session with a synthesized "What we've learned about this repo" paragraph — oriented before it writes a line. The system captures both explicit and implicit developer intent, both deterministic (hard constraints, governance preferences that fire in the cascade) and soft (behavioral guidelines, logic notes retrieved into the prompt). See the Contribution table below for the full breakdown.
 
-**3. Two channels for developer preferences — explicit and inferred.** Preferences expressed in plain English (`/rules add "Prefer composition over inheritance"`) are compiled into behavioral guidelines and retrieved into the agent's prompt on every relevant task. The agent reads them and follows them — no DSL, no config files. Separately, governance preferences (when to pause, when to trust) are inferred from behavior: "you consistently push back when the agent touches multiple files at once" surfaces as a candidate pause trigger on high blast radius. Both channels are repo-scoped, both persist across sessions, and neither requires upfront configuration.
+**3. A hypothesis bank that surfaces standing rules without asking prematurely.** Two generators propose candidates: deterministic rule-based detectors every turn, and an LLM that reads the trace digest every 5 turns. All LLM candidates must cite real trace IDs — hallucinated evidence dropped before storage. When a governance pattern accumulates enough evidence, Hedwig surfaces one question. Confirmed → fires deterministically in the apply cascade. Declined → stays in the bank for transparency, nothing silently discarded. Logic notes are auto-stored on inference; behavioral guidelines surface for one confirmation.
 
-**5. A hypothesis bank that surfaces standing rules without asking prematurely.** Hedwig watches for behavioral patterns across the session, such as scope-narrowing on multi-file changes, deliberate review pacing, or repeated pushback on certain file types. Two generators propose candidates: deterministic rule-based detectors that run every turn, and an LLM that reads the recent trace digest. When a pattern accumulates enough evidence, Hedwig surfaces exactly one question: "Want me to treat this as a standing rule?" Confirmed patterns persist at repo scope and shape future decisions. Declined ones stay in the bank with their evidence — nothing is silently discarded, and the developer can see exactly what Hedwig observed. LLM-proposed candidates must cite real interaction IDs; hallucinated evidence is dropped before storage.
+**4. A regret loop that corrects past over-trust.** When an auto-approved action is later denied or fails verification, Hedwig treats it as a training signal that the classifier was too permissive. Corrected exactly once per event, tracked persistently.
 
-**6. A regret loop that corrects past over-trust.** When an auto-approved action is later denied or fails verification, Hedwig treats it as a training signal that the classifier was too permissive. Corrected exactly once per event, tracked persistently.
+**5. Co-change memory across sessions.** Files that have historically moved together under the same task surface at write time: *"`store.py` — historically co-changes with `models.py` (2 tasks)"*. This is what rules and preferences can't express, since it's learned from what actually happened, not from what the developer thought to write down.
 
-**7. Co-change memory across sessions.** Files that have historically moved together under the same task surface at write time: *"`store.py` — historically co-changes with `models.py` (2 tasks)"*. This is what rules and preferences can't express, since it's learned from what actually happened, not from what the developer thought to write down.
+**6. Session signals inferred from behavior, not configuration.** Two signals are computed each turn without any developer input: *engagement level* (active vs. delegating) — inferred from turn count and tool-calls-per-turn, thresholds grounded in SWE-chat cluster centers (24.9 vs. 7.6 turns); *coding mode* (human-authored / collaborative / agent-led) — inferred from edit distance, how much the developer modified the agent's output. Both feed threshold adjustment immediately from turn 1. The agent's system prompt also opens each session with a synthesized "What we've learned about this repo" paragraph — top confirmed preferences in plain English, top repo facts, most-relevant past correction — before any task-specific content.
 
-**8. Taxonomy grounded in real behavioral data.** The response categories, session signals, and preference schema come from analyzing 5,776 real coding-agent sessions (SWE-chat). Key finding: developer style is not stable across their own sessions (ICC = 0.249) — per-developer personalization would encode noise. The repo is the stable ground truth.
+**7. Taxonomy grounded in real behavioral data.** The response categories, session signals, and preference schema come from analyzing 5,776 real coding-agent sessions (SWE-chat). Key finding: developer style is not stable across their own sessions (ICC = 0.249) — per-developer personalization would encode noise. The repo is the stable ground truth.
+
+---
+
+## Contribution
+
+| What Hedwig learns | What it is | How it's used | Persists? |
+|---|---|---|---|
+| **Hard rules** | Unconditional constraints on the agent — what it can never touch, must always pause on | Blocks or forces pause before any scoring; bypasses trust grants | Yes, repo-scoped |
+| **Behavioral guidelines** | Soft instructions about how the agent should write code — style, patterns, approach | Retrieved into the agent's prompt on relevant tasks; agent reads and follows them | Yes, repo-scoped |
+| **Logic notes** | Facts about the repo the agent should know — where tests live, what's seeded, what files move together. Developer-stated or auto-inferred by LLM noticer (with cited trace evidence) | Retrieved into the agent's prompt to orient it before each task | Yes, repo-scoped |
+| **Past feedback snippets** | Verbatim developer corrections from prior sessions — the actual words used when pushing back | Retrieved into the agent's prompt when task phrasing overlaps; closes the correction loop | Yes, repo-scoped |
+| **Governance preferences** | Conditional pause rules inferred from behavioral patterns — when to stop vs. proceed based on action type, session state, and file scope | Tighten the scorer's verdict when all conditions match; never loosen | Yes, repo-scoped |
+| **Approve / deny decisions** | Every file write the developer approved, denied, or pushed back on | Online classifier training signal — shifts which file/change patterns auto-proceed vs. pause | Yes, via classifier |
+| **Pushback type** | How the developer responded — scope narrowing, correction, failure report, positive redirect | Feeds regret detector, hypothesis generators, session signal inference | Yes, in trace rows |
+| **Regret events** | An auto-approved action the developer later denied or that failed verification | Replayed as a negative classifier signal exactly once per event | Yes, in classifier state |
+| **Co-change pairs** | Files that historically appeared together under the same task | Surfaced at write time as context — descriptive, never affects scoring | Yes, derived from traces |
+| **Session signals** | Per-turn inferences: engagement level, coding mode, task intent, turn purpose | Threshold adjustment and pattern generator filtering; resets each session | No, session-scoped |
+
+**The design captures both explicit and implicit developer intent, across two axes:**
+
+|  | Explicit (developer-stated) | Implicit (observed / inferred) |
+|---|---|---|
+| **Deterministic** | Hard constraints — `always_deny`, `always_check_in` on specific paths | Governance preferences — inferred by the hypothesis bank, confirmed by the developer, fire in the apply cascade |
+| **Soft** | Behavioral guidelines — style rules retrieved into the agent's prompt | Logic notes and behavioral guidelines inferred by the LLM noticer from trace patterns, auto-stored or confirmed |
+
+**How `/rules add` works:** a Bedrock call classifies the plain-English text into hard constraints (path-enforceable: `"never touch config/prod/"` → `always_deny`) or behavioral guidelines (prose-level: `"prefer composition over inheritance"` → retrieved into the agent's prompt). The developer never picks the category. `/rules add` does **not** produce governance preferences or logic notes — governance preferences come only from the hypothesis bank (observed patterns confirmed by the developer) or from built-in defaults. Logic notes come from `/rules add` facts about the repo, or are auto-inferred by the LLM noticer from trace patterns with cited evidence.
 
 ---
 
@@ -40,8 +66,8 @@ Every file action flows through a five-layer cascade:
 
 1. **Hard rules** — compiled from plain English, non-negotiable
 2. **Trust grants** — temporary leases from prior approve+remember decisions
-3. **Threshold adjustment** — four additive shifts computed first, responding to session-level signals (engagement level, coding mode, model check-in calibration, persistent mode). These set the bar the score must clear. Hard-coded constants rather than learned weights, as session-level responsiveness is needed from turn 1, before the classifier has enough data to learn these effects. The SWE-chat findings are encoded directly as inductive bias.
-4. **Decision model** — deterministic risk assessment produces a raw score; optional second-opinion model reviewer nudges it (separate system prompt, no access to agent intent); score compared against adjusted thresholds → verdict
+3. **Threshold adjustment** — four additive shifts set the proceed/flag bar: session engagement level, coding mode, model check-in calibration, persistent mode. Computed before the score is compared. Hard-coded constants grounded in SWE-chat findings — session-level responsiveness is needed from turn 1, before the classifier has enough data to learn these effects
+4. **Decision model** — deterministic risk assessment produces a raw score; optional second-opinion model reviewer nudges it (separate system prompt, no access to agent intent); score compared against the adjusted bar → verdict
 5. **Preference override** — confirmed behavioral patterns tighten the verdict; never loosen it
 
 The full cascade detail, session signals, and preference matching logic are in [`HEDWIG_END_TO_END.md`](HEDWIG_END_TO_END.md).

@@ -280,7 +280,17 @@ def _handle_slash(
                 _body.append(f"  ✗  {evf}/{total}   {_wrap_prompt(r['prompt'])}\n",
                              style=PALETTE["meta"])
 
-        if not accepted and not _pending and not _rejected:
+        # Accepted behavioral guidelines (llm-inferred, confirmed via hypothesis flow).
+        guideline_rows = trust_db.list_behavioral_guidelines(repo_root_str)
+        llm_guidelines = [g for g in guideline_rows if getattr(g, "source", "") == "llm_inferred"]
+        if llm_guidelines:
+            if accepted or _pending or _rejected:
+                _body.append("\n")
+            _body.append("Learned style guidelines\n", style=PALETTE["info_bold"])
+            for g in llm_guidelines[:5]:
+                _body.append(f"  ❆ {g.guideline}\n", style=PALETTE["info"])
+
+        if not accepted and not _pending and not _rejected and not llm_guidelines:
             _body.append("No preferences yet — patterns appear as you work.", style=PALETTE["meta_italic"])
 
         console.print(_P(_body, title=_pt("learn", "preferences"), border_style=PALETTE["learn"], padding=(1, 2)))

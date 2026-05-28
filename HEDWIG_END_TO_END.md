@@ -40,12 +40,17 @@ grounded in an empirical study of real coding-agent sessions
 One task typed in the REPL from keystroke to wrap-up:
 
 1. **Entry and prompt assembly** — `sc/run/repl.py::run_repl` (REPL). System prompt is built by
-   `sc/prompt_builder.py::build_run_system_prompt`, which pulls three
+   `sc/prompt_builder.py::build_run_system_prompt`, which pulls four
    relevance-ranked categories from SQLite via `RuleStore`:
-   `relevant_logic_notes` (rule_store.py:360),
-   `relevant_behavioral_guidelines` (rule_store.py:467), and
-   `relevant_feedback_snippets` (rule_store.py:528). Hard-constraint text,
-   active leases, and the AutonomyPreferences mode are also folded in.
+   `relevant_logic_notes` (rule_store.py:360) — developer-stated repo
+   facts plus LLM-inferred facts auto-stored with cited evidence;
+   `relevant_behavioral_guidelines` (rule_store.py:467) — developer-stated
+   style rules plus LLM-inferred style patterns confirmed by the developer;
+   `relevant_feedback_snippets` (rule_store.py:528) — verbatim developer
+   corrections auto-accumulated from prior sessions.
+   Hard-constraint text, active leases, and the autonomy mode are also
+   folded in. Before per-task ranked snippets, the prompt opens with a
+   synthesized "What we've learned about this repo" paragraph.
 
 2. **Read stage** — agent emits `read_request` JSON
    (`sc/schema.py::ReadRequest`). `sc/run/read_stage.py::_process_read_request`
@@ -132,17 +137,17 @@ One task typed in the REPL from keystroke to wrap-up:
   {`api_change`, `data_model_change`, `config_change`,
   `dependency_update`}, or no prior history on this file. Otherwise the
   reviewer is skipped and the score stays at the 0.5 no-opinion default
-  (which contributes zero to the heuristic). A per-task budget of
-  **5 reviewer calls** caps pathological "edit 30 files at once" turns;
-  when the cap binds, a single dim line surfaces in the apply panel.
-  Net effect on a representative apply stage: ~50–70% reduction in
-  reviewer call volume vs. unconditional invocation.
+  (which contributes zero to the heuristic). The reviewer runs whenever
+  `should_review()` returns True — no hard cap. The gate itself is the
+  cost control: familiar, low-risk, well-trusted files are never sent
+  to the reviewer. Net effect: roughly 50–70% of files in a typical
+  apply stage skip the reviewer entirely.
 - **`HeuristicScorer`** (`sc/policy.py`) — cold-start; weighted sum of
   RiskSignals + a ±0.3 nudge from `model_risk_score` around the 0.5
   no-opinion midpoint. Weights are documented in `SPEC.md`'s weight
   table; they are priors, not tuning knobs.
 - **`PolicyClassifier`** (`sc/ml_policy.py`) — `SGDClassifier(loss="log_loss")`
-  over the 7-feature vector (see `FEATURE_NAMES`). `update()`
+  over the 14-feature vector (see `FEATURE_NAMES`). `update()`
   partial-fits on each real decision; an `IsotonicRegression`
   calibrator refits once 20 real decisions accumulate
   (`_CALIBRATION_MIN_SAMPLES=20`). The classifier is pickled and
@@ -174,11 +179,11 @@ One task typed in the REPL from keystroke to wrap-up:
   agent-led sessions are riskier) gives correct behavior immediately
   without waiting for data. A unified model that learns both file-level
   and session-level weights jointly would require far more decisions
-  than the cold-start scenario provides — the hand-coded constants are
-  a deliberate inductive bias injection, not a limitation.
+  than the cold-start scenario provides, so the hand-coded constants are
+  an inductive bias injection.
 
   Four additive shifts:
-  1. **Persistent mode** — `hw config set-mode autonomous` sets
+  1. **Persistent mode** — `/config set-mode autonomous` sets
      `prefer_fewer_checkins=True`, which shifts proceed/flag down by
      0.25 (loosening). `strict` tightens. Path and topic scoping add
      a further 0.10 loosening when active.
@@ -198,9 +203,9 @@ One task typed in the REPL from keystroke to wrap-up:
   is capped at proceed threshold so the ordering is preserved.
 - **Borderline model vote** — when the scorer's raw score is within
   0.25 of the proceed threshold (genuinely uncertain), and the
-  per-task reviewer budget hasn't been exhausted, Hedwig makes one
-  additional Bedrock call: a separate system prompt asking "should a
-  developer review this?" (`ask_model_to_vote` in `sc/model_risk.py`).
+  the score is genuinely uncertain, Hedwig makes one additional Bedrock
+  call: a separate system prompt asking "should a developer review
+  this?" (`ask_model_to_vote` in `sc/model_risk.py`).
   The response nudges the score by up to ±0.15 and re-buckets the
   decision. On failure the score is unchanged. This fires only on
   borderline cases — clear auto-proceeds and obvious check-ins are
@@ -261,15 +266,22 @@ before moving on:
 
 All in `sc/preferences.py` and inferred in `sc/preference_inference.py`.
 
-- **CodingMode** (`human_only` / `collaborative` / `vibe`) — agent
-  authorship ratio per session. Inferred in `infer_coding_mode`;
+- **CodingMode** (`human_only` / `collaborative` / `vibe`) — inferred
+  from **edit distance**: how much the developer modified the agent's
+  proposed output per trace. `avg_edit_distance < 0.1` → `vibe`
+  (developer accepts agent output as-is); `> 0.5` → `human_only`
+  (developer rewrites most of it); middle range → `collaborative`.
+  Inferred in `infer_coding_mode` (`sc/preference_inference.py`);
   consumed by hypothesis generators to filter which patterns are
-  even plausible (vibe sessions get different rules than human-only).
-- **UserPersona** (`active` / `delegating` / `unknown`) — interaction
-  intensity (turn count, pushback rate, agent authorship). Inferred
-  in `infer_user_persona`; consumed by `adjusted_policy_thresholds`.
-  **From SWE-chat (§5):** the original schema had four persona types
-  (expert nitpicker, vague requester, mind changer, other).
+  plausible (vibe sessions get different rules than human-only) and
+  by `adjusted_policy_thresholds` (`vibe` +0.06, `human_only` −0.04).
+- **UserPersona** (`active` / `delegating` / `unknown`) — inferred
+  from **turn count** and **tool-calls-per-turn** (how many Bedrock/
+  bash calls the agent made per turn on average). `active` if turns
+  ≥ 12 OR tool-calls-per-turn ≥ 6.0; `delegating` if below both.
+  Inferred in `infer_user_persona`; consumed by `adjusted_policy_thresholds`
+  (`active` +0.08, `delegating` −0.05).
+  **From SWE-chat (§5):** the original schema had four persona types.
   K-means with silhouette scoring across k = 2..6 found the cleanest
   split is **k=2** — the four labels appear in both clusters in
   similar proportions, so they're orthogonal to behavior. The two
@@ -373,49 +385,67 @@ Two generators feed candidates into `hypothesis_candidates`:
   signals fit (e.g. three rejections of writes to `*.md` in the same
   session → candidate "always check-in on docs writes").
 - **LLM noticer** (`maybe_generate_llm_hypotheses`,
-  `sc/hypothesis_bank.py:444`) — fires every
-  `LLM_GENERATION_INTERVAL=5` turns when there are at least
-  `MIN_EVIDENCE=3` traces. Sends Bedrock a digest of recent
-  `decision_traces` rows and a strict JSON schema; parses the
-  response with `_extract_json_array`, which uses string-aware
-  bracket balancing (a non-greedy regex would lock onto inner
-  arrays).
+  `sc/hypothesis_bank.py`) — fires every `LLM_GENERATION_INTERVAL=5`
+  turns when there are at least `MIN_EVIDENCE=3` traces. Sends Bedrock
+  a digest of recent `decision_traces` rows. Proposes up to 3 items
+  across three output types (see below).
+
+**The noticer proposes three output types.** All require cited trace
+IDs — hallucinated cites are dropped before storage.
+
+1. **`logic_note`** — a fact about the codebase visible from how
+   files are used: *"tests live in `demo_recipe_api/tests/`"*,
+   *"`models.py` and `store.py` always change together"*. Auto-stored
+   directly into `rule_store` with `source="llm_inferred"` — no
+   developer confirmation needed. Appears in the agent's prompt on
+   the next relevant task.
+
+2. **`behavioral_guideline`** — a coding style pattern the developer
+   consistently enforces. Surfaces for confirmation: *"Save this as
+   a coding style guideline?"* Confirmed → written to `rule_store`
+   and retrieved into the agent's prompt. Declined → silently
+   skipped. Visible in `/prefs` under "Learned style guidelines."
+
+3. **`preference`** — a governance rule about when to pause.
+   Goes through the full evidence accumulation loop and surfaces via
+   `/prefs`. Confirmed → becomes a `Preference` row that fires
+   deterministically in the apply cascade.
 
 **Citation requirement.** Every LLM candidate must cite real
 `decision_traces.id` values. Uncited or hallucinated cites are
 filtered out before storage. Candidates that arrive citing
 ≥ `MIN_EVIDENCE` valid traces can promote directly to
-`ready_to_surface` in the same call (`hypothesis_bank.py:573`) —
-bootstrapped from concrete prior history, not vibes.
+`ready_to_surface` — bootstrapped from concrete prior history,
+not vibes.
 
-**Evidence accumulation.** Each new trace runs through
-`update_evidence`: candidates whose Trigger fits get +1 for or +1
-against based on the developer's decision. Confidence is
-`evidence_for / total`.
+**Evidence accumulation** (preferences only). Each new trace runs
+through `update_evidence`: candidates whose Trigger fits get +1 for
+or +1 against based on the developer's decision. Confidence is
+`evidence_for / total`. Logic notes and behavioral guidelines bypass
+this loop — they're observations, not patterns to accumulate
+evidence for.
 
-**Surfacing and pruning thresholds.**
+**Surfacing and pruning thresholds** (preferences only).
 
-- `SURFACE_CONFIDENCE = 0.70` — confidence at or above this and
-  total ≥ floor → surface for confirmation.
-- `PRUNE_THRESHOLD = 0.30` — confidence at or below and total ≥
-  floor → prune.
+- `SURFACE_CONFIDENCE = 0.70` — surface when confidence ≥ this and
+  total ≥ floor.
+- `PRUNE_THRESHOLD = 0.30` — prune when confidence ≤ this and
+  total ≥ floor.
 - `MIN_EVIDENCE = 3` — default floor.
-- `high_stakes` (`hypothesis_bank.py:554`) — set by the LLM noticer
-  on candidates whose mis-application would be costly; raises the
-  floor to `2 * MIN_EVIDENCE = 6`.
+- `high_stakes` — raises the floor to `2 * MIN_EVIDENCE = 6` for
+  preferences whose mis-application would be costly.
 
-**Confirmation flow.** Surfaced candidates appear in `/prefs` with
-their cited traces and a confidence bar. Developer says yes →
-status flips to confirmed and a `Preference` row is written
-(provenance `inferred_user_confirmed`). Developer says no → status
-flips to declined; the candidate stays in the bank for transparency
-but stops accumulating evidence.
+**Confirmation flow.** Preference candidates appear in `/prefs` with
+their cited traces and a confidence bar. Developer says yes → a
+`Preference` row is written. Developer says no → stays in the bank
+for transparency, stops accumulating evidence.
 
-**Hypotheses never affect behavior until the developer confirms.**
-The only learning that touches behavior is (a) the classifier (with
-the developer as the labeler) and (b) confirmed preferences (with the
-developer as the
-gatekeeper).
+**Nothing affects behavior until the developer confirms** (or in the
+case of logic notes, until the noticer has cited evidence). The only
+learning that touches behavior is: (a) the classifier (developer as
+labeler), (b) confirmed governance preferences (developer as
+gatekeeper), (c) confirmed behavioral guidelines and auto-stored
+logic notes (both grounded in cited trace evidence).
 
 ## 8. Regret loop
 
@@ -439,22 +469,36 @@ repo-scoped memory. This is what makes Hedwig feel like it
 *remembers* your project across sessions without ever claiming to
 "learn." All retrieval lives in `sc/prompt_builder.py::build_run_system_prompt`.
 
-**The three retrieval categories** (each pulled from `RuleStore` in
+**The four retrieval categories** (each pulled from `RuleStore` in
 `sc/store/rule_store.py`):
 
 - **Logic notes** (`relevant_logic_notes`, rule_store.py:360) —
-  repo-specific facts the developer has taught Hedwig over time.
-  *"This project's tests live in `tests/`, not `test/`."*
-  *"`recipe-1` through `recipe-4` are seed fixtures; don't renumber."*
-  Limit: 3 per task.
+  repo-specific facts. Two sources: developer-stated via `/rules add`
+  (*"tests live in `tests/`, not `test/`"*) and LLM-inferred by the
+  hypothesis noticer from trace patterns with cited evidence
+  (*"`models.py` and `store.py` always change together"*).
+  Auto-stored on inference — no confirmation needed. Limit: 3 per task.
 - **Behavioral guidelines** (`relevant_behavioral_guidelines`,
-  rule_store.py:467) — soft prose-shaping rules. *"Explain before
-  patching."* *"Avoid speculative refactors."* Limit: 6 per task.
+  rule_store.py:467) — how the agent should write code. Two sources:
+  developer-stated (*"Explain before patching"*, *"Avoid speculative
+  refactors"*) and LLM-inferred style patterns confirmed by the
+  developer (*"Developer prefers small focused functions"*).
+  Limit: 6 per task.
 - **Feedback snippets** (`relevant_feedback_snippets`,
-  rule_store.py:528) — verbatim developer feedback from past
-  sessions, retrieved when phrasing or context lines up. *"You said:
-  'don't add error handling for things that can't fail.'"* Limit: 4
-  per task.
+  rule_store.py:528) — verbatim developer corrections from past
+  sessions, auto-accumulated from `user_feedback_text` in
+  `decision_traces`. *"You said: 'don't add error handling for things
+  that can't fail.'"* Limit: 4 per task.
+
+**How rules are classified.** When a developer uses `/rules add`, a
+model call (`client.compile_rule` in `sc/agent_client.py`) classifies
+the plain-English text into one or both of: `constraints` (path-
+enforceable — produces `HardConstraint` objects) or
+`behavioral_guidelines` (prose-level guidance — stored in the rule
+store). The developer never picks the category. Logic notes come from
+explicit `/rules add` facts or are auto-inferred by the LLM noticer.
+Governance preferences come only from the hypothesis bank or built-in
+defaults — not from `/rules add`.
 
 **Ranking.** Keyword overlap between the task prompt and each candidate
 row's text. The implementation is in `rule_store.py`; ties are broken
@@ -501,8 +545,7 @@ this repo"* lead block.
    the task, then bulleted sections — repo notes, behavioral
    guidelines, past developer feedback — each item truncated to 100
    chars. Footer: *"Ranked by keyword overlap with the task."* Use
-   it at the booth to walk a visitor through what the agent actually
-   saw on the previous turn.
+   it to walk through what the agent actually saw on the previous turn.
 
 3. **Capture mechanism** (`sc/run/context_capture.py`). A
    process-local singleton (`_LAST: LastContext`) that
@@ -569,9 +612,8 @@ adjacency dict for visualization.
    For each touched file at apply stage, one dim line:
    *"`store.py` — historically co-changes with: `models.py` (2)"*.
    Silent if the file has no co-change history meeting `min_count`.
-   This is the booth's answer to *"what does Hedwig actually
-   learn that CLAUDE.md can't?"* — a concrete, demonstrable
-   cross-session pattern.
+   A concrete, demonstrable cross-session pattern — the kind of thing
+   rules and preferences can't express.
 
 2. **`/cochange` REPL command** (`sc/run/repl.py`). Full graph view:
    each file with co-change history, indented under it the top-3
@@ -649,7 +691,7 @@ Observability is read-only; the REPL also exposes two **controls**:
 - **`/cochange`** — see §10.
 - **`/prefs`**, **`/retrospective`** — see §12.
 
-## 12c. Demo seeding for the booth
+## 12c. Demo seeding
 
 `sc/demo_seed.py::seed_demo` (invoked manually via the `/seed-demo`
 REPL command — `setup_demo.sh` does not call it) primes a fresh
@@ -669,8 +711,8 @@ both idempotent:
 
 `seed_demo` does **not** activate the learned scorer or seed
 `AutonomyPreferences`. A pre-warmed classifier scores Task #1's files
-near 1.0 and would skip the first write check-in; the booth keeps the
-heuristic active for Task #1 so visitors see write oversight in action.
+near 1.0 and would skip the first write check-in; the seed deliberately
+keeps the heuristic active for Task #1 so the first write check-in fires.
 
 The seeded **read** history is a deliberate part of the demo arc:
 because reads use a more permissive `proceed_threshold` than writes
@@ -765,8 +807,8 @@ every call: the reviewer fires only when at least one risk signal
 warrants a second opinion (new file, security-sensitive, large blast
 radius, large diff, structural change pattern, or no prior history on
 this file). For familiar, low-risk, well-trusted edits the heuristic
-decides on its own and the reviewer never runs. A 5-call cap per
-task is the backstop. Roughly 50–70% of apply-stage files in a
+decides on its own and the reviewer never runs. The gate is the cost
+control — no hard cap. Roughly 50–70% of apply-stage files in a
 typical session don't trigger the gate; cold-start sessions trigger
 more (which is correct — that's exactly when an outside opinion adds
 the most signal).
@@ -777,7 +819,7 @@ three categories of work:
 *On the critical path* (developer waits): risk assessment (deterministic,
 sub-millisecond), the adversarial reviewer and borderline vote when
 they fire (1–3 Bedrock calls per turn in practice, each ~3–8s, gated
-and budget-capped as above), SQLite reads (sub-millisecond), and the
+by `should_review()` and `is_borderline()`), SQLite reads (sub-millisecond), and the
 in-process classifier (pickle reload + sklearn inference, ~1ms).
 
 *Off the critical path — daemon threads*: A daemon thread is a

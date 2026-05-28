@@ -515,6 +515,43 @@ def _surface_ready_hypothesis(
         import time as _time
         _time.sleep(0.5)
     confirmation = render_hypothesis_confirmation(hypothesis)
+
+    # Route based on the type stored in preference_json.
+    # hypothesis only carries proposed_preference (a Preference object), not the raw JSON,
+    # so fetch preference_json directly from the DB to read the type field.
+    _pref_data: dict = {}
+    try:
+        with trust_db._connect() as _conn:
+            _row = _conn.execute(
+                "SELECT preference_json FROM hypothesis_candidates "
+                "WHERE repo_root = ? AND driver = ? AND status = 'ready_to_surface' LIMIT 1",
+                (repo_root_str, hypothesis.driver),
+            ).fetchone()
+        if _row and _row["preference_json"]:
+            _pref_data = json.loads(_row["preference_json"])
+    except Exception:
+        _pref_data = {}
+
+    candidate_type = _pref_data.get("type", "preference")
+
+    if candidate_type == "behavioral_guideline":
+        if confirmation.confirmed:
+            _text = _pref_data.get("text", "").strip()
+            if _text:
+                trust_db.add_behavioral_guidelines(
+                    repo_root_str,
+                    source="llm_inferred",
+                    guidelines=[_text],
+                )
+        mark_candidate_surfaced(
+            trust_db=trust_db,
+            repo_root=repo_root_str,
+            session_id=run_session_id,
+            driver=hypothesis.driver,
+            confirmed=confirmation.confirmed,
+        )
+        return  # don't save to confirmed_preferences
+
     payload = (
         {
             "accepted": True,
@@ -576,6 +613,40 @@ def _surface_ready_hypothesis_after_no_op(
         import time as _time
         _time.sleep(0.5)
     confirmation = render_hypothesis_confirmation(hypothesis)
+
+    _pref_data_noop: dict = {}
+    try:
+        with trust_db._connect() as _conn:
+            _row_noop = _conn.execute(
+                "SELECT preference_json FROM hypothesis_candidates "
+                "WHERE repo_root = ? AND driver = ? AND status = 'ready_to_surface' LIMIT 1",
+                (repo_root_str, hypothesis.driver),
+            ).fetchone()
+        if _row_noop and _row_noop["preference_json"]:
+            _pref_data_noop = json.loads(_row_noop["preference_json"])
+    except Exception:
+        _pref_data_noop = {}
+
+    candidate_type_noop = _pref_data_noop.get("type", "preference")
+
+    if candidate_type_noop == "behavioral_guideline":
+        if confirmation.confirmed:
+            _text_noop = _pref_data_noop.get("text", "").strip()
+            if _text_noop:
+                trust_db.add_behavioral_guidelines(
+                    repo_root_str,
+                    source="llm_inferred",
+                    guidelines=[_text_noop],
+                )
+        mark_candidate_surfaced(
+            trust_db=trust_db,
+            repo_root=repo_root_str,
+            session_id=run_session_id,
+            driver=hypothesis.driver,
+            confirmed=confirmation.confirmed,
+        )
+        return  # don't save to confirmed_preferences
+
     payload = (
         {
             "accepted": True,
