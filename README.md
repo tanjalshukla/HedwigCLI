@@ -79,15 +79,15 @@ The full cascade detail, session signals, and preference matching logic are in [
 Everything inspectable from inside the REPL:
 
 ```bash
-/showcase       # all surfaces at once — leave up as a live display
-/weights        # classifier drift from starting point (▲▼ per feature)
-/prefs          # accepted preferences, pending patterns with evidence bars, rejected candidates
-/cochange       # files that historically move together in this repo
-/context        # what was retrieved from repo memory for the last task
-/retrospective  # regret events — where Hedwig was too loose or too cautious
-/status         # current session: engagement level, coding mode, model state
-
-hw observe export --html   # full HTML report: traces, weights, hypothesis bank, regret
+/showcase                    # all surfaces at once — leave up as a live display
+/weights                     # classifier drift from starting point (▲▼ per feature)
+/prefs                       # accepted preferences, pending patterns, rejected candidates
+/cochange                    # files that historically move together in this repo
+/context                     # what was retrieved from repo memory for the last task
+/retrospective               # regret events — where Hedwig was too loose or too cautious
+/status                      # current session: engagement level, coding mode, model state
+/config set-verification-cmd "pytest -q"   # set post-write verification command
+/observe export --html       # full HTML report: traces, weights, hypothesis bank, regret
 ```
 
 ---
