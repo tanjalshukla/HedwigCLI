@@ -781,9 +781,11 @@ this repo"* — composed from the top confirmed preferences,
 top logic notes, and the most-relevant feedback snippet. The
 agent reads this before anything else, so it walks in oriented
 instead of piecing the picture together from bullets. (2) Per-task
-keyword-ranked retrieval from three categories: logic notes (repo
-facts), behavioral guidelines (soft prose rules), and developer
-feedback snippets (verbatim past corrections). Plus a 40-file
+keyword-ranked retrieval from four categories: logic notes (repo
+facts — developer-stated or LLM-inferred), behavioral guidelines
+(style rules — developer-stated or LLM-inferred and confirmed),
+hard rules, and developer feedback snippets (verbatim past
+corrections, auto-accumulated). Plus a 40-file
 repo tree, a non-numeric trust summary, hard constraints, active
 leases, and the autonomy mode. Visible to the developer: every
 apply panel shows a one-line *"Context retrieved: 3 repo notes,
