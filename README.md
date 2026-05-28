@@ -42,7 +42,7 @@ While built for coding agents, the architecture generalizes to any agent operati
 | **Behavioral guidelines** | Soft instructions about how the agent should write code — style, patterns, approach | Retrieved into the agent's prompt on relevant tasks; agent reads and follows them | Yes, repo-scoped |
 | **Logic notes** | Facts about the repo the agent should know — where tests live, what's seeded, what files move together. Developer-stated or auto-inferred by LLM noticer (with cited trace evidence) | Retrieved into the agent's prompt to orient it before each task | Yes, repo-scoped |
 | **Past feedback snippets** | Verbatim developer corrections from prior sessions — the actual words used when pushing back | Retrieved into the agent's prompt when task phrasing overlaps; closes the correction loop | Yes, repo-scoped |
-| **Governance preferences** | Conditional pause rules inferred from behavioral patterns — when to stop vs. proceed based on action type, session state, and file scope | Tighten the scorer's verdict when all conditions match; never loosen | Yes, repo-scoped |
+| **Governance preferences** | Conditional pause rules inferred from behavioral patterns — when to stop vs. proceed based on action type, session state, and file scope | Tighten the scorer's verdict when all conditions match. `auto_apply` preferences (developer-confirmed, low-risk only) can loosen a check-in to proceed. | Yes, repo-scoped |
 | **Approve / deny decisions** | Every file write the developer approved, denied, or pushed back on | Online classifier training signal — shifts which file/change patterns auto-proceed vs. pause | Yes, via classifier |
 | **Pushback type** | How the developer responded — scope narrowing, correction, failure report, positive redirect | Feeds regret detector, hypothesis generators, session signal inference | Yes, in trace rows |
 | **Regret events** | An auto-approved action the developer later denied or that failed verification | Replayed as a negative classifier signal exactly once per event | Yes, in classifier state |
@@ -68,7 +68,7 @@ Every file action flows through a five-layer cascade:
 2. **Trust grants** — temporary leases from prior approve+remember decisions
 3. **Threshold adjustment** — four additive shifts set the proceed/flag bar: session engagement level, coding mode, model check-in calibration, persistent mode. Computed before the score is compared. Hard-coded constants grounded in SWE-chat findings — session-level responsiveness is needed from turn 1, before the classifier has enough data to learn these effects
 4. **Decision model** — deterministic risk assessment produces a raw score; optional second-opinion model reviewer nudges it (separate system prompt, no access to agent intent); score compared against the adjusted bar → verdict
-5. **Preference override** — confirmed behavioral patterns tighten the verdict; never loosen it
+5. **Preference override** — confirmed behavioral patterns tighten the verdict. `auto_apply` preferences (developer-confirmed, diff < 20 lines, blast radius ≤ 2, not security-sensitive, not new file) can loosen a check-in to proceed.
 
 The full cascade detail, session signals, and preference matching logic are in [`HEDWIG_END_TO_END.md`](HEDWIG_END_TO_END.md).
 

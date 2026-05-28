@@ -112,6 +112,7 @@ class PreferenceCoordinator:
             decision=decision,
             forced_action=forced_action,
             matched_confirmed=matched_confirmed,
+            risk=risk,
         )
         return PreferenceMatch(
             matched_confirmed=tuple(matched_confirmed),
@@ -125,6 +126,7 @@ class PreferenceCoordinator:
         decision: PolicyDecision,
         forced_action,
         matched_confirmed,
+        risk: "RiskSignals | None" = None,
     ) -> PolicyDecision:
         if forced_action is None:
             return decision
@@ -155,10 +157,30 @@ class PreferenceCoordinator:
                 reasons=decision.reasons + ("soft-checkin trigger matched",),
             )
 
-        # auto_apply intentionally never loosens a check_in here. The
-        # threshold-shift path in adjusted_policy_thresholds carries
-        # prefer_fewer_checkins; allowing a post-scorer loosen would
-        # silently bypass scorer-driven check-ins on high-risk writes
-        # and contradict the "preferences add caution but never remove"
-        # invariant.
+        # auto_apply can loosen a check_in to proceed, but only under strict
+        # conditions: the preference must have developer-confirmed provenance
+        # (user_explicit or inferred_user_confirmed — never built-in defaults),
+        # and the action must be genuinely low-risk (small diff, low blast
+        # radius, not security-sensitive, not a new file). Built-in defaults
+        # and autonomy-derived preferences never trigger this path — only
+        # preferences in matched_confirmed (developer-confirmed) count.
+        if action_value == "auto_apply" and risk is not None and decision.action == "check_in":
+            developer_confirmed = any(
+                p.lifecycle.provenance in {"user_explicit", "inferred_user_confirmed"}
+                for p in matched_confirmed
+                if p.action.value == "auto_apply"
+            )
+            low_risk = (
+                risk.diff_size < 20
+                and risk.blast_radius <= 2
+                and not risk.is_security_sensitive
+                and not risk.is_new_file
+            )
+            if developer_confirmed and low_risk:
+                return PolicyDecision(
+                    action="proceed",
+                    score=decision.score,
+                    reasons=decision.reasons + ("auto_apply preference: low-risk developer-confirmed override",),
+                )
+
         return decision

@@ -33,7 +33,7 @@ grounded in an empirical study of real coding-agent sessions
 - **Preference** — the 5-dim taxonomy
   (Trigger / Condition / PreferenceAction / Scope / Lifecycle) in
   `sc/preferences.py`. Matched per file per action *after* the scorer
-  decides; can only tighten, never loosen.
+  decides. Tightens by default; developer-confirmed `auto_apply` preferences can loosen on low-risk writes.
 
 ## 3. End-to-end flow of one task
 
@@ -104,8 +104,10 @@ One task typed in the REPL from keystroke to wrap-up:
       `sc/run/preference_coordinator.py::PreferenceCoordinator` matches
       the 5-dim `Preference` rows against the action and **tightens**
       the scorer's verdict if any matches (`_apply_forced_action`).
-      `auto_apply` is a deliberate no-op at this layer — preferences
-      never loosen.
+      Developer-confirmed `auto_apply` preferences can loosen a
+      `check_in` to `proceed` on low-risk writes (diff < 20, blast
+      radius ≤ 2, not security-sensitive, not new file). All other
+      preferences only tighten.
 
    The decision is rendered to the developer (`apply_ui.py`); on apply,
    the file is written atomically and a regret check runs.
@@ -222,10 +224,10 @@ sessions in the wild.
 **Dataset.** **5,776 sessions / 62,544 developer turns / 355K agent
 tool calls / 2.7M logged interactions** drawn from 200+ public GitHub
 repos via the SWE-chat dataset. Opt-in developers, real CLIs, real
-work — not lab-collected, not synthetic. Each turn carries a pushback
-label (correction / rejection / failure_report / non_pushback) and
-each session carries persona + coding-mode labels, **inherited from
-the SWE-chat dataset** — we did not run our own labeling pass.
+work. Each turn carries a pushback label (correction / rejection 
+/ failure_report / non_pushback) andeach session carries persona + 
+coding-mode labels, **inherited from the SWE-chat dataset**. We did not run our own 
+labeling pass.
 
 **Methods.** Five research questions, each with a method picked for
 **interpretability over performance** — we wanted to know *which*
@@ -244,8 +246,7 @@ signals matter, not ship a classifier.
 **Process note.** The analysis was executed by a Claude-Code-based
 research agent (Sonnet 4.6) directed by a written brief. The agent
 implemented the methods and extended feature lists; a human
-researcher interpreted the findings. Claude was the analyst, not
-the judge — there was no LLM-as-judge labeling pass.
+researcher interpreted the findings.
 
 **Findings are cited inline below**, in the section where each one
 shaped the design. The short summary, in case you want it once
@@ -272,9 +273,10 @@ All in `sc/preferences.py` and inferred in `sc/preference_inference.py`.
   (developer accepts agent output as-is); `> 0.5` → `human_only`
   (developer rewrites most of it); middle range → `collaborative`.
   Inferred in `infer_coding_mode` (`sc/preference_inference.py`);
-  consumed by hypothesis generators to filter which patterns are
-  plausible (vibe sessions get different rules than human-only) and
-  by `adjusted_policy_thresholds` (`vibe` +0.06, `human_only` −0.04).
+  consumed by `adjusted_policy_thresholds` (`vibe` +0.06,
+  `human_only` −0.04). Does not currently filter hypothesis
+  generators — that's intended future work (vibe sessions producing
+  different candidate patterns than human-only sessions).
 - **UserPersona** (`active` / `delegating` / `unknown`) — inferred
   from **turn count** and **tool-calls-per-turn** (how many Bedrock/
   bash calls the agent made per turn on average). `active` if turns
@@ -290,15 +292,31 @@ All in `sc/preferences.py` and inferred in `sc/preference_inference.py`.
   are the literal thresholds in `preference_inference.py:28`.
 - **PushbackType** — six values: `correction`, `rejection`,
   `failure_report`, `non_pushback`, `positive_redirect`,
-  `scope_constraint`. Inferred per turn from the developer's
-  message; consumed by the regret detector and the hypothesis bank
-  generators (e.g. repeated `scope_constraint` on a path is a
-  candidate scoping preference).
+  `scope_constraint`. Inferred per turn by `classify_pushback()` —
+  rule-based string matching, no model call. Stored in every
+  `decision_traces` row. Consumed in four places:
+
+  1. **Regret detector** — `failure_report` only. A failure report
+     on any turn after an auto-approved write on the same file becomes
+     a regret event. Explicit denials are caught via `user_decision`
+     separately.
+  2. **Session summary counts** — rolls into `n_denials` (rejection),
+     `n_failures` (failure_report), `n_feedback` (correction +
+     scope_constraint). These counts feed `Condition` matching in
+     preference triggers — e.g. `min_prior_pushback_count=2`.
+  3. **Rule-based generators** — `scope_constraint` is the most
+     consumed: three scope-narrowing responses on multi-file writes →
+     candidate "pause before bundling tests with service code."
+     `positive_redirect` is stored but no rule-based generator
+     currently produces candidates from it (parked).
+  4. **LLM noticer** — raw pushback types are in the trace digest so
+     the noticer can propose hypotheses across all six types even when
+     rule-based generators don't cover them.
+
   **From SWE-chat (§5):** the original four-category schema left 33%
-  of turns unclassified. `positive_redirect` ("looks good, now do X")
-  and `scope_constraint` ("just do X, don't touch Y") are the
-  legitimately-pushback slice that re-clustering surfaced; both are
-  now first-class enum values.
+  of turns unclassified. `positive_redirect` and `scope_constraint`
+  were discovered by re-clustering that bucket; both are now
+  first-class enum values.
 - **TaskIntent** (`debug` / `refactor` / `create` / `test` /
   `understand` / `other`) — inferred from the prompt by
   `infer_task_intent`. `debug` is the strongest pushback predictor;
@@ -322,7 +340,7 @@ All in `sc/preferences.py` and inferred in `sc/preference_inference.py`.
 
 ## 6. The two preference surfaces
 
-There are two systems and they don't fight — they compose:
+There are two systems.
 
 - **`AutonomyPreferences`** (`sc/autonomy.py`) — coarse, repo-scoped
   toggles: `prefer_fewer_checkins`, `allowed_checkin_topics`,
@@ -341,15 +359,37 @@ they never remove it. `prefer_fewer_checkins` reaches the cascade
 only as a threshold shift, never as a post-scorer loosening.
 `auto_apply` is a no-op at the override layer for the same reason.
 
-**Why the two surfaces stay separate — and why loosening happens only at the threshold layer.**
-Threshold shifts are global and blunt: "I generally trust this agent more in this repo."
-Preference overrides are file- and pattern-specific: "always pause on this path."
-Allowing the specific layer to loosen would mean a confirmed preference like "auto-apply small
-diffs to `service.py`" could override a high-risk scorer verdict on that file — silently
-bypassing the security-sensitive flag, the blast-radius check, and the regret signal.
-That's the invariant violation. The threshold layer is the right place for trust grants
-because it shifts *before* scoring, not after — so every risk signal still gets evaluated
-against an appropriately adjusted bar, rather than being overridden entirely.
+**`_apply_forced_action` — how preference overrides work.**
+This function takes the scorer's decision and the highest-priority matched preference action
+(selected by `force_action_from_preferences`, which picks the most restrictive:
+`FULL_CHECKIN=3 > SOFT_CHECKIN=2 > AUTO_APPLY=1`), and returns a possibly-modified decision:
+
+- `full_checkin` — upgrades any non-`check_in` decision to `check_in`.
+- `soft_checkin` — upgrades any non-`check_in` decision to `proceed_flag` (5s countdown).
+- `auto_apply` — can loosen a `check_in` to `proceed`, but only under strict conditions
+  (see below). Otherwise defers to the scorer's original decision.
+
+**`auto_apply` conditions.** A developer-confirmed `auto_apply` preference
+(`provenance` in `user_explicit` or `inferred_user_confirmed`) loosens a `check_in` to
+`proceed` only when ALL of:
+- `diff_size < 20`
+- `blast_radius <= 2`
+- `is_security_sensitive == False`
+- `is_new_file == False`
+
+If any condition fails, the scorer's `check_in` is preserved. Built-in defaults
+(`provenance="default"`) can never loosen regardless of conditions.
+
+The logic: a developer who explicitly sets (or confirms a hypothesis for) "auto-apply
+writes to `utils/helpers.py`" has made a conscious judgment. Hedwig respects that judgment
+on genuinely low-risk changes. Anything structurally risky — security-sensitive paths, new
+files, large diffs, high blast radius — still pauses regardless of the preference.
+
+**For most cases, loosening belongs at the threshold layer.** `/config set-mode autonomous`
+(−0.25) or `/oversight delegating` (−0.05) shift the bar before the scorer runs, so the
+scorer still evaluates all risk signals against a more permissive bar. `auto_apply`
+preferences are for specific paths where the developer has decided the scorer's verdict on
+low-risk writes doesn't need their attention.
 
 **Why per-repo and not per-developer.** **From SWE-chat (§5):** the
 ICC analysis on 128 developers with ≥3 sessions gave **ICC = 0.249**
@@ -370,13 +410,10 @@ The section where the "learning without overclaiming" claim is grounded. All in
 **From SWE-chat (§5):** Q2's logistic regression found that
 `debug intent + prior failure report` predicts future failure
 reports at **AUC 0.90** — well above the AUC 0.75 we got predicting
-pushback in general. That's strong enough to ship as a deterministic
-trigger, not a hypothesis to confirm. It lives as
-`FAILURE_SIGNAL_CHECKIN` in `sc/preferences.py` — a built-in
-`Preference` row that fires a soft check-in when both signals are
-present in the current session. It's the one place where Hedwig
-acts on the SWE-chat data directly rather than waiting for repo-local
-evidence.
+pushback in general. It lives as `FAILURE_SIGNAL_CHECKIN` in `sc/preferences.py` 
+— a built-in `Preference` row that fires a soft check-in when both signals are
+present in the current session. It's the one place where Hedwig acts on the SWE-chat 
+data directly rather than waiting for repo-local evidence.
 
 Two generators feed candidates into `hypothesis_candidates`:
 
@@ -415,8 +452,7 @@ IDs — hallucinated cites are dropped before storage.
 `decision_traces.id` values. Uncited or hallucinated cites are
 filtered out before storage. Candidates that arrive citing
 ≥ `MIN_EVIDENCE` valid traces can promote directly to
-`ready_to_surface` — bootstrapped from concrete prior history,
-not vibes.
+`ready_to_surface`, bootstrapped from concrete prior history.
 
 **Evidence accumulation** (preferences only). Each new trace runs
 through `update_evidence`: candidates whose Trigger fits get +1 for
@@ -495,10 +531,9 @@ model call (`client.compile_rule` in `sc/agent_client.py`) classifies
 the plain-English text into one or both of: `constraints` (path-
 enforceable — produces `HardConstraint` objects) or
 `behavioral_guidelines` (prose-level guidance — stored in the rule
-store). The developer never picks the category. Logic notes come from
-explicit `/rules add` facts or are auto-inferred by the LLM noticer.
-Governance preferences come only from the hypothesis bank or built-in
-defaults — not from `/rules add`.
+store). Logic notes come from explicit `/rules add` facts or are auto-inferred by
+ the LLM noticer. Governance preferences come only from the hypothesis bank
+ or built-indefaults — not from `/rules add`.
 
 **Ranking.** Keyword overlap between the task prompt and each candidate
 row's text. The implementation is in `rule_store.py`; ties are broken
@@ -691,43 +726,8 @@ Observability is read-only; the REPL also exposes two **controls**:
 - **`/cochange`** — see §10.
 - **`/prefs`**, **`/retrospective`** — see §12.
 
-## 12c. Demo seeding
 
-`sc/demo_seed.py::seed_demo` (invoked manually via the `/seed-demo`
-REPL command — `setup_demo.sh` does not call it) primes a fresh
-repo so a five-minute visitor sees a meaningful state instead of a
-cold-start heuristic with no surrounding history. It does two things,
-both idempotent:
-
-1. **Loads ~22 hand-authored prior `decision_traces`** tagged
-   `session_id='seed_demo'` (so longitudinal analysis can separate them). Of these, ~15 are apply-stage
-   decisions on the recipe fixture (data-model approvals, scope-narrow
-   denials on bundled tests, paused-then-approved auth edits) and ~7
-   are read-stage approvals on the same fixture files.
-2. **Pre-seeds two near-threshold hypothesis candidates** (a
-   rule-based and an LLM-noticed one) so the visitor's first
-   matching action ticks evidence to the surfacing threshold and
-   `/prefs` lights up.
-
-`seed_demo` does **not** activate the learned scorer or seed
-`AutonomyPreferences`. A pre-warmed classifier scores Task #1's files
-near 1.0 and would skip the first write check-in; the seed deliberately
-keeps the heuristic active for Task #1 so the first write check-in fires.
-
-The seeded **read** history is a deliberate part of the demo arc:
-because reads use a more permissive `proceed_threshold` than writes
-(`sc/run/read_stage.py:213`), the accumulated read approvals push the
-scorer past the proceed line on turn 1. Visitors see Hedwig
-auto-approve the read batch *because of* the seeded history — the
-same mechanism a returning developer would benefit from, no special
-codepath. This is what makes "Hedwig adjusts read friction on its
-own as trust accrues" honestly demonstrable on the first turn.
-
-Nothing seeded is synthetic — every trace represents a real decision
-Hedwig made on the demo fixture during internal testing, labeled as
-seeded so any longitudinal analysis can separate them.
-
-## 13. Booth-friendly Q&A
+## 13. Q&A
 
 **"Is this RL?"** No. It's a calibrated supervised classifier with
 online updates (`SGDClassifier(loss="log_loss")` + isotonic
@@ -763,17 +763,6 @@ developers, 75% is within-developer across their own sessions
 Per-developer preferences would mostly encode session noise. The
 repo is the stable target — `trust.db` keys on `repo_root`, and
 that's what Hedwig actually holds.
-
-**"What if Bedrock is down?"** Three layers of fallback. The
-adversarial-reviewer call (`assess_risk_via_model`) defaults to
-`(0.5, "")` — "no opinion" — on every failure path; both scorers
-are designed to pass through that midpoint untouched. The LLM
-hypothesis noticer is supplemental; the rule-based generators in
-`preference_inference.py` keep firing. The classifier and heuristic
-are local — pickle on disk, sklearn in-process. Hedwig stays
-operational; what disappears is novel hypothesis surfacing and the
-adversarial reviewer's pushback, both of which were advisory to
-begin with.
 
 **"How does Hedwig manage context?"** Two layers. (1) A
 session-start synthesized paragraph — *"What we've learned about
