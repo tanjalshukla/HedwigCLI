@@ -601,12 +601,12 @@ plain-English phrases come from translating `TaskIntent` and
 
 A second axis of "remembering your project" lives in
 `sc/cochange.py`. Where retrieval surfaces *what was said* about a
-codebase, co-change surfaces *what was done* — which files
+codebase, co-change surfaces *what was done*, which files
 historically move together when a developer is working on a task.
 
 **Definition.** A file pair is considered to co-change if both files
 appear under the same `task` (apply stage) in `decision_traces`.
-*Task* — not `session_id` — is the grouping unit, because:
+*Task*, not `session_id`, is the grouping unit, because:
 
 - A single REPL session can span multiple unrelated tasks.
 - Seeded prior history (`seed_demo`) shares one `session_id` by
@@ -636,7 +636,7 @@ ORDER BY n_tasks DESC, file_path ASC
 LIMIT ?                        -- default 3
 ```
 
-No new table, no migration — it's a derived view over data the trace
+It's a derived view over data the trace
 store already holds. `cochanged_files()` returns the per-file
 adjacency; `cochange_graph()` returns the full repo-level
 adjacency dict for visualization.
@@ -656,16 +656,12 @@ adjacency dict for visualization.
    *"patterns appear as you edit files together"* message when the
    repo has no qualifying pairs.
 
-**Why this is honest.** The graph is *descriptive*, not prescriptive
-— it doesn't change the cascade's verdict, doesn't shift thresholds,
-doesn't seed the classifier. It just tells the developer: *"in this
-repo's history, these files have moved together."* Acting on that
-information is the developer's call. Same governance philosophy as
-the hypothesis bank: surface patterns, let the human confirm.
+Acting on this information is the developer's call. Same governance
+ philosophy as the hypothesis bank: surface patterns, let the human confirm.
 
 ## 11. Persistence
 
-`sc/trust_db.py::TrustDB` is a thin facade over five focused mixins
+`sc/trust_db.py::TrustDB` is a layer over five focused mixins
 under `sc/store/`:
 
 - `lease_store.py` — `leases` and `read_leases` (temporary trust grants).
