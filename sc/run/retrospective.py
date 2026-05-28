@@ -56,11 +56,31 @@ def run_retrospective(
     trust_db: "TrustDB",
     repo_root_str: str,
     session_id: str,
+    no_prompt: bool = False,
 ) -> None:
-    """Render the calibration retrospective panel and handle one optional adjustment."""
+    """Render the calibration retrospective panel and handle one optional adjustment.
+
+    no_prompt=True suppresses the interactive y/n questions — use when calling
+    from /showcase or any non-interactive display context.
+    """
     console = _CONSOLE
 
     rows = [dict(r) for r in trust_db.session_traces(repo_root_str, session_id)]
+    if not rows:
+        # Fall back to the most recent prior session so /retrospective is
+        # useful right after /seed-demo (before any live tasks have run).
+        try:
+            with trust_db._connect() as _conn:
+                _row = _conn.execute(
+                    """SELECT session_id FROM decision_traces
+                       WHERE repo_root = ? AND session_id NOT IN (?, 'seed_demo')
+                       ORDER BY created_at DESC LIMIT 1""",
+                    (repo_root_str, session_id),
+                ).fetchone()
+            if _row:
+                rows = [dict(r) for r in trust_db.session_traces(repo_root_str, _row["session_id"])]
+        except Exception:
+            pass
     if not rows:
         console.print(f"[{PALETTE['meta']}]Nothing to review — no actions this session.[/{PALETTE['meta']}]")
         return
@@ -110,7 +130,9 @@ def run_retrospective(
               border_style=moment("info").border, padding=(1, 2))
     )
 
-    # One optional adjustment — keep it light.
+    # One optional adjustment — keep it light. Suppressed in no_prompt mode.
+    if no_prompt:
+        return
     if too_loose:
         try:
             pick = Prompt.ask(

@@ -49,6 +49,7 @@ class PolicyDecisionForFileTests(unittest.TestCase):
         )
         # Heuristic path returns rich reasons, not the "learned-policy score" string.
         self.assertTrue(decision.reasons)
+        self.assertIn("scorer:heuristic", decision.reasons)
         self.assertFalse(
             any(r.startswith("learned-policy") for r in decision.reasons)
         )
@@ -66,6 +67,7 @@ class PolicyDecisionForFileTests(unittest.TestCase):
             flag_threshold=0.0,
             classifier=clf,
         )
+        self.assertIn("scorer:heuristic", decision.reasons)
         self.assertFalse(
             any(r.startswith("learned-policy") for r in decision.reasons)
         )
@@ -87,6 +89,7 @@ class PolicyDecisionForFileTests(unittest.TestCase):
             any(r.startswith("learned-policy score") for r in decision.reasons),
             f"Expected learned-policy reason, got {decision.reasons}",
         )
+        self.assertIn("scorer:learned", decision.reasons)
         self.assertIn(decision.action, {"proceed", "proceed_flag", "check_in"})
 
 

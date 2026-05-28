@@ -553,22 +553,43 @@ def weights(
     classifier = trust_db.load_policy_model(str(repo_root))
 
     if classifier is None:
-        print(
-            f"[{PALETTE['meta']}]No classifier data yet — run a few tasks first "
-            f"and weights will appear here.[/{PALETTE['meta']}]"
+        console = Console()
+        body = Text()
+        body.append(
+            "The decision model activates after 10 real decisions. "
+            "Currently using default rules. Weights will appear here once it takes over.\n",
+            style="white",
+        )
+        console.print(
+            Panel(
+                body,
+                title=panel_title("info", "decision model · not yet active"),
+                border_style=PALETTE["info"],
+                padding=(1, 2),
+            )
         )
         raise typer.Exit(code=0)
 
     real_samples = classifier.sample_count
     personalized = real_samples >= 10
 
-    # Cold-start: show a compact progress indicator rather than an empty table.
-    if not personalized:
+    # Check if there's any meaningful drift even before the model activates.
+    # prewarm_classifier (called from seed_demo) trains weights without
+    # incrementing sample_count, so we can have real drift at sample_count=0.
+    current_coef_check = classifier.clf.coef_[0]
+    prior_coef_check = classifier.prior_coef
+    has_drift = any(
+        abs(current_coef_check[i] - prior_coef_check[i]) > 0.01
+        for i in range(len(FEATURE_NAMES))
+    )
+
+    # Cold-start with no drift: show progress bar only.
+    if not personalized and not has_drift:
         console = Console()
         body = Text()
         body.append(
-            f"Hedwig is using built-in rules for now — {real_samples} of 10 decisions "
-            f"needed before it adapts to your patterns.\n\n",
+            "The decision model activates after 10 real decisions. "
+            "Currently using default rules. Weights will appear here once it takes over.\n\n",
             style="white",
         )
         filled = real_samples
@@ -578,7 +599,7 @@ def weights(
         body.append("░" * empty, style=PALETTE["meta"])
         body.append(f"  {real_samples}/10\n\n", style=PALETTE["info"])
         body.append(
-            "Keep approving and denying — each decision updates the classifier.",
+            "Keep approving and denying — each decision updates the model.",
             style=PALETTE["meta_italic"],
         )
         console.print(
@@ -591,8 +612,43 @@ def weights(
         )
         return
 
-    # Learned model active — show full per-feature drift table.
-    title_suffix = f"{real_samples} decisions · learned model active"
+    # Has drift (or fully active) — show the drift table.
+    console = Console()
+    preamble_body = Text()
+    preamble_body.append(
+        "How the decision model has shifted from its starting point. "
+        "Each row shows one signal — ",
+        style="white",
+    )
+    preamble_body.append("green ▲", style=PALETTE["approve"])
+    preamble_body.append(" means more likely to auto-approve, ", style="white")
+    preamble_body.append("red ▼", style=PALETTE["deny"])
+    preamble_body.append(" means more likely to pause.", style="white")
+    if not personalized:
+        preamble_body.append(
+            f"\n\nPre-warmed from prior history. Takes over from default rules after "
+            f"10 real decisions — {real_samples} so far.",
+            style=PALETTE["meta"],
+        )
+    preamble_title = (
+        f"decision model · {real_samples} decisions · active"
+        if personalized
+        else f"decision model · pre-warmed · {real_samples}/10 to activate"
+    )
+    console.print(
+        Panel(
+            preamble_body,
+            title=panel_title("info", preamble_title),
+            border_style=PALETTE["info"],
+            padding=(1, 2),
+        )
+    )
+
+    title_suffix = (
+        f"{real_samples} decisions · learned model active"
+        if personalized
+        else f"pre-warmed · {real_samples}/10 decisions to activate"
+    )
     table = Table(
         title=panel_title("observe", f"how my judgment has shifted · {title_suffix}"),
         title_justify="left",

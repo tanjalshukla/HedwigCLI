@@ -44,7 +44,13 @@ from ..autonomy import (
 )
 from ..config import SAConfig, autonomy_profile
 from ..features import RiskSignals, assess_risk, change_type_label
-from ..model_risk import assess_risk_via_model, should_review
+from ..model_risk import (
+    assess_risk_via_model,
+    ask_model_to_vote,
+    is_borderline,
+    should_review,
+    _BORDERLINE_MAX_SHIFT,  # noqa: F401 — used in borderline vote nudge below
+)
 from ..ml_policy import PolicyClassifier, build_cold_classifier
 from ..policy import PolicyDecision
 from .helpers import (
@@ -315,10 +321,15 @@ class _SessionContext:
 def _load_confirmed_preferences(
     trust_db: TrustDB, repo_root_str: str, run_session_id: str
 ) -> list[Preference]:
-    """Decode session-confirmed Preference rows. Skips rows that didn't
-    accept the hypothesis or whose payload no longer round-trips."""
+    """Decode all confirmed Preference rows for this repo. Skips rows that
+    didn't accept the hypothesis or whose payload no longer round-trips.
+
+    Uses confirmed_preferences_for_repo (not session-scoped) so that
+    preferences seeded under session_id='seed_demo' and preferences confirmed
+    in prior live sessions both fire in the apply cascade.
+    """
     confirmed: list[Preference] = []
-    for row in trust_db.confirmed_preferences_for_session(repo_root_str, run_session_id):
+    for row in trust_db.confirmed_preferences_for_repo(repo_root_str):
         try:
             payload = json.loads(row["preference_json"])
         except (json.JSONDecodeError, KeyError, ValueError):
@@ -524,7 +535,6 @@ def _surface_ready_hypothesis(
             driver=hypothesis.driver,
         )
     except Exception as exc:
-        import sys as _sys
         print(f"[apply] preference save failed: {exc}", file=_sys.stderr)
         return
     mark_candidate_surfaced(
@@ -583,7 +593,6 @@ def _surface_ready_hypothesis_after_no_op(
             driver=hypothesis.driver,
         )
     except Exception as exc:
-        import sys as _sys
         print(f"[apply] preference save failed: {exc}", file=_sys.stderr)
         return
     mark_candidate_surfaced(
@@ -639,6 +648,7 @@ def _evaluate_apply_stage(
     client: ClaudeClient | None = None,
     study_context: StudyContext | None = None,
     session_intensity_override: str | None = None,
+    allow_revise: bool = False,
 ) -> None:
     """Resolve apply policy + approval flow and persist decision traces."""
 
@@ -727,12 +737,11 @@ def _evaluate_apply_stage(
         session_id=run_session_id,
     )
 
-    # Per-stage budget for adversarial-reviewer calls. Cap at 5 invocations
-    # per `_evaluate_apply_stage` to keep Bedrock cost bounded even when
-    # many files would otherwise pass the should_review gate. Resets every
-    # `hw run` (counter is loop-local, not module-level).
+    # Counter for the status display — tracks how many reviewer calls fired
+    # this turn. No cap: should_review() is the gate; silently skipping a
+    # security-sensitive file because of an arbitrary budget is worse than
+    # the cost of one extra call.
     reviewer_calls = 0
-    reviewer_skipped_due_to_cap = 0
 
     # Score each touched file independently, then aggregate to one approval decision.
     for path in touched_files:
@@ -759,25 +768,22 @@ def _evaluate_apply_stage(
         # Failures fall back to (0.5, "") so the deterministic signals stay
         # authoritative; never a veto, never a loosener.
         if client is not None and should_review(risk=risk, history=history):
-            if reviewer_calls >= 5:  # per-stage budget cap; see comment above
-                reviewer_skipped_due_to_cap += 1
-            else:
-                model_score, model_rationale = assess_risk_via_model(
-                    file_path=path,
-                    diff_or_content=new_content,
-                    file_context=old_content,
-                    agent_client=client,
-                )
-                reviewer_calls += 1
-                risk = RiskSignals(
-                    change_pattern=risk.change_pattern,
-                    blast_radius=risk.blast_radius,
-                    is_security_sensitive=risk.is_security_sensitive,
-                    is_new_file=risk.is_new_file,
-                    diff_size=risk.diff_size,
-                    model_risk_score=model_score,
-                    model_risk_rationale=model_rationale,
-                )
+            model_score, model_rationale = assess_risk_via_model(
+                file_path=path,
+                diff_or_content=new_content,
+                file_context=old_content,
+                agent_client=client,
+            )
+            reviewer_calls += 1
+            risk = RiskSignals(
+                change_pattern=risk.change_pattern,
+                blast_radius=risk.blast_radius,
+                is_security_sensitive=risk.is_security_sensitive,
+                is_new_file=risk.is_new_file,
+                diff_size=risk.diff_size,
+                model_risk_score=model_score,
+                model_risk_rationale=model_rationale,
+            )
         apply_risk[path] = risk
 
         constraint = apply_constraints.get(path)
@@ -831,6 +837,47 @@ def _evaluate_apply_stage(
                 flag_threshold=flag_threshold,
                 classifier=classifier,
             )
+            # Borderline model vote — only when the scorer is genuinely
+            # uncertain (score within _BORDERLINE_BAND of the proceed
+            # threshold). Counts against the reviewer budget so we don't
+            # add a second call on top of an existing adversarial-reviewer
+            # call for the same file. On any Bedrock failure the vote is
+            # None and the decision is left unchanged.
+            if (
+                client is not None
+                and is_borderline(decision.score, proceed_threshold)
+            ):
+                new_content = updates.get(path, "")
+                old_content_for_vote: str
+                try:
+                    old_content_for_vote = (repo_root / path).read_text()
+                except (FileNotFoundError, OSError):
+                    old_content_for_vote = ""
+                _vote, _vote_rationale = ask_model_to_vote(
+                    file_path=path,
+                    diff_or_content=new_content,
+                    file_context=old_content_for_vote,
+                    agent_client=client,
+                )
+                reviewer_calls += 1
+                if _vote is not None:
+                    # Nudge score toward or away from the threshold by
+                    # _BORDERLINE_MAX_SHIFT, then re-bucket. The shift is
+                    # additive — deterministic signals still dominate.
+                    _nudge = -_BORDERLINE_MAX_SHIFT if _vote else _BORDERLINE_MAX_SHIFT
+                    _new_score = decision.score + _nudge
+                    from ..policy import _bucket
+                    _new_action = _bucket(_new_score, proceed_threshold, flag_threshold)
+                    _vote_reason = (
+                        f"model vote: pause — {_vote_rationale}"
+                        if _vote
+                        else f"model vote: proceed — {_vote_rationale}"
+                    )
+                    decision = PolicyDecision(
+                        action=_new_action,
+                        score=_new_score,
+                        reasons=decision.reasons + (_vote_reason,),
+                    )
         else:
             decision = PolicyDecision(
                 action="check_in",
@@ -852,9 +899,6 @@ def _evaluate_apply_stage(
             prompt_required = True
         elif decision.action == "proceed_flag":
             flagged_auto_files.append(path)
-
-    if reviewer_skipped_due_to_cap > 0 and reviewer_calls >= 5:
-        print("[dim]model reviewer: 5/5 budget reached, skipping remainder[/dim]")
 
     milestone_reasons = _apply_milestone_reasons(
         declaration=declaration,
@@ -960,6 +1004,7 @@ def _evaluate_apply_stage(
             verification_failure_rates=verification_failure_rates,
             remember=remember,
             scope_budget_files=config.scope_budget_files,
+            allow_revise=allow_revise,
         )
         trust_db.record_decision(
             repo_root_str,
@@ -1035,16 +1080,38 @@ def _evaluate_apply_stage(
             approved=approved,
             response_time_ms=response_time_ms,
         )
-        _apply_feedback_learning(
-            trust_db=trust_db,
-            repo_root=repo_root_str,
-            session=session,
-            feedback_text=apply_feedback,
-            client=client,
-            guidance_prefix="Write decision guidance",
+        import threading as _threading
+        _feedback_thread = _threading.Thread(
+            target=_apply_feedback_learning,
+            kwargs=dict(
+                trust_db=trust_db,
+                repo_root=repo_root_str,
+                session=session,
+                feedback_text=apply_feedback,
+                client=client,
+                guidance_prefix="Write decision guidance",
+            ),
+            daemon=True,
         )
+        _feedback_thread.start()
         if not approved:
-            render_apply_denied()
+            # 'v' (revise scope) returns from _prompt_approval as a deny variant
+            # with a [revise] prefix on the feedback. Stash the feedback so the
+            # REPL outer loop can re-issue the task as a narrow-scope follow-up
+            # instead of making the visitor retype it. Apply itself still exits
+            # (code 0) — the actual loop-back happens in run_repl.
+            _is_revise = bool(apply_feedback and apply_feedback.startswith("[revise]"))
+            if _is_revise:
+                from ..run.theme import PALETTE as _PAL_R
+                from .revise_state import stash as _stash_revise
+                # Strip the [revise] tag — keep only the developer's note.
+                _note = apply_feedback[len("[revise]"):].strip()
+                _stash_revise(_note or "")
+                print(
+                    f"[{_PAL_R['attention']}]✎ narrowing scope — regenerating with your feedback.[/{_PAL_R['attention']}]"
+                )
+            else:
+                render_apply_denied()
             raise typer.Exit(code=0)
         if remembered:
             trust_db.add_leases(
@@ -1080,10 +1147,45 @@ def _evaluate_apply_stage(
         if outcome.intervened:
             from .ui import _prompt_approval as _full_prompt
             approved, remembered, apply_feedback = _full_prompt(
-                "apply", touched_files, remember, diff_already_shown=False
+                "apply", touched_files, remember, diff_already_shown=False,
+                allow_revise=allow_revise,
             )
             if not approved:
-                render_apply_denied(intervention=True)
+                _is_revise = bool(apply_feedback and apply_feedback.startswith("[revise]"))
+                trust_db.record_decision(
+                    repo_root_str, task, "apply",
+                    approved=False, remembered=False,
+                    planned_files=touched_files, touched_files=touched_files,
+                )
+                _record_traces(
+                    trust_db=trust_db,
+                    repo_root=repo_root_str,
+                    session_id=run_session_id,
+                    task=task,
+                    stage="apply",
+                    action_type="write_request",
+                    files=touched_files,
+                    histories=apply_histories,
+                    policies=apply_policies,
+                    user_decision="deny",
+                    response_time_ms=None,
+                    change_types=_risk_labels(),
+                    diff_sizes=_risk_diff_sizes(),
+                    blast_radius=max((r.blast_radius for r in apply_risk.values()), default=0),
+                    existing_leases=apply_leases,
+                    user_feedback_text=apply_feedback,
+                    study_context=study_context,
+                )
+                if _is_revise:
+                    from ..run.theme import PALETTE as _PAL_R
+                    from .revise_state import stash as _stash_revise
+                    _note = apply_feedback[len("[revise]"):].strip()
+                    _stash_revise(_note or "")
+                    print(
+                        f"[{_PAL_R['attention']}]✎ narrowing scope — regenerating with your feedback.[/{_PAL_R['attention']}]"
+                    )
+                else:
+                    render_apply_denied(intervention=True)
                 raise typer.Exit(code=0)
 
     user_decision = render_apply_auto_approved(

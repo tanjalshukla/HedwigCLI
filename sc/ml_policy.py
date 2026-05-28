@@ -15,6 +15,7 @@ from sklearn.linear_model import SGDClassifier
 from sklearn.preprocessing import StandardScaler
 
 if TYPE_CHECKING:
+    from .policy import PolicyDecision
     from .policy import PolicyInput
 
 
@@ -242,5 +243,4 @@ def build_cold_classifier() -> PolicyClassifier:
         _calib_X=[],
         _calib_y=[],
     )
-
 

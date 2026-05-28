@@ -14,7 +14,7 @@ from rich.panel import Panel
 from rich.text import Text
 
 from ..commands.shared import open_trust_db, require_repo_root
-from ..preference_inference import summarize_session
+from ..preference_inference import infer_coding_mode, infer_user_persona, summarize_session
 from ..preferences import preference_from_dict
 from ..run.theme import PALETTE, panel_title
 from ..status import (
@@ -37,8 +37,8 @@ def _humanize_preference(payload: dict, *, scope: str) -> LearnedPreference | No
     # Humanize by driver — these are the only drivers we emit today.
     driver_map = {
         "scope_constraint": (
-            "I'll check in before multi-file changes",
-            "You narrowed scope on me several times — I'm treating multi-file work as worth a pause.",
+            "I'll pause before adding test files in the same change as service code",
+            "You narrowed scope when tests were bundled with service changes.",
         ),
         "positive_redirect": (
             "I'll soft-check-in on small follow-ups",
@@ -56,6 +56,10 @@ def _humanize_preference(payload: dict, *, scope: str) -> LearnedPreference | No
             "I'll always check in on larger changes",
             "You've been approving quickly — I'll make sure you stay in the loop on the bigger stuff.",
         ),
+        "soft_checkin_tests": (
+            "I'll surface a brief countdown panel before writes to test files",
+            "You confirmed a soft pause for test-file changes so you stay in the loop without full interruption.",
+        ),
     }
     if driver in driver_map:
         headline, basis = driver_map[driver]
@@ -72,6 +76,28 @@ def _humanize_preference(payload: dict, *, scope: str) -> LearnedPreference | No
             scope=scope,
         )
     return None
+
+
+def _count_reviewer_calls(session_rows: list[dict]) -> int:
+    """Count how many traces this session involved a second-opinion check
+    (adversarial reviewer via model risk scoring)."""
+    count = 0
+    for row in session_rows:
+        _found = False
+        reasons_json = row.get("policy_reasons_json")
+        if reasons_json:
+            try:
+                reasons = json.loads(reasons_json)
+                if any("adversarial reviewer" in str(r).lower() for r in reasons):
+                    _found = True
+            except Exception:
+                pass
+        # Fallback: a non-null model_risk_score means the reviewer ran.
+        if not _found and row.get("model_risk_score") is not None:
+            _found = True
+        if _found:
+            count += 1
+    return count
 
 
 def _most_recent_proactive_reason(session_rows: list[dict]) -> tuple[int, str | None]:
@@ -118,7 +144,7 @@ def status(
             """
             SELECT session_id
             FROM decision_traces
-            WHERE repo_root = ? AND session_id != 'seed_demo'
+            WHERE repo_root = ? AND session_id NOT IN ('seed_demo', 'demo_prior_session')
             ORDER BY created_at DESC
             LIMIT 1
             """,
@@ -201,6 +227,42 @@ def status(
     from dataclasses import replace
     status_obj = replace(base_status, proactive_pauses=proactive_count)
 
+    # Reviewer call count for this session.
+    reviewer_calls = _count_reviewer_calls(row_dicts)
+
+    # Learned model active?
+    classifier = trust_db.load_policy_model(repo_root_str)
+    if classifier is not None and classifier.ready():
+        _model_line = (
+            f"Decision model: learning from your decisions "
+            f"({classifier.sample_count} real decisions)"
+        )
+        _model_style = PALETTE["learn_bold"]
+    else:
+        _sample_count = classifier.sample_count if classifier is not None else 0
+        _model_line = (
+            f"Decision model: using default rules "
+            f"(need 10 real decisions to switch — {_sample_count} so far)"
+        )
+        _model_style = PALETTE["meta"]
+
+    # Coding mode and engagement level.
+    coding_mode = infer_coding_mode(summary)
+    user_persona = infer_user_persona(summary)
+
+    _coding_mode_labels = {
+        "human_only": "human-authored",
+        "collaborative": "collaborative",
+        "vibe": "agent-led",
+    }
+    _persona_labels = {
+        "active": "deep in it",
+        "delegating": "delegating",
+        "unknown": "unknown",
+    }
+    _coding_label = _coding_mode_labels.get(coding_mode.value, coding_mode.value)
+    _persona_label = _persona_labels.get(user_persona.value, user_persona.value)
+
     # Render as a single themed panel with prose lines inside.
     body = Text()
 
@@ -213,6 +275,23 @@ def status(
     if pause_line:
         body.append(pause_line, style=PALETTE["attention"])
         body.append("\n")
+
+    # Session signals: coding mode + engagement level.
+    body.append("\n")
+    body.append(
+        f"Authorship this session: {_coding_label}  |  "
+        f"Your engagement level: {_persona_label}\n",
+        style=PALETTE["meta"],
+    )
+
+    # Second-opinion checks.
+    body.append(
+        f"Second-opinion checks this run: {reviewer_calls}\n",
+        style=PALETTE["meta"],
+    )
+
+    # Decision model status.
+    body.append(_model_line + "\n", style=_model_style)
 
     # Learned preferences this session.
     if status_obj.session_preferences:

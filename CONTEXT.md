@@ -173,7 +173,7 @@ A deployable proactive check-in trigger, grounded in finding 2 of the SWE-chat a
 ### REPL
 
 - **Precise:** The persistent interactive session started by `hw` with no subcommand. A single `session_id` is shared across all tasks in the loop. Slash commands (`/status`, `/learning`, `/prefs`, `/rules`, `/observe`, `/oversight`) are handled inline without leaving the session.
-- **Plain:** Instead of running `hw run "task"` once and exiting, you start `hw` and stay inside it. Every task you type shares the same session, so behavioral signals accumulate across multiple tasks.
+- **Plain:** Start `hw` and stay inside it. Every task you type shares the same session, so behavioral signals accumulate across multiple tasks.
 
 ### O1–O5 criteria (Bui & Evangelopoulos, 2026)
 

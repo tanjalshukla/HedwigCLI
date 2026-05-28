@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -25,13 +25,19 @@ ConstraintPolicy = Literal["always_allow", "always_check_in", "always_deny"]
 def _normalize_repo_paths(paths: list[str], field_name: str) -> list[str]:
     normalized: list[str] = []
     for path in paths:
-        if not path or path.strip() == "":
+        raw = path.strip().replace("\\", "/")
+        if not raw:
             raise ValueError(f"{field_name} cannot contain empty paths")
-        if Path(path).is_absolute():
+        _first_seg = raw.split("/", 1)[0]
+        _is_win_drive = len(_first_seg) == 1 and _first_seg.isalpha() and ":" in raw[1:3]
+        if Path(raw).is_absolute() or raw.startswith("/") or _is_win_drive:
             raise ValueError(f"{field_name} must be repo-relative")
-        norm = str(Path(path))
-        if norm.startswith(".."):
+        parts = [part for part in raw.split("/") if part and part != "."]
+        if any(part == ".." for part in parts):
             raise ValueError(f"{field_name} must not escape repo")
+        norm = str(PurePosixPath(*parts)) if parts else ""
+        if not norm:
+            raise ValueError(f"{field_name} cannot contain empty paths")
         normalized.append(norm)
     return normalized
 

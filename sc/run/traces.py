@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from ..policy import PolicyDecision
 from ..preference_inference import classify_pushback, infer_turn_purpose
+from ..preferences import PushbackType
 from ..trust_db import PolicyHistory, TrustDB
 from ..verification import VerificationResult
 from .helpers import StudyContext
@@ -34,6 +35,7 @@ def _record_traces(
     study_context: StudyContext | None = None,
     model_risk_by_file: dict[str, tuple[float, str]] | None = None,
 ) -> None:
+    original_feedback_text = user_feedback_text
     for path in files:
         history = histories[path]
         policy = policies[path]
@@ -51,11 +53,24 @@ def _record_traces(
         )
         # SWE-chat-grounded taxonomy signals, computed at record time so they're
         # queryable alongside the raw trace fields they derive from.
-        pushback_type = classify_pushback(
-            user_decision=user_decision,
-            edit_distance=None,  # edit_distance isn't threaded through here yet
-            user_feedback_text=user_feedback_text,
-        ).value
+        # Apply-stage 'v' (revise scope) tags feedback with a [revise] prefix
+        # at the UI layer; classify_pushback's heuristic doesn't catch booth
+        # phrasings like "just service.py" so we map the explicit revise
+        # signal directly to scope_constraint here. Keeps the hypothesis bank
+        # advancing on the demo's intended pushback type.
+        feedback_for_row = original_feedback_text
+        _is_revise = bool(feedback_for_row and feedback_for_row.startswith("[revise]"))
+        if _is_revise:
+            pushback_type = PushbackType.SCOPE_CONSTRAINT.value
+            # Strip the marker from the stored feedback so it doesn't leak
+            # into UI or exports — the pushback_type carries the signal now.
+            feedback_for_row = feedback_for_row[len("[revise]"):].strip() or None
+        else:
+            pushback_type = classify_pushback(
+                user_decision=user_decision,
+                edit_distance=None,  # edit_distance isn't threaded through here yet
+                user_feedback_text=feedback_for_row,
+            ).value
         # Turn purpose — what the task is *for*, orthogonal to pushback_type.
         # Used downstream to avoid counting context-provision turns as pushback.
         turn_purpose = infer_turn_purpose(task).value
@@ -94,7 +109,7 @@ def _record_traces(
             user_decision=user_decision,
             response_time_ms=response_time_ms,
             edit_distance=None,
-            user_feedback_text=user_feedback_text,
+            user_feedback_text=feedback_for_row,
             verification_passed=verification_result.passed if verification_result else None,
             verification_checks_json=verification_result.checks_json() if verification_result else None,
             expected_behavior=verification_result.expected_behavior if verification_result else None,

@@ -104,6 +104,107 @@ _REVIEWER_PROMPT_PREFIX = (
     "rationale: one sentence (<=20 words) explaining the score.\n\n"
 )
 
+# Width on each side of the proceed threshold that qualifies as "borderline."
+# |score - proceed_threshold| <= this → the model gets a vote on whether to
+# pause. Set tight enough that clear auto-proceeds and obvious check-ins are
+# never touched — only genuinely ambiguous cases.
+_BORDERLINE_BAND = 0.25
+
+# Maximum shift the borderline vote can apply to the scorer's raw score.
+# Keeps deterministic signals authoritative; the vote is a nudge, not a veto.
+_BORDERLINE_MAX_SHIFT = 0.15
+
+_BORDERLINE_SYSTEM_PROMPT = (
+    "You are deciding whether a code change requires a developer pause. "
+    "You have NOT seen the agent's intent or reasoning — only the file, "
+    "the diff, and surrounding context. The automated scorer is uncertain. "
+    "Your job: should a developer review this before it's applied? "
+    "Return JSON only."
+)
+
+_BORDERLINE_PROMPT_PREFIX = (
+    "Return JSON only matching this schema:\n"
+    '{"pause": bool, "rationale": "short string"}\n\n'
+    "pause = true  -> a developer should review this before it's applied.\n"
+    "pause = false -> this looks safe to proceed without review.\n"
+    "rationale: one sentence (<=20 words) explaining the decision.\n\n"
+)
+
+
+def is_borderline(score: float, proceed_threshold: float) -> bool:
+    """True when the scorer's raw score is close enough to the proceed threshold
+    that a model vote is worth the cost."""
+    return abs(score - proceed_threshold) <= _BORDERLINE_BAND
+
+
+def ask_model_to_vote(
+    file_path: str,
+    diff_or_content: str,
+    file_context: str,
+    agent_client: object,
+) -> tuple[bool | None, str]:
+    """Ask the model whether to pause on a borderline decision.
+
+    Returns ``(pause, rationale)``. ``pause=None`` on any failure — the
+    caller treats None as "no opinion" and leaves the score unchanged.
+    Separate system prompt from ``assess_risk_via_model``; never reuses
+    the agent's session.
+    """
+    if agent_client is None:
+        return None, ""
+
+    diff_or_content = _truncate(diff_or_content, _DIFF_CHAR_LIMIT)
+    file_context = _truncate(file_context, _FILE_CONTEXT_CHAR_LIMIT)
+
+    user_prompt = (
+        _BORDERLINE_PROMPT_PREFIX
+        + f"File: {file_path}\n\n"
+        + "Surrounding file context:\n-----\n"
+        + (file_context or "(none)")
+        + "\n-----\n\n"
+        + "Proposed change (diff or new file content):\n-----\n"
+        + (diff_or_content or "(empty)")
+        + "\n-----\n"
+    )
+
+    try:
+        client = getattr(agent_client, "client", None)
+        model_id = getattr(agent_client, "model_id", None)
+        if client is None or model_id is None:
+            return None, ""
+        response = client.messages.create(
+            model=model_id,
+            max_tokens=150,
+            temperature=0.0,
+            system=_BORDERLINE_SYSTEM_PROMPT,
+            messages=[{"role": "user", "content": user_prompt}],
+        )
+    except Exception:
+        return None, ""
+
+    raw = _extract_text(response)
+    if not raw:
+        return None, ""
+
+    try:
+        payload = json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        start, end = raw.find("{"), raw.rfind("}")
+        if start == -1 or end <= start:
+            return None, ""
+        try:
+            payload = json.loads(raw[start:end + 1])
+        except (json.JSONDecodeError, TypeError):
+            return None, ""
+
+    if not isinstance(payload, dict):
+        return None, ""
+    pause = payload.get("pause")
+    rationale = payload.get("rationale", "")
+    if not isinstance(pause, bool):
+        return None, ""
+    return pause, str(rationale).strip()
+
 
 def _build_user_prompt(file_path: str, file_context: str, diff_or_content: str) -> str:
     """Assemble the reviewer user prompt without ``str.format`` — the

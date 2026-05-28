@@ -84,7 +84,7 @@ class PolicyInput:
             verification_failure_rate=verification_failure_rate,
             model_confidence_avg=model_confidence_avg,
             model_confidence_samples=model_confidence_samples,
-            model_risk_score=getattr(risk, "model_risk_score", 0.5),
+            model_risk_score=risk.model_risk_score,
         )
 
 

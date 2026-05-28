@@ -38,7 +38,6 @@ from .commands.observe import (
 )
 from .commands.learning import learning
 from .commands.status import status
-from .run.command import run
 from .run.repl import run_repl
 
 app = typer.Typer(
@@ -84,7 +83,6 @@ def _rules_default(ctx: typer.Context):
 app.command()(init)
 app.command()(doctor)
 app.command()(ask)
-app.command()(run)
 app.command()(status)   # developer-facing: "what does Hedwig think about this session"
 app.command()(learning) # developer-facing: "what has Hedwig learned about this repo"
 app.command()(report)

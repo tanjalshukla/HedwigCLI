@@ -494,8 +494,8 @@ def generate_html_report(trust_db: TrustDB, repo_root: str) -> str:
     parts.append("<div class='card'>")
     parts.append(
         "<p style='color:#666; font-size:14px; margin-top:0;'>"
-        "Grounded in the SWE-chat analysis: debug intent + heavy shell activity + "
-        "prior failure in the session predicts failure reports at 3.4× baseline.</p>"
+        "Fires when the session has debug intent and something has already failed. "
+        "Each row below is one instance where this pause triggered.</p>"
     )
     parts.append(_trigger_firings_section(trust_db, repo_root))
     parts.append("</div>")

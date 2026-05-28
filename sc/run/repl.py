@@ -107,16 +107,22 @@ def _build_repl_session():
 _SLASH_COMMANDS = {
     "/status":        "What Hedwig thinks about this session right now",
     "/prefs":         "Your saved preferences and patterns Hedwig is watching for",
+    "/weights":       "How the decision model has shifted from its starting point (▲▼)",
     "/context":       "Show what Hedwig pulled from repo memory for the last task",
     "/cochange":      "Show files that historically change together in this repo",
     "/rules":         "Add or list rules  (/rules add <rule> | /rules list)",
-    "/observe":       "Repo activity  (/observe report | traces | weights | personas | export [--html])",
+    "/config":        "Persistent config  (/config set-mode <mode> | set-verification-cmd <cmd>)",
+    "/observe":       "Repo activity  (/observe report | traces | personas | preferences | export [--html])",
     "/oversight":     "Set oversight level (hands-on / balanced / delegating)",
     "/retrospective": "Session wrap-up — where I was too loose or too cautious",
+    "/clear":         "Clear the terminal screen",
     "/new-session":   "Mark a session boundary (history is preserved)",
     "/doctor":        "Verify AWS identity and Bedrock connectivity",
-    "/reset-demo":    "Clear all governance state (booth use — wipes trust.db)",
-    "/seed-demo":     "Load hand-authored prior history (booth use — pre-warm classifier + hypothesis)",
+    "/reset-code":    "Restore demo fixture files",
+    "/reset-governance": "Clear traces/prefs/model only",
+    "/reset-demo":    "Full reset — code + governance",
+    "/seed-demo":     "Load prior history to pre-warm classifier and hypothesis bank",
+    "/showcase":      "Walk through everything Hedwig has learned",
     "/help":          "Show this list",
     "/exit":          "Exit Hedwig",
 }
@@ -130,6 +136,7 @@ def _handle_slash(
     run_session_id: str,
     pinned_intensity: str | None,
     config=None,
+    pending_task_queue: list[str] | None = None,
 ) -> tuple[bool, str | None]:
     """Handle a slash command. Returns (should_continue, new_pinned_intensity)."""
     console = Console()
@@ -180,11 +187,19 @@ def _handle_slash(
         from ..hypothesis_bank import MIN_EVIDENCE as _MIN_EVIDENCE
         _body = _T()
 
+        # Always-active built-in: failure-signal pause.
+        _body.append("Always active\n", style=PALETTE["info_bold"])
+        _body.append(
+            "  Hedwig will pause before writes when you're debugging and "
+            "something has already failed this session.\n",
+            style="white",
+        )
+
         # Accepted preferences.
         rows = trust_db.confirmed_preferences_for_repo(repo_root_str)
         accepted = [r for r in rows if json.loads(r["preference_json"]).get("accepted")]
         if accepted:
-            _body.append("Accepted\n", style=PALETTE["learn_bold"])
+            _body.append("\nAccepted\n", style=PALETTE["learn_bold"])
             from ..commands.status import _humanize_preference
             for r in accepted:
                 payload = json.loads(r["preference_json"])
@@ -210,9 +225,11 @@ def _handle_slash(
         # Render each hypothesis in two visual rows:
         #   row 1: bar + pct  (left column, fixed width)
         #   row 2: prompt sentence, indented under the bar, wrapped softly.
-        # This avoids Rich panel re-wrapping breaking a single-line layout.
-        _PROMPT_WIDTH = 70
+        # Width is derived from the live console so Rich doesn't re-wrap
+        # our pre-wrapped lines inside the panel chrome (borders + padding).
         _INDENT = " " * 4
+        # panel chrome: 2 border cols + 2*2 padding = 6
+        _PROMPT_WIDTH = max(40, console.size.width - 6)
 
         def _wrap_prompt(text: str) -> str:
             normalized = " ".join((text or "").split())
@@ -233,16 +250,22 @@ def _handle_slash(
             _body.append(f"{_wrap_prompt(prompt_text)}\n", style="white")
             if rationale:
                 rsummary = " ".join(rationale.split())
-                if len(rsummary) > 110:
-                    rsummary = rsummary[:107] + "..."
-                _body.append(f"{_INDENT}why: {rsummary}\n", style=PALETTE["meta_italic"])
+                if len(rsummary) > 220:
+                    rsummary = rsummary[:217] + "..."
+                wrapped_why = _tw.fill(
+                    f"why: {rsummary}",
+                    width=_PROMPT_WIDTH,
+                    initial_indent=_INDENT,
+                    subsequent_indent=_INDENT,
+                )
+                _body.append(f"{wrapped_why}\n", style=PALETTE["meta_italic"])
             _body.append("\n")
 
         if _pending:
             if accepted:
                 _body.append("\n")
-            _body.append("Watching  ", style=PALETTE["info_bold"])
-            _body.append(f"(evidence toward surfacing: {_MIN_EVIDENCE} traces needed)\n",
+            _body.append("Building evidence for:  ", style=PALETTE["info_bold"])
+            _body.append(f"({_MIN_EVIDENCE} matching traces needed to surface)\n",
                          style=PALETTE["meta"])
             for c in _pending:
                 _bar_block(c["prompt"], int(c["evidence_for"]), c["rationale"] if "rationale" in c.keys() else None)
@@ -250,7 +273,7 @@ def _handle_slash(
         if _rejected:
             if accepted or _pending:
                 _body.append("\n")
-            _body.append("Set aside (not enough evidence yet)\n", style=PALETTE["meta"])
+            _body.append("Not enough evidence yet:\n", style=PALETTE["meta"])
             for r in _rejected:
                 evf = int(r["evidence_for"])
                 total = evf + int(r["evidence_against"])
@@ -275,8 +298,13 @@ def _handle_slash(
             return True, pinned_intensity
         body = _T()
         if last.total() == 0 and not last.summary:
-            body.append("No task run yet this session — context shows up after the first run.",
-                        style=PALETTE["meta_italic"])
+            body.append(
+                "After the first task, this shows exactly what Hedwig retrieved from repo memory "
+                "and injected into the agent's prompt — repo facts, behavioral guidelines, and "
+                "past corrections, ranked by keyword overlap with the task.\n\n"
+                "The repo memory is already seeded: run any task to see it populate.",
+                style=PALETTE["meta_italic"],
+            )
         else:
             if last.task_text:
                 snippet = " ".join(last.task_text.split())
@@ -409,24 +437,25 @@ def _handle_slash(
 
     if verb == "/observe":
         from ..commands.observe import (
-            report, traces, weights, personas, leases, export,
+            report, traces, weights, personas, leases, preferences, export,
         )
         # Accept multiple subcommands on the same line ("/observe report export
         # --html") by scanning all args; last-known-subcommand wins. Also
         # tolerate -html as an alias for --html since visitors mistype.
-        known = {"report", "traces", "weights", "personas", "leases", "export"}
+        known = {"report", "traces", "weights", "personas", "leases", "preferences", "export"}
         sub = "report"
         for p in parts[1:]:
             if p.lower() in known:
                 sub = p.lower()
         html_flag = any(p in ("--html", "-html") for p in parts)
         _obs_map = {
-            "report":      lambda: report(json_out=False, verbose=False),
-            "traces":      lambda: traces(limit=20, json_out=False),
-            "weights":     lambda: weights(verbose=False),
-            "personas":    lambda: personas(limit=5, verbose=False),
-            "leases":      lambda: leases(json_out=False),
-            "export":      lambda: export(out=Path(".sc/exports"), session_id=None, html_report=html_flag, open_browser=True),
+            "report":       lambda: report(json_out=False, verbose=False),
+            "traces":       lambda: traces(limit=20, json_out=False),
+            "weights":      lambda: weights(verbose=False),
+            "personas":     lambda: personas(limit=5, verbose=False),
+            "leases":       lambda: leases(json_out=False),
+            "preferences":  lambda: preferences(json_out=False),
+            "export":       lambda: export(out=Path(".sc/exports"), session_id=None, html_report=html_flag, open_browser=True),
         }
         fn = _obs_map.get(sub)
         if fn:
@@ -435,7 +464,51 @@ def _handle_slash(
             except SystemExit:
                 pass
         else:
-            print(f"[{PALETTE['meta']}]usage: /observe [report|traces|weights|personas|leases|export [--html]][/{PALETTE['meta']}]")
+            print(f"[{PALETTE['meta']}]usage: /observe [report|traces|personas|leases|preferences|export [--html]][/{PALETTE['meta']}]")
+        return True, pinned_intensity
+
+    if verb == "/weights":
+        from ..commands.observe import weights as _weights_cmd
+        try:
+            _weights_cmd(verbose=False)
+        except SystemExit:
+            pass
+        return True, pinned_intensity
+
+    if verb == "/config":
+        sub = parts[1].lower() if len(parts) > 1 else ""
+        if sub == "set-mode" and len(parts) > 2:
+            from ..commands.admin import set_mode as _set_mode
+            try:
+                _set_mode(mode=parts[2])
+            except SystemExit:
+                pass
+        elif sub == "set-verification-cmd" and "--clear" in parts:
+            from ..commands.admin import set_verification_cmd as _set_vcmd
+            try:
+                _set_vcmd(command=None, clear=True)
+            except SystemExit:
+                pass
+        elif sub == "set-verification-cmd" and len(parts) > 2:
+            from ..commands.admin import set_verification_cmd as _set_vcmd
+            try:
+                _set_vcmd(command=" ".join(parts[2:]), clear=False)
+            except SystemExit:
+                pass
+        else:
+            print(
+                f"[{PALETTE['meta']}]usage:\n"
+                f"  /config set-mode autonomous|balanced|strict|milestone\n"
+                f"  /config set-verification-cmd <command>\n"
+                f"  /config set-verification-cmd --clear[/{PALETTE['meta']}]"
+            )
+        return True, pinned_intensity
+
+    if verb == "/clear":
+        import subprocess as _sp
+        _sp.run(["clear"], check=False)
+        if pending_task_queue is not None:
+            pending_task_queue.clear()
         return True, pinned_intensity
 
     if verb == "/new-session":
@@ -456,13 +529,23 @@ def _handle_slash(
             pass
         return True, pinned_intensity
 
-    if verb == "/reset-demo":
-        # Booth-only: wipe all per-repo governance state so the next visitor
-        # starts cold. Keeps the file on disk; just clears every table.
+    if verb in ("/reset-demo", "/reset-code", "/reset-governance"):
+        # Three-way reset for all-day booth use:
+        #   /reset-code        — restore demo fixture files only
+        #                        (use when the app gets into a weird state)
+        #   /reset-governance  — wipe traces/prefs/model only
+        #                        (use when learning gets noisy or biased)
+        #   /reset-demo        — full reset (both of the above)
+        wants_code = verb in ("/reset-demo", "/reset-code")
+        wants_governance = verb in ("/reset-demo", "/reset-governance")
+        scope_label = {
+            "/reset-code": "demo fixture files",
+            "/reset-governance": "governance state (traces, prefs, hypotheses, model)",
+            "/reset-demo": "code + governance state",
+        }[verb]
         try:
             confirm = Prompt.ask(
-                f"[{PALETTE['attention_bold']}]Wipe all governance state for this repo?[/{PALETTE['attention_bold']}]"
-                f" [{PALETTE['meta']}](traces, leases, prefs, hypotheses, model)[/{PALETTE['meta']}]",
+                f"[{PALETTE['attention_bold']}]Reset {scope_label}?[/{PALETTE['attention_bold']}]",
                 choices=["y", "n"],
                 default="n",
             )
@@ -472,44 +555,48 @@ def _handle_slash(
         if confirm != "y":
             print(f"[{PALETTE['meta']}]cancelled.[/{PALETTE['meta']}]")
             return True, pinned_intensity
-        with trust_db._connect() as _conn:
-            for _table in (
-                "decisions", "decision_traces", "leases", "read_leases",
-                "autonomy_preferences", "confirmed_preferences",
-                "hypothesis_candidates", "policy_models", "policy_model_snapshots",
-                # Added 2026-05-25: these tables also accumulate per-repo
-                # learned state. Without wiping them, plan revisions,
-                # learned guidelines, and any /rules add from the previous
-                # booth visitor leak into the next visitor's session.
-                "plan_revisions", "logic_notes", "behavioral_guidelines",
-                "hard_constraints",
-            ):
-                try:
-                    _conn.execute(f"DELETE FROM {_table} WHERE repo_root = ?", (repo_root_str,))
-                except Exception:
-                    pass
-        # Restore demo fixture files so the task "add a search-by-tag method"
-        # always has something real to add. Without this, code written by a
-        # prior demo run accumulates and the model finds nothing to do.
-        import subprocess as _sp
-        _demo_dir = str(Path(repo_root_str) / "demo_recipe_api")
-        try:
-            _sp.run(
-                ["git", "restore",
-                 "demo_recipe_api/recipe_api/store.py",
-                 "demo_recipe_api/recipe_api/service.py",
-                 "demo_recipe_api/tests/test_api.py"],
-                cwd=repo_root_str, capture_output=True,
-            )
-            # Do NOT use git clean here — test_store.py is untracked and
-            # would be permanently deleted on every reset.
-            _sp.run(
-                ["git", "restore", "demo_recipe_api/tests/test_api.py"],
-                cwd=repo_root_str, capture_output=True,
-            )
-        except Exception:
-            pass
-        print(f"[{PALETTE['approve_bold']}]✓ governance state cleared — ready for next visitor.[/{PALETTE['approve_bold']}]")
+        if wants_governance:
+            with trust_db._connect() as _conn:
+                for _table in (
+                    "decisions", "decision_traces", "leases", "read_leases",
+                    "autonomy_preferences", "confirmed_preferences",
+                    "hypothesis_candidates", "policy_models", "policy_model_snapshots",
+                    "plan_revisions", "logic_notes", "behavioral_guidelines",
+                    "hard_constraints",
+                ):
+                    try:
+                        _conn.execute(f"DELETE FROM {_table} WHERE repo_root = ?", (repo_root_str,))
+                    except Exception:
+                        pass
+        if wants_code:
+            import subprocess as _sp
+            try:
+                # All files the scripted demo tasks may touch must be listed here,
+                # otherwise leftover edits from the previous visitor leak into
+                # the next session and the model says "no changes needed".
+                # Do NOT use git clean — test_store.py is untracked and would
+                # be permanently deleted on every reset.
+                _sp.run(
+                    ["git", "restore",
+                     "demo_recipe_api/recipe_api/store.py",
+                     "demo_recipe_api/recipe_api/service.py",
+                     "demo_recipe_api/recipe_api/models.py",
+                     "demo_recipe_api/recipe_api/api.py",
+                     "demo_recipe_api/tests/test_api.py"],
+                    cwd=repo_root_str, capture_output=True,
+                )
+            except Exception:
+                pass
+        # Clear any queued revise-scope follow-up — it belongs to the session
+        # that just got wiped and must not run against fresh state.
+        if pending_task_queue is not None:
+            pending_task_queue.clear()
+        msg_parts = []
+        if wants_governance:
+            msg_parts.append("governance cleared")
+        if wants_code:
+            msg_parts.append("code restored")
+        print(f"[{PALETTE['approve_bold']}]✓ {' · '.join(msg_parts)}.[/{PALETTE['approve_bold']}]")
         return True, pinned_intensity
 
     if verb == "/seed-demo":
@@ -531,8 +618,63 @@ def _handle_slash(
         print(
             f"[{PALETTE['approve_bold']}]✓ seeded[/{PALETTE['approve_bold']}]"
             f"  [{PALETTE['meta']}]· {result['traces']} traces · "
-            f"classifier pre-warmed ({result['updates']} updates) · "
+            f"classifier inactive (by design — first task will check in naturally) · "
             f"1 hypothesis at evidence 2/3 · session_id={SEED_SESSION_ID}[/{PALETTE['meta']}]"
+        )
+        return True, pinned_intensity
+
+    if verb == "/showcase":
+        from rich.console import Console as _ShowConsole
+        from rich.rule import Rule as _Rule
+        _sc = _ShowConsole()
+
+        # Section order: most novel first — the things Hedwig uniquely does
+        # that static config and plain prompting can't.
+        _showcase_sections = [
+            ("/prefs",         "What Hedwig has learned — standing preferences and patterns building evidence"),
+            ("/weights",       "How the decision model has shifted from its defaults  (▲ more trust · ▼ more caution)"),
+            ("/context",       "What Hedwig pulled from repo memory for the last task"),
+            ("/cochange",      "Files that have moved together across tasks in this repo"),
+            ("/retrospective", "Where Hedwig was too cautious or too loose this session"),
+            ("/status",        "Current session: engagement level, coding mode, model state"),
+        ]
+        _sc.print()
+        _sc.print(_Rule(
+            f"[{PALETTE['info_bold']}]hedwig — what I've learned about this repo[/{PALETTE['info_bold']}]",
+            style=PALETTE["info"],
+        ))
+        for _scmd, _intro in _showcase_sections:
+            _sc.print()
+            _sc.print(_Rule(
+                f"[{PALETTE['meta']}]{_intro}[/{PALETTE['meta']}]",
+                style=PALETTE["meta"],
+            ))
+            try:
+                if _scmd == "/retrospective":
+                    from .retrospective import run_retrospective as _retro
+                    _retro(
+                        trust_db=trust_db,
+                        repo_root_str=repo_root_str,
+                        session_id=run_session_id,
+                        no_prompt=True,
+                    )
+                else:
+                    _handle_slash(
+                        _scmd,
+                        trust_db=trust_db,
+                        repo_root_str=repo_root_str,
+                        run_session_id=run_session_id,
+                        pinned_intensity=pinned_intensity,
+                        config=config,
+                        pending_task_queue=pending_task_queue,
+                    )
+            except Exception:
+                pass
+        _sc.print()
+        _sc.print(_Rule(style=PALETTE["meta"]))
+        _sc.print(
+            f"[{PALETTE['meta']}]Run /showcase any time to refresh. "
+            f"For full detail: hw observe export --html[/{PALETTE['meta']}]"
         )
         return True, pinned_intensity
 
@@ -640,10 +782,15 @@ def run_repl(
         print(f"[{PALETTE['deny']}]{exc}[/{PALETTE['deny']}]")
         raise typer.Exit(code=1)
 
+    # Queue for synthetic follow-up tasks (e.g. revise-scope re-issues).
+    # Drained at the top of each loop iteration before reading from stdin.
+    _PENDING_TASK_QUEUE: list[str] = []
+
     while True:
-        # When prompt_toolkit is available, render the label inline as part
-        # of the pt prompt so its completion menu lays out cleanly.
-        if pt_session is not None:
+        if _PENDING_TASK_QUEUE:
+            raw = _PENDING_TASK_QUEUE.pop(0).strip()
+            print(f"[{PALETTE['meta']}]↻ re-running with narrowed scope[/{PALETTE['meta']}]")
+        elif pt_session is not None:
             from prompt_toolkit.formatted_text import ANSI
             # ANSI escapes: \x1b[1;36m = bold cyan, \x1b[2;37m = dim, \x1b[0m = reset.
             # Matches the Rich-styled label used by the fallback path.
@@ -695,6 +842,7 @@ def run_repl(
                 run_session_id=run_session_id,
                 pinned_intensity=pinned_intensity,
                 config=config,
+                pending_task_queue=_PENDING_TASK_QUEUE,
             )
             if not should_continue:
                 print(f"[{PALETTE['meta']}]goodbye.[/{PALETTE['meta']}]")
@@ -839,11 +987,27 @@ def run_repl(
                 client=client,
                 study_context=study_context,
                 session_intensity_override=_intensity_override,
+                allow_revise=True,
             )
         except typer.Exit as exc:
             if exc.exit_code != 0:
                 raise  # hard constraint deny — propagate so the REPL doesn't silently swallow it
-            continue  # soft deny (code=0) — loop back to prompt
+            # Soft deny (code=0). If apply-stage stashed a revise note, the
+            # developer asked to narrow scope rather than abandon the task;
+            # enqueue a synthetic follow-up so the next loop iteration runs
+            # the model again with the narrow-scope feedback as context,
+            # instead of asking the visitor to retype.
+            from .revise_state import take as _take_revise
+            _revise_note = _take_revise()
+            if _revise_note is not None:
+                follow_up = (
+                    f"Re-do the previous task with a narrower scope. "
+                    f"Developer feedback: "
+                    f"{_revise_note or 'narrow scope; touch fewer files'}. "
+                    f"Propose a smaller patch."
+                )
+                _PENDING_TASK_QUEUE.append(follow_up)
+            continue
         except KeyboardInterrupt:
             # Ctrl+C inside an apply prompt — treat as deny + return to REPL
             # rather than letting it tear down the whole session.

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from sc.schema import CheckInMessage
+from sc.schema import CheckInMessage, IntentDeclaration, ReadRequest
 
 
 class CheckInSchemaTests(unittest.TestCase):
@@ -30,6 +30,25 @@ class CheckInSchemaTests(unittest.TestCase):
                 content="Need guidance.",
                 confidence=1.5,
             )
+
+
+class RepoPathSchemaTests(unittest.TestCase):
+    def test_read_request_rejects_nested_parent_traversal(self) -> None:
+        with self.assertRaises(Exception):
+            ReadRequest(type="read_request", files=["safe/../../outside.txt"])
+
+    def test_intent_declaration_rejects_nested_parent_traversal(self) -> None:
+        with self.assertRaises(Exception):
+            IntentDeclaration(
+                task_summary="try to escape",
+                planned_files=["safe/../../outside.txt"],
+                planned_actions=["edit_code"],
+                planned_commands=[],
+            )
+
+    def test_repo_paths_are_normalized_to_posix_relative_paths(self) -> None:
+        request = ReadRequest(type="read_request", files=["src\\./module.py"])
+        self.assertEqual(request.files, ["src/module.py"])
 
 
 if __name__ == "__main__":

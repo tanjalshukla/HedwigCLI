@@ -79,7 +79,7 @@ Either side can trigger a check-in independently. Both are logged with `check_in
 
 Every task flows through:
 
-1. **Intent declaration** (`run/command.py`) — model produces a structured plan listing files to read and modify.
+1. **Intent declaration** (`run/repl.py`) — model produces a structured plan listing files to read and modify.
 2. **Read stage** (`run/read_stage.py`) — each read request goes through the approval cascade. Approved files are loaded into context.
 3. **Generate updates** (`run/model.py`) — model generates code changes. Can initiate proactive check-ins during generation.
 4. **Apply + verify** (`run/apply_stage.py`) — each write goes through the approval cascade. Approved writes use atomic two-phase file writes (temp + `os.replace`). Verification runs post-write.
@@ -131,7 +131,7 @@ Heuristic scoring from `policy.py`. The current weights are an explicit baseline
 5. `risk.change_pattern in {api_change, data_model_change, config_change, dependency_update, security_change}`.
 6. `history.effective_approvals == 0 and history.denials == 0` — cold path.
 
-A per-stage cap of **5 reviewer calls per `_evaluate_apply_stage`** invocation acts as a backstop: once the budget is exhausted, remaining gated files fall back to the 0.5 default and a single dim line is rendered in the apply UI. The cap is loop-local — every `hw run` gets a fresh budget.
+A per-stage cap of **5 reviewer calls per `_evaluate_apply_stage`** invocation acts as a backstop: once the budget is exhausted, remaining gated files fall back to the 0.5 default and a single dim line is rendered in the apply UI. The cap is loop-local — every task gets a fresh budget.
 
 **Scoring band behavior (three tiers):**
 
@@ -252,7 +252,7 @@ The `decision_traces` table is the primary data source for post-study analysis. 
 
 The public interface is intentionally small:
 
-- `hw run` — main governed coding loop
+- `hw` — start the REPL (main governed coding loop)
 - `hw ask` — no-write question answering
 - `hw rules ...` — import and inspect constraints/guidelines
 - `hw rules add` — compile a freeform natural-language rule into either enforced constraints or prompt-level guidance

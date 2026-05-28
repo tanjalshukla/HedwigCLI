@@ -187,7 +187,14 @@ def _prompt_approval(
     allow_remember: bool,
     pause_reason: str | None = None,
     diff_already_shown: bool = True,
+    allow_revise: bool = False,
 ) -> tuple[bool, bool, str | None]:
+    """Returns (approved, remembered, feedback).
+
+    The 'v' (revise) option returns ``(False, False, "[revise] ...")``
+    — a deny variant that records scope-narrowing pushback explicitly
+    instead of as a hard stop. The caller distinguishes by feedback prefix.
+    """
     # After the diff, the developer just needs the reason + the decision.
     # Show the primary file name if not already obvious from the diff.
     print()
@@ -199,19 +206,21 @@ def _prompt_approval(
     # pause_reason intentionally not printed here — _render_policy_snapshot
     # already shows the rationale inline on each file's line. Re-printing
     # before the prompt was duplicate noise.
+    # 'v' (revise) is REPL-only: the follow-up regeneration is wired through
+    # the REPL task queue. Single-shot `hw run` has no place to inject the
+    # narrowed task, so the option is hidden there.
     choices = ["a", "d"]
+    prompt_parts = [
+        f"[{PALETTE['approve_bold']}]a[/{PALETTE['approve_bold']}] approve",
+    ]
     if allow_remember:
         choices.insert(1, "r")
-        prompt = (
-            f"[{PALETTE['approve_bold']}]a[/{PALETTE['approve_bold']}] approve  "
-            f"[{PALETTE['learn']}]r[/{PALETTE['learn']}] approve+remember  "
-            f"[{PALETTE['deny_bold']}]d[/{PALETTE['deny_bold']}] deny"
-        )
-    else:
-        prompt = (
-            f"[{PALETTE['approve_bold']}]a[/{PALETTE['approve_bold']}] approve  "
-            f"[{PALETTE['deny_bold']}]d[/{PALETTE['deny_bold']}] deny"
-        )
+        prompt_parts.append(f"[{PALETTE['learn']}]r[/{PALETTE['learn']}] approve+remember")
+    if allow_revise:
+        choices.insert(-1, "v")
+        prompt_parts.append(f"[{PALETTE['attention']}]v[/{PALETTE['attention']}] revise scope")
+    prompt_parts.append(f"[{PALETTE['deny_bold']}]d[/{PALETTE['deny_bold']}] deny")
+    prompt = "  ".join(prompt_parts)
     response = Prompt.ask(prompt, choices=choices, case_sensitive=False, show_choices=False)
     response = response.strip().lower()
     if response == "a":
@@ -221,6 +230,14 @@ def _prompt_approval(
             f"[{PALETTE['meta']}]Optional note (helps me learn your preference)[/{PALETTE['meta']}]"
         )
         return True, True, note
+    if response == "v":
+        note = _prompt_optional_feedback(
+            f"[{PALETTE['meta']}]Which files should I narrow to? (free text)[/{PALETTE['meta']}]"
+        )
+        # Tag with [revise] prefix so apply_stage records scope_constraint
+        # pushback instead of a generic deny, and renders revise-friendly copy.
+        tagged = f"[revise] {note}" if note else "[revise]"
+        return False, False, tagged
     note = _prompt_optional_feedback(
         f"[{PALETTE['meta']}]Optional reason for denial[/{PALETTE['meta']}]"
     )
@@ -230,19 +247,24 @@ def _prompt_approval(
 def _prompt_read(
     files: list[str],
     reason: str | None,
-) -> tuple[bool, list[str], str | None]:
+    *,
+    allow_remember: bool = True,
+) -> tuple[list[str], list[str], list[str], str | None]:
     """Prompt the developer to approve a batch of read requests.
 
-    Returns ``(approved, remember_paths, denial_feedback)``:
-    * ``approved`` — True if the batch was approved (any subset of files
-      may have been marked "remember"; the apply still proceeds for all).
-    * ``remember_paths`` — paths the developer chose to grant a permanent
-      read lease for. Subset of ``files``. Empty when nothing was marked.
-    * ``denial_feedback`` — optional free-text reason captured on deny.
+    Returns ``(approved_paths, denied_paths, remember_paths, denial_feedback)``:
+    * ``approved_paths`` — subset granted read access this turn.
+    * ``denied_paths`` — subset rejected. Recorded as ``scope_constraint``
+      pushback in traces so the hypothesis bank treats partial denial as
+      a scope-narrowing signal rather than a generic deny.
+    * ``remember_paths`` — subset of ``approved_paths`` promoted to a
+      permanent read lease. Always empty when ``allow_remember`` is False.
+    * ``denial_feedback`` — optional free-text reason captured when any
+      file was denied. Single string for the whole batch.
 
-    For a single file, the prompt collapses to ``a / r / d``. For
-    multiple files, ``r`` opens a per-file toggle so different files can
-    have different lease decisions in one batch.
+    For a single file, the prompt is ``a / r / d`` (``r`` hidden when
+    ``allow_remember`` is False). For multiple files, ``s`` opens a
+    per-file picker so the developer can grant access to a subset.
     """
     if reason:
         short = reason.strip().split("\n", 1)[0]
@@ -252,69 +274,126 @@ def _prompt_read(
         print(f"[{PALETTE['meta']}]{short}[/{PALETTE['meta']}]")
 
     if len(files) == 1:
+        only = files[0]
+        if allow_remember:
+            single_choices = ["a", "r", "d"]
+            single_prompt = (
+                f"[{PALETTE['approve_bold']}]a[/{PALETTE['approve_bold']}] approve  "
+                f"[{PALETTE['learn']}]r[/{PALETTE['learn']}] approve+remember  "
+                f"[{PALETTE['deny_bold']}]d[/{PALETTE['deny_bold']}] deny"
+            )
+        else:
+            single_choices = ["a", "d"]
+            single_prompt = (
+                f"[{PALETTE['approve_bold']}]a[/{PALETTE['approve_bold']}] approve  "
+                f"[{PALETTE['deny_bold']}]d[/{PALETTE['deny_bold']}] deny"
+            )
         response = Prompt.ask(
-            f"[{PALETTE['approve_bold']}]a[/{PALETTE['approve_bold']}] approve  "
-            f"[{PALETTE['learn']}]r[/{PALETTE['learn']}] approve+remember  "
-            f"[{PALETTE['deny_bold']}]d[/{PALETTE['deny_bold']}] deny",
-            choices=["a", "r", "d"],
+            single_prompt,
+            choices=single_choices,
             case_sensitive=False,
             show_choices=False,
         )
         response = response.strip().lower()
         if response == "a":
-            return True, [], None
+            return [only], [], [], None
         if response == "r":
-            return True, list(files), None
+            return [only], [], [only], None
         note = _prompt_optional_feedback(
             f"[{PALETTE['meta']}]Optional reason for denying this read[/{PALETTE['meta']}]"
         )
-        return False, [], note
+        return [], [only], [], note
 
-    # Multi-file path. 'a' approves all (no remember), 'r' approves all and
-    # remembers all (one-shot shortcut for trust-everything), 'p' approves
-    # all and lets the developer pick which subset to remember per file,
-    # 'd' denies all.
+    # Multi-file path. 'a' approves all (no remember), 'r' approves+remembers
+    # all, 's' opens a per-file picker (a/r/d default a), 'd' denies all.
+    if allow_remember:
+        multi_choices = ["a", "r", "s", "d"]
+        multi_prompt = (
+            f"[{PALETTE['approve_bold']}]a[/{PALETTE['approve_bold']}] approve all  "
+            f"[{PALETTE['learn']}]r[/{PALETTE['learn']}] approve+remember all  "
+            f"[{PALETTE['info_bold']}]s[/{PALETTE['info_bold']}] select per-file  "
+            f"[{PALETTE['deny_bold']}]d[/{PALETTE['deny_bold']}] deny"
+        )
+    else:
+        multi_choices = ["a", "s", "d"]
+        multi_prompt = (
+            f"[{PALETTE['approve_bold']}]a[/{PALETTE['approve_bold']}] approve all  "
+            f"[{PALETTE['info_bold']}]s[/{PALETTE['info_bold']}] select per-file  "
+            f"[{PALETTE['deny_bold']}]d[/{PALETTE['deny_bold']}] deny"
+        )
     response = Prompt.ask(
-        f"[{PALETTE['approve_bold']}]a[/{PALETTE['approve_bold']}] approve all  "
-        f"[{PALETTE['learn']}]r[/{PALETTE['learn']}] approve+remember all  "
-        f"[{PALETTE['learn']}]p[/{PALETTE['learn']}] pick which to remember  "
-        f"[{PALETTE['deny_bold']}]d[/{PALETTE['deny_bold']}] deny",
-        choices=["a", "r", "p", "d"],
+        multi_prompt,
+        choices=multi_choices,
         case_sensitive=False,
         show_choices=False,
     )
     response = response.strip().lower()
     if response == "a":
-        return True, [], None
+        return list(files), [], [], None
     if response == "r":
-        return True, list(files), None
+        return list(files), [], list(files), None
     if response == "d":
         note = _prompt_optional_feedback(
             f"[{PALETTE['meta']}]Optional reason for denying this read[/{PALETTE['meta']}]"
         )
-        return False, [], note
-    # 'p' — per-file toggle. Default is 'no remember' to match the cautious option.
-    print(f"[{PALETTE['meta']}]Mark each file to remember (y) or just approve once (N).[/{PALETTE['meta']}]")
+        return [], list(files), [], note
+    # 's' — per-file picker. Default is 'a' (approve, no remember) so banging
+    # Enter through the picker accepts everything — cheap escape hatch.
+    if allow_remember:
+        per_file_choices = ["a", "r", "d"]
+        per_file_legend = (
+            f"[{PALETTE['meta']}]Per file: "
+            f"[{PALETTE['approve_bold']}]a[/{PALETTE['approve_bold']}] approve  "
+            f"[{PALETTE['learn']}]r[/{PALETTE['learn']}] approve+remember  "
+            f"[{PALETTE['deny_bold']}]d[/{PALETTE['deny_bold']}] deny"
+            f"[/{PALETTE['meta']}]"
+        )
+    else:
+        per_file_choices = ["a", "d"]
+        per_file_legend = (
+            f"[{PALETTE['meta']}]Per file: "
+            f"[{PALETTE['approve_bold']}]a[/{PALETTE['approve_bold']}] approve  "
+            f"[{PALETTE['deny_bold']}]d[/{PALETTE['deny_bold']}] deny"
+            f"[/{PALETTE['meta']}]"
+        )
+    print(per_file_legend)
+    approved: list[str] = []
+    denied: list[str] = []
     remember: list[str] = []
     for path in files:
         ans = Prompt.ask(
-            f"  [{PALETTE['info']}]{path}[/{PALETTE['info']}] · remember?",
-            choices=["y", "n"],
-            default="n",
+            f"  [{PALETTE['info']}]{path}[/{PALETTE['info']}]",
+            choices=per_file_choices,
+            default="a",
             case_sensitive=False,
             show_choices=False,
             show_default=False,
+        ).strip().lower()
+        if ans == "d":
+            denied.append(path)
+        else:
+            approved.append(path)
+            if allow_remember and ans == "r":
+                remember.append(path)
+    note: str | None = None
+    if denied:
+        note = _prompt_optional_feedback(
+            f"[{PALETTE['meta']}]Optional reason for the denied subset[/{PALETTE['meta']}]"
         )
-        if ans.strip().lower() == "y":
-            remember.append(path)
-    return True, remember, None
+    return approved, denied, remember, note
 
 
 def _render_intent_summary(declaration: IntentDeclaration) -> None:
     print()
     plan_text = declaration.notes or declaration.task_summary
     print(f"[{PALETTE['info_bold']}]Plan:[/{PALETTE['info_bold']}] {plan_text}")
-    _render_file_list(declaration.planned_files)
+    files = list(declaration.planned_files)
+    if files:
+        # One-line file summary: show basenames, full paths get re-shown later
+        # in the apply decision anyway. Avoids re-listing 4+ rows here.
+        from os.path import basename
+        names = ", ".join(basename(f) for f in files)
+        print(f"  [{PALETTE['meta']}]files:[/{PALETTE['meta']}] [{PALETTE['info']}]{names}[/{PALETTE['info']}]")
 
 
 def _prompt_plan_checkpoint(
@@ -325,7 +404,10 @@ def _prompt_plan_checkpoint(
     _render_intent_summary(declaration)
     if reasons:
         # Single most important reason only — keep it short.
-        print(f"[{PALETTE['meta']}]· {reasons[0]}[/{PALETTE['meta']}]")
+        # Skip the "plan touches N files" boilerplate; the file list above already shows that.
+        primary = next((r for r in reasons if not r.startswith("plan touches")), None)
+        if primary:
+            print(f"[{PALETTE['meta']}]· {primary}[/{PALETTE['meta']}]")
     print()
     decision = Prompt.ask(
         f"[{PALETTE['approve_bold']}]a[/{PALETTE['approve_bold']}] approve  "

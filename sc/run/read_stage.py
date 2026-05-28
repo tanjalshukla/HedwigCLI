@@ -50,7 +50,6 @@ from .helpers import (
 )
 from .traces import _policy_checkin_initiators, _record_traces
 from .ui import (
-    _confirm_read_missing,
     _prompt_read,
     _render_auto_approve_summary,
     _render_file_list,
@@ -317,21 +316,29 @@ def _process_read_request(
         raise typer.Exit(code=1)
 
     auto_without_lease = [path for path in auto_reads if read_leases[path] is None]
+    _denied_subset: set[str] = set()
     if needs_prompt:
         prompt_started = time.time()
-        approved, remember_paths, read_feedback = _prompt_read(needs_prompt, request.reason)
+        # Always offer the remember affordance. The developer's familiarity
+        # with their own repo predates Hedwig — withholding `r`/`s` until
+        # Hedwig has seen its own prior approval is paternalistic.
+        approved_paths, denied_paths, remember_paths, read_feedback = _prompt_read(
+            needs_prompt, request.reason, allow_remember=True
+        )
         response_time_ms = int((time.time() - prompt_started) * 1000)
         remembered = bool(remember_paths)
+        any_approved = bool(approved_paths) or bool(auto_reads)
         trust_db.record_decision(
             repo_root_str,
             task,
             "read",
-            approved=approved,
+            approved=any_approved,
             remembered=remembered,
             planned_files=requested,
             touched_files=requested,
         )
-        if not approved:
+        if not approved_paths and not auto_reads:
+            # Whole batch denied — no path forward this turn.
             _record_traces(
                 trust_db=trust_db,
                 repo_root=repo_root_str,
@@ -370,6 +377,40 @@ def _process_read_request(
             print(f"[{_PAL_RD['attention']}]✗ read request denied[/{_PAL_RD['attention']}]")
             raise typer.Exit(code=0)
 
+        # Partial denial: record the denied subset with a [revise] prefix so
+        # traces.py maps it to scope_constraint pushback (same signal path the
+        # apply-stage 'v' option uses). Hypothesis bank then sees a real
+        # scope-narrowing signal instead of a generic deny.
+        _denied_subset = set(denied_paths)
+        if denied_paths:
+            _denial_note = read_feedback or ""
+            _tagged = f"[revise] {_denial_note}".strip() if _denial_note else "[revise]"
+            _record_traces(
+                trust_db=trust_db,
+                repo_root=repo_root_str,
+                session_id=run_session_id,
+                task=task,
+                stage="read",
+                action_type="read_request",
+                files=denied_paths,
+                histories=read_histories,
+                policies=read_policies,
+                user_decision="deny",
+                response_time_ms=response_time_ms,
+                change_types={path: None for path in denied_paths},
+                diff_sizes={path: None for path in denied_paths},
+                blast_radius=len(requested),
+                existing_leases=read_leases,
+                user_feedback_text=_tagged,
+                check_in_initiators=_policy_checkin_initiators(denied_paths, read_policies),
+                study_context=study_context,
+            )
+            from ..run.theme import PALETTE as _PAL_RP
+            print(
+                f"[{_PAL_RP['attention']}]✗ {len(denied_paths)} read{'s' if len(denied_paths) != 1 else ''} denied · narrowing scope[/{_PAL_RP['attention']}]"
+            )
+            _render_file_list(denied_paths)
+
         trust_db.add_permanent_read_leases(repo_root_str, auto_without_lease, source="policy_auto")
         if remember_paths:
             # Per-file remember: only paths the developer explicitly toggled
@@ -392,26 +433,44 @@ def _process_read_request(
             read_leases=read_leases,
             study_context=study_context,
         )
-        _record_traces(
+        # Record approved paths split by whether they were remembered so
+        # policy history reflects the actual decision for each file.
+        _remember_set = set(remember_paths)
+        _approved_remembered = [p for p in approved_paths if p in _remember_set]
+        _approved_only = [p for p in approved_paths if p not in _remember_set]
+        _trace_kwargs = dict(
             trust_db=trust_db,
             repo_root=repo_root_str,
             session_id=run_session_id,
             task=task,
             stage="read",
             action_type="read_request",
-            files=needs_prompt,
             histories=read_histories,
             policies=read_policies,
-            user_decision="approve_and_remember" if remembered else "approve",
             response_time_ms=response_time_ms,
-            change_types={path: None for path in needs_prompt},
-            diff_sizes={path: None for path in needs_prompt},
             blast_radius=len(requested),
             existing_leases=read_leases,
-            user_feedback_text=read_feedback,
-            check_in_initiators=_policy_checkin_initiators(needs_prompt, read_policies),
+            user_feedback_text=read_feedback if not denied_paths else None,
             study_context=study_context,
         )
+        if _approved_remembered:
+            _record_traces(
+                **_trace_kwargs,
+                files=_approved_remembered,
+                user_decision="approve_and_remember",
+                change_types={path: None for path in _approved_remembered},
+                diff_sizes={path: None for path in _approved_remembered},
+                check_in_initiators=_policy_checkin_initiators(_approved_remembered, read_policies),
+            )
+        if _approved_only:
+            _record_traces(
+                **_trace_kwargs,
+                files=_approved_only,
+                user_decision="approve",
+                change_types={path: None for path in _approved_only},
+                diff_sizes={path: None for path in _approved_only},
+                check_in_initiators=_policy_checkin_initiators(_approved_only, read_policies),
+            )
         feedback.note_decision(True, response_time_ms=response_time_ms)
         _apply_feedback_learning(
             trust_db=trust_db,
@@ -449,4 +508,16 @@ def _process_read_request(
         )
         feedback.note_decision(True)
 
-    _append_file_context(session, requested, repo_root, config.read_max_chars)
+    # Only feed approved files into the model's context. When the developer
+    # denied a subset via the per-file picker, the agent must not see those
+    # files — the whole point of partial denial is access scoping.
+    granted = [p for p in requested if p not in _denied_subset]
+    _append_file_context(session, granted, repo_root, config.read_max_chars)
+    if _denied_subset:
+        # Tell the agent which paths it was denied so it can re-plan without
+        # them rather than re-requesting in a loop.
+        session.add_user(
+            "The developer denied read access to: "
+            + ", ".join(sorted(_denied_subset))
+            + ". Continue without these files; do not re-request them."
+        )

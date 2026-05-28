@@ -147,8 +147,16 @@ def _policy_decision_for_file(
         model_confidence_avg=model_confidence_avg,
         model_confidence_samples=model_confidence_samples,
     )
-    scorer, _label = select_scorer(classifier)
-    return scorer.decide(pi, proceed_threshold=proceed_threshold, flag_threshold=flag_threshold)
+    scorer, label = select_scorer(classifier)
+    decision = scorer.decide(pi, proceed_threshold=proceed_threshold, flag_threshold=flag_threshold)
+    provenance = f"scorer:{label}"
+    if provenance in decision.reasons:
+        return decision
+    return PolicyDecision(
+        action=decision.action,
+        score=decision.score,
+        reasons=(*decision.reasons, provenance),
+    )
 
 
 def _build_patch_from_updates(

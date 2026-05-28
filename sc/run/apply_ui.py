@@ -130,18 +130,8 @@ def render_apply_policy_snapshot(
     render_context_retrieved_line()
     if trust_db is not None and repo_root:
         render_cochange_lines(trust_db=trust_db, repo_root=repo_root, touched_files=touched_files)
-    if apply_risk:
-        for path in touched_files:
-            risk = apply_risk.get(path)
-            if risk is None or not risk.model_risk_rationale:
-                continue
-            # Advisory adversarial-reviewer line. Style consistent with the
-            # auto-approve summary's dim secondary rows.
-            print(
-                f"  [{PALETTE['meta']}]model reviewer  "
-                f"{risk.model_risk_score:.2f} — "
-                f"\"{risk.model_risk_rationale}\"[/{PALETTE['meta']}]"
-            )
+    # Reviewer rationale is shown in the check-in panel (render_apply_checkin_prompt)
+    # where the developer is about to decide. Not shown here to avoid duplication.
 
 
 def render_apply_auto_approve_summary(
@@ -183,6 +173,7 @@ def render_apply_checkin_prompt(
     verification_failure_rates: dict[str, float | None],
     remember: bool,
     scope_budget_files: int,
+    allow_revise: bool = False,
 ) -> tuple[bool, bool, str | None, int | None]:
     """Render the full check-in prompt and return (approved, remembered, feedback, response_time_ms)."""
     import time
@@ -202,6 +193,18 @@ def render_apply_checkin_prompt(
         (r.blast_radius for r in apply_risk.values() if r),
         default=None,
     )
+    # Surface the adversarial-reviewer rationale when it exists. This is
+    # already computed as part of assess_risk_via_model — show it here so
+    # the developer has natural-language context on why the pause fired,
+    # not just the risk-signal labels.
+    for _path in check_in_files:
+        _risk = apply_risk.get(_path)
+        if _risk and _risk.model_risk_rationale:
+            print(
+                f"  [{PALETTE['meta']}]reviewer note  "
+                f"\"{_risk.model_risk_rationale}\"[/{PALETTE['meta']}]"
+            )
+
     render_adapted_checkin_context(
         dominant_type=_dominant,
         files=check_in_files,
@@ -216,6 +219,7 @@ def render_apply_checkin_prompt(
         "apply", check_in_files, allow_remember,
         pause_reason=_pause_reason,
         diff_already_shown=True,
+        allow_revise=allow_revise,
     )
     response_time_ms = int((time.time() - prompt_started) * 1000)
     return approved, remembered, feedback, response_time_ms

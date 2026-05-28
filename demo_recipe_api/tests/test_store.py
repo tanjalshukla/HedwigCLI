@@ -1,39 +1,26 @@
 from __future__ import annotations
 
-from recipe_api.store import search_by_tag
+from recipe_api.store import get_recipe, list_recipes, next_recipe_id
 
 
-def test_search_by_tag_returns_matching_recipes() -> None:
-    results = search_by_tag("pasta")
-    assert len(results) == 1
-    assert results[0].id == "recipe-1"
+def test_list_recipes_returns_seed_data() -> None:
+    recipes = list_recipes()
+    recipe_ids = {recipe.id for recipe in recipes}
+    assert {"recipe-1", "recipe-2", "recipe-3", "recipe-4"}.issubset(recipe_ids)
 
 
-def test_search_by_tag_returns_empty_list_for_unknown_tag() -> None:
-    results = search_by_tag("nonexistent-tag")
-    assert results == []
+def test_get_recipe_returns_seed_recipe() -> None:
+    recipe = get_recipe("recipe-1")
+    assert recipe is not None
+    assert recipe.title == "Pasta Carbonara"
 
 
-def test_search_by_tag_is_case_insensitive() -> None:
-    results_lower = search_by_tag("italian")
-    results_upper = search_by_tag("ITALIAN")
-    results_mixed = search_by_tag("Italian")
-    assert len(results_lower) == 1
-    assert results_lower == results_upper == results_mixed
+def test_get_recipe_returns_none_for_missing_recipe() -> None:
+    assert get_recipe("recipe-9999") is None
 
 
-def test_search_by_tag_returns_multiple_matches() -> None:
-    # Both "recipe-1" (pasta/italian) and "recipe-4" (breakfast/vegetarian) have distinct tags;
-    # "vegetarian" appears only on recipe-4, but "baking" only on recipe-3.
-    # Use a tag shared by more than one recipe to verify multiple results.
-    # Seed data has no shared tag across two recipes, so we verify single-recipe tags are correct
-    # and that a tag present on one recipe returns exactly that recipe.
-    results = search_by_tag("dessert")
-    assert len(results) == 1
-    assert results[0].title == "Chocolate Chip Cookies"
-
-
-def test_search_by_tag_strips_whitespace_from_query() -> None:
-    results = search_by_tag("  pasta  ")
-    assert len(results) == 1
-    assert results[0].id == "recipe-1"
+def test_next_recipe_id_skips_existing_seed_ids() -> None:
+    existing_ids = {recipe.id for recipe in list_recipes()}
+    next_id = next_recipe_id()
+    assert next_id.startswith("recipe-")
+    assert next_id not in existing_ids

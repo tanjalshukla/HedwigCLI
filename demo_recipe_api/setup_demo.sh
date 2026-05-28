@@ -95,7 +95,7 @@ if ! PYTHONPATH=demo_recipe_api "$VENV_PY" -m pytest demo_recipe_api/tests -q >/
   PYTHONPATH=demo_recipe_api "$VENV_PY" -m pytest demo_recipe_api/tests -q || true
   exit 1
 fi
-green "✓ demo tests pass (12/12)"
+green "✓ demo tests pass"
 
 # 7. port 5001 free
 if lsof -ti tcp:5001 >/dev/null 2>&1; then
