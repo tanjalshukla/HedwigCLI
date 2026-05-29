@@ -14,10 +14,9 @@ the ``PolicyClassifier`` from those traces, and inserts one near-threshold
 hypothesis candidate so the visitor's first matching action ticks evidence
 to the surface threshold.
 
-Nothing here is synthetic in the reviewer-148D sense: every seeded trace
-represents a real category of decision Hedwig made on this fixture during
-internal testing. They're labeled as seeded so any longitudinal analysis
-can separate them.
+Every seeded trace represents a real category of decision Hedwig made on
+this fixture during internal testing. They're labeled as seeded so any
+longitudinal analysis can separate them from live activity.
 """
 
 from dataclasses import dataclass
