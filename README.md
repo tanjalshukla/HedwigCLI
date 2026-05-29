@@ -2,7 +2,7 @@
 
 **Hedwig** is a governance harness for LLM coding agents. It sits between the developer and the agent and calibrates per-action autonomy from real interaction traces — no static configuration, no manual threshold tuning.
 
-> Accepted demo paper — ACM Conference on AI and Agentic Systems (CAIS) 2026.
+> 1 of 10 award-winning demo papers — ACM Conference on AI and Agentic Systems (CAIS) 2026.
 
 ---
 
