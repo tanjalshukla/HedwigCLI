@@ -281,7 +281,6 @@ class FakeNoticerClient:
 
 class NoticerTests(unittest.TestCase):
     def _seed_traces(self, db: TrustDB, repo: str, session: str, n: int) -> list[int]:
-        ids: list[int] = []
         for i in range(n):
             db.record_trace(
                 repo_root=repo,

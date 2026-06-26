@@ -7,44 +7,49 @@ strongest_constraint, delete_constraints, replace_behavioral_guidelines,
 add_behavioral_guidelines, list_behavioral_guidelines, delete_behavioral_guidelines,
 add_logic_notes, recent_logic_notes, relevant_logic_notes, guideline_candidates,
 relevant_behavioral_guidelines, relevant_feedback_snippets, recent_feedback_snippets.
-Helpers: _retrieval_tokens, _overlap_score (module-level in trust_db, delegated here as class methods).
+
+Relatedness scoring of the primary text field (note / guideline / feedback)
+goes through the Retrieval seam (sc/retrieval.py): the EmbeddingRanker
+(fastembed, semantic) is the default, KeywordRanker (token-intersection) the
+fallback. Short structured side-fields (files / change_types / file_path) stay
+on the keyword path — semantic matching adds noise, not signal, there. The
+per-field weighting below stays local to each ranker; the seam only answers
+"how related is this text to the query?". `_retrieval_tokens` and
+`_overlap_score` are re-exported from the seam so importers/tests still
+resolve.
 """
 
 import json
-import re
 import time
 from fnmatch import fnmatch
-from typing import TYPE_CHECKING, Iterable
+from typing import TYPE_CHECKING, Iterable, Sequence
+
+from ..retrieval import (
+    overlap_score as _overlap_score,
+    retrieval_tokens as _retrieval_tokens,
+    select_ranker,
+)
 
 if TYPE_CHECKING:
     from ..trust_db import HardConstraint
 
-_RETRIEVAL_STOPWORDS = {
-    "a", "an", "and", "are", "as", "at", "be", "before", "by", "do", "for",
-    "from", "if", "in", "into", "is", "it", "its", "of", "on", "or", "same",
-    "should", "that", "the", "then", "this", "to", "use", "with",
-}
 
+def _text_relatedness(
+    query_text: str | None,
+    spec_text: str | None,
+    candidates: Sequence[str],
+) -> list[float]:
+    """Score each candidate's primary text against (query + spec) via the seam.
 
-def _retrieval_tokens(*parts: str | None) -> set[str]:
-    tokens: set[str] = set()
-    for part in parts:
-        if not part:
-            continue
-        for token in re.findall(r"[a-z0-9_]+", part.lower()):
-            if len(token) < 3 or token in _RETRIEVAL_STOPWORDS:
-                continue
-            tokens.add(token)
-    return tokens
-
-
-def _overlap_score(query_tokens: set[str], candidate_tokens: set[str]) -> float:
-    if not query_tokens or not candidate_tokens:
-        return 0.0
-    score = 0.0
-    for token in query_tokens & candidate_tokens:
-        score += 1.5 if len(token) >= 7 else 1.0
-    return score
+    Picks the active Retrieval adapter (embedding when fastembed is available,
+    keyword otherwise) and returns one relatedness score per candidate, aligned
+    by index. Callers apply their own per-field weight to these scores.
+    """
+    if not candidates:
+        return []
+    ranker, _label = select_ranker()
+    query = " ".join(part for part in (query_text, spec_text) if part)
+    return ranker.score_candidates(query, list(candidates))
 
 
 class RuleStoreMixin:
@@ -383,14 +388,17 @@ class RuleStoreMixin:
                 (repo_root, max(search_limit, 1)),
             ).fetchall()
 
+        note_texts = [str(row["note"]).strip() for row in rows]
+        note_relatedness = _text_relatedness(query_text, spec_text, note_texts)
+
         ranked: list[tuple[float, int, object]] = []
         for rank, row in enumerate(rows):
-            note = str(row["note"]).strip()
+            note = note_texts[rank]
             if not note:
                 continue
             files = " ".join(json.loads(row["files_json"] or "[]"))
             change_types = " ".join(json.loads(row["change_types_json"] or "[]"))
-            score = _overlap_score(query_tokens, _retrieval_tokens(note)) * 2.5
+            score = note_relatedness[rank] * 2.5
             score += _overlap_score(query_tokens, _retrieval_tokens(files)) * 0.75
             score += _overlap_score(query_tokens, _retrieval_tokens(change_types)) * 1.0
             score += max(0.0, 0.2 - (rank * 0.01))
@@ -477,9 +485,12 @@ class RuleStoreMixin:
         if not query_tokens:
             return items[: max(limit, 1)]
 
+        guideline_relatedness = _text_relatedness(
+            query_text, spec_text, [item.guideline for item in items]
+        )
         ranked: list[tuple[float, int, object]] = []
         for idx, item in enumerate(items):
-            score = _overlap_score(query_tokens, _retrieval_tokens(item.guideline)) * 2.0
+            score = guideline_relatedness[idx] * 2.0
             score += max(0.0, 0.1 - (idx * 0.01))
             ranked.append((score, idx, item))
 
@@ -552,14 +563,24 @@ class RuleStoreMixin:
                 (repo_root, max(search_limit, 1)),
             ).fetchall()
 
-        ranked: list[tuple[float, int, str]] = []
+        # Build the deduped candidate list first so the seam embeds each
+        # distinct feedback text exactly once, then score.
+        candidate_rows: list[tuple[int, str, object]] = []
         seen: set[str] = set()
         for rank, row in enumerate(rows):
             text = " ".join(str(row["user_feedback_text"]).split()).strip()
             if not text or text in seen:
                 continue
             seen.add(text)
-            score = _overlap_score(query_tokens, _retrieval_tokens(text)) * 2.0
+            candidate_rows.append((rank, text, row))
+
+        text_relatedness = _text_relatedness(
+            query_text, spec_text, [text for _, text, _ in candidate_rows]
+        )
+
+        ranked: list[tuple[float, int, str]] = []
+        for idx, (rank, text, row) in enumerate(candidate_rows):
+            score = text_relatedness[idx] * 2.0
             score += _overlap_score(query_tokens, _retrieval_tokens(str(row["file_path"]))) * 0.75
             score += _overlap_score(query_tokens, _retrieval_tokens(str(row["change_type"] or ""))) * 1.25
             score += max(0.0, 0.25 - (rank * 0.01))

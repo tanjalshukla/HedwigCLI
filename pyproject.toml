@@ -17,6 +17,11 @@ dependencies = [
     "scikit-learn>=1.4.0",
     "numpy>=1.26.0",
     "prompt_toolkit>=3.0.0",
+    # Dense rule retrieval (sc/retrieval.py EmbeddingRanker, the default).
+    # ~30MB onnx model, NO torch / NO GPU. If absent or its model can't be
+    # fetched (offline), the Retrieval seam degrades to keyword matching with
+    # no crash — so this is a soft requirement at runtime, declared here.
+    "fastembed>=0.3.0",
 ]
 
 [project.scripts]
