@@ -43,7 +43,7 @@ from ..autonomy import (
     autonomy_prefs_to_preferences,
 )
 from ..config import SAConfig, autonomy_profile
-from ..features import RiskSignals, assess_risk, change_type_label
+from ..features import RiskSignals, assess_risk, change_type_label, parse_change_type_label
 from ..model_risk import (
     assess_risk_via_model,
     ask_model_to_vote,
@@ -154,16 +154,8 @@ def _apply_regret_corrections(
         if regret_row is None:
             continue
         history = trust_db.policy_history(repo_root_str, event.file_path, stage="apply")
-        # change_type is stored by change_type_label() with a legacy "new_file:"
-        # prefix when the action created a file. Split it back into the bare
-        # change_pattern + is_new_file flag the scorer expects — otherwise a
-        # prefixed pattern misses _PATTERN_RISK entirely (scores as a generic
-        # change) AND the new-file penalty is lost, under-weighting the very
-        # regrets that matter most (a reverted new-file edit).
-        stored_change_type = str(regret_row.get("change_type") or "general_change")
-        regret_is_new_file = stored_change_type.startswith("new_file:")
-        change_pattern = (
-            stored_change_type.split(":", 1)[-1] if regret_is_new_file else stored_change_type
+        regret_is_new_file, change_pattern = parse_change_type_label(
+            regret_row.get("change_type")
         )
         pi = PolicyInput(
             prior_approvals=max(0.0, history.effective_approvals - 1),

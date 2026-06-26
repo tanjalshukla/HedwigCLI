@@ -32,6 +32,7 @@ if str(_HERE) not in sys.path:
     sys.path.insert(0, str(_HERE))
 from _hedwig_common import (  # noqa: E402
     DECISIONS_LOG,
+    _iter_jsonl,
     append_jsonl,
     data_dir,
     ensure_learned_interpreter,
@@ -44,26 +45,8 @@ _GOVERNED = {"Edit", "Write", "MultiEdit"}
 
 
 def _last_verdict(session_id: str | None, file_path: str | None) -> dict | None:
-    """Most recent decide verdict for this (session_id, file_path), or None.
-
-    Reads decisions.jsonl bottom-up so we match the verdict that immediately
-    preceded this execution.
-    """
-    path = data_dir() / DECISIONS_LOG
-    if not path.exists():
-        return None
-    try:
-        lines = path.read_text(encoding="utf-8").splitlines()
-    except Exception:
-        return None
-    for line in reversed(lines):
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            row = json.loads(line)
-        except json.JSONDecodeError:
-            continue
+    """Most recent decide verdict for this (session_id, file_path), or None."""
+    for row in _iter_jsonl(DECISIONS_LOG, reverse=True):
         if row.get("session_id") == session_id and row.get("file_path") == file_path:
             return row
     return None

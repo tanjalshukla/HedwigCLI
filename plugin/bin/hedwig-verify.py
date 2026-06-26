@@ -40,6 +40,7 @@ _HERE = Path(__file__).resolve().parent
 if str(_HERE) not in sys.path:
     sys.path.insert(0, str(_HERE))
 from _hedwig_common import (  # noqa: E402
+    _iter_jsonl,
     append_jsonl,
     data_dir,
     ensure_learned_interpreter,
@@ -96,28 +97,15 @@ def _changed_files(cwd: str) -> set[str] | None:
 
 def _auto_applied_files(session_id: str, cwd: str) -> list[str]:
     """Files recorded as auto_approve this session, from traces.jsonl."""
-    path = data_dir() / "traces.jsonl"
-    if not path.exists():
-        return []
     seen: list[str] = []
-    try:
-        for line in path.read_text(encoding="utf-8").splitlines():
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                row = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if (
-                row.get("session_id") == session_id
-                and row.get("user_decision") == "auto_approve"
-                and row.get("file_path")
-                and row["file_path"] not in seen
-            ):
-                seen.append(row["file_path"])
-    except Exception:
-        return seen
+    for row in _iter_jsonl("traces.jsonl"):
+        if (
+            row.get("session_id") == session_id
+            and row.get("user_decision") == "auto_approve"
+            and row.get("file_path")
+            and row["file_path"] not in seen
+        ):
+            seen.append(row["file_path"])
     return seen
 
 

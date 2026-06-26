@@ -116,6 +116,19 @@ def change_type_label(risk: RiskSignals) -> str:
     return f"{prefix}{risk.change_pattern}"
 
 
+def parse_change_type_label(stored: str | None) -> tuple[bool, str]:
+    """Inverse of change_type_label. Returns (is_new_file, change_pattern).
+
+    The stored form is either ``"new_file:<pattern>"`` or just ``"<pattern>"``.
+    Both apply_stage and the plugin's regret path decode this — keep the logic
+    here so a format change needs one edit, not two.
+    """
+    s = stored or "general_change"
+    if s.startswith("new_file:"):
+        return True, s.split(":", 1)[-1]
+    return False, s
+
+
 def assess_risk(
     *,
     repo_root: Path,

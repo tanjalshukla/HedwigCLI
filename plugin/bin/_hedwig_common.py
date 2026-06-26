@@ -181,6 +181,7 @@ def policy_input_for_regret(db, repo_root: str, session_id: str, file_path: str)
     """
     _ensure_vendor_on_path()
     try:
+        from sc.features import parse_change_type_label  # noqa: PLC0415
         from sc.policy import PolicyInput  # noqa: PLC0415
 
         history = db.policy_history(repo_root, file_path, stage="apply")
@@ -192,16 +193,8 @@ def policy_input_for_regret(db, repo_root: str, session_id: str, file_path: str)
                 break
         diff_size = int((regret_row["diff_size"] if regret_row else 0) or 0)
         blast_radius = int((regret_row["blast_radius"] if regret_row else 1) or 1)
-        # change_type is persisted with a legacy "new_file:" prefix when the
-        # action created a file (see features.change_type_label). Split it back
-        # into the bare change_pattern + is_new_file the scorer expects, or the
-        # prefixed string misses _PATTERN_RISK and the new-file penalty is lost
-        # — under-weighting exactly the new-file regrets that matter most.
-        # Mirrors apply_stage._apply_regret_corrections.
-        stored_change_type = str((regret_row["change_type"] if regret_row else None) or "general_change")
-        regret_is_new_file = stored_change_type.startswith("new_file:")
-        change_pattern = (
-            stored_change_type.split(":", 1)[-1] if regret_is_new_file else stored_change_type
+        regret_is_new_file, change_pattern = parse_change_type_label(
+            (regret_row["change_type"] if regret_row else None)
         )
         return PolicyInput(
             prior_approvals=max(0.0, history.effective_approvals - 1),
@@ -289,21 +282,19 @@ SELF_CHECKINS_LOG = "self_checkins.jsonl"
 LOW_CONFIDENCE_THRESHOLD = 0.5
 
 
-def latest_self_checkin(session_id, file_path):
-    """Most recent self-declaration for this (session_id, file_path), or None.
-
-    Reads self_checkins.jsonl bottom-up. Pure stdlib, best-effort: any read or
-    parse failure returns None (→ decide.py proceeds as if no declaration was
-    made, i.e. today's inferred-intent behavior). Never raises.
-    """
-    path = data_dir() / SELF_CHECKINS_LOG
+def _iter_jsonl(filename: str, *, reverse: bool = False):
+    """Yield parsed JSON dicts from <data_dir>/<filename>, skipping blanks and
+    bad lines. Best-effort: stops iteration on any I/O error rather than
+    raising, so callers never crash on a missing or corrupt log file."""
+    path = data_dir() / filename
     if not path.exists():
-        return None
+        return
     try:
         lines = path.read_text(encoding="utf-8").splitlines()
     except Exception:
-        return None
-    for line in reversed(lines):
+        return
+    seq = reversed(lines) if reverse else lines
+    for line in seq:
         line = line.strip()
         if not line:
             continue
@@ -311,8 +302,18 @@ def latest_self_checkin(session_id, file_path):
             row = json.loads(line)
         except (json.JSONDecodeError, ValueError):
             continue
-        if not isinstance(row, dict):
-            continue
+        if isinstance(row, dict):
+            yield row
+
+
+def latest_self_checkin(session_id, file_path):
+    """Most recent self-declaration for this (session_id, file_path), or None.
+
+    Reads self_checkins.jsonl bottom-up. Pure stdlib, best-effort: any read or
+    parse failure returns None (→ decide.py proceeds as if no declaration was
+    made, i.e. today's inferred-intent behavior). Never raises.
+    """
+    for row in _iter_jsonl(SELF_CHECKINS_LOG, reverse=True):
         if row.get("session_id") == session_id and row.get("file_path") == file_path:
             return row
     return None
@@ -344,28 +345,12 @@ def prior_deny_count(session_id, file_path) -> int:
     returns 0 (the caller then treats it as 'not yet at the cap', which only
     risks one extra deny — never a missed escalation that matters for safety,
     since deny is the cautious direction)."""
-    path = data_dir() / DECISIONS_LOG
-    if not path.exists():
-        return 0
-    try:
-        lines = path.read_text(encoding="utf-8").splitlines()
-    except Exception:
-        return 0
-    count = 0
-    for line in lines:
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            row = json.loads(line)
-        except (json.JSONDecodeError, ValueError):
-            continue
-        if not isinstance(row, dict):
-            continue
+    return sum(
+        1
+        for row in _iter_jsonl(DECISIONS_LOG)
         if (
             row.get("session_id") == session_id
             and row.get("file_path") == file_path
             and row.get("verdict") == DENIED_VERDICT
-        ):
-            count += 1
-    return count
+        )
+    )
