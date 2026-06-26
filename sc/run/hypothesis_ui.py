@@ -7,7 +7,6 @@ moments in Hedwig's demo (soft check-in and hypothesis confirmation) feel
 like the same family.
 """
 
-import json as _json
 from dataclasses import dataclass
 
 from rich.console import Console

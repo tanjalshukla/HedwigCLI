@@ -637,14 +637,19 @@ def maybe_generate_llm_hypotheses(
             preference_json=json.dumps(preference_to_dict(pref)),
             min_evidence=candidate_min_evidence,
         )
-        # Seed evidence_for with the citation count so candidates with
-        # ≥ MIN_EVIDENCE real cites can surface on the next update_evidence
-        # tick. Below threshold, they accumulate like any other candidate.
+        # Seed evidence_for with the citation count so candidates with enough
+        # real cites can surface on the next update_evidence tick. Below the
+        # floor, they accumulate like any other candidate. Respect this
+        # candidate's own floor (high_stakes raises it to MIN_EVIDENCE*2) —
+        # mirroring update_evidence's max(MIN_EVIDENCE, candidate_floor) — so a
+        # high-stakes candidate can't shortcut-surface on MIN_EVIDENCE cites
+        # when its declared bar is higher.
+        surface_floor = candidate_min_evidence or MIN_EVIDENCE
         if len(valid_cites) > 0:
             trust_db.update_hypothesis_evidence(
                 cid, delta_for=len(valid_cites), delta_against=0
             )
-            if len(valid_cites) >= MIN_EVIDENCE:
+            if len(valid_cites) >= surface_floor:
                 trust_db.set_hypothesis_status(cid, "ready_to_surface")
         new_ids.append(cid)
 

@@ -1,0 +1,19 @@
+{
+  "name": "hedwig-marketplace",
+  "owner": {
+    "name": "Tanjal Shukla",
+    "email": "shuklatanjal@gmail.com"
+  },
+  "description": "Hedwig — a governance layer for Claude Code that learns when to interrupt you and when to stay out of the way.",
+  "plugins": [
+    {
+      "name": "hedwig",
+      "source": "./plugin",
+      "description": "Governance layer for Claude Code. Auto-applies low-risk edits and surfaces the ones worth your review — learning from outcomes, not configuration.",
+      "license": "MIT",
+      "homepage": "https://github.com/tanjalshukla/HedwigCLI",
+      "repository": "https://github.com/tanjalshukla/HedwigCLI",
+      "keywords": ["governance", "oversight", "human-in-the-loop", "policy"]
+    }
+  ]
+}

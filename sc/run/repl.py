@@ -892,7 +892,10 @@ def run_repl(
             )
         except typer.Exit:
             continue
-        except KeyboardInterrupt:
+        except (KeyboardInterrupt, EOFError):
+            # Ctrl-C or Ctrl-D (EOF) at the plan checkpoint prompt → cancel this
+            # task and return to the REPL. EOFError was previously uncaught and
+            # would unwind the whole session on a Ctrl-D.
             print(f"\n[{PALETTE['meta']}]cancelled.[/{PALETTE['meta']}]")
             continue
         except (ValueError, RuntimeError, KeyError, AttributeError) as exc:
@@ -945,7 +948,7 @@ def run_repl(
             )
         except typer.Exit:
             continue
-        except KeyboardInterrupt:
+        except (KeyboardInterrupt, EOFError):
             print(f"\n[{PALETTE['meta']}]cancelled.[/{PALETTE['meta']}]")
             continue
         except RuntimeError as exc:
@@ -968,7 +971,16 @@ def run_repl(
             continue
 
         new_files = [p for p in touched_files if not (repo_root / p).exists()]
-        if new_files and not _confirm_create_files(new_files):
+        try:
+            confirmed = _confirm_create_files(new_files) if new_files else True
+        except (KeyboardInterrupt, EOFError):
+            # Ctrl-C / Ctrl-D at the create-files prompt → treat as a deny and
+            # return to the REPL, never tear down the session (Rich's Prompt.ask
+            # re-raises both). This prompt is the first thing a real user hits on
+            # any patch that adds a file.
+            print(f"\n[{PALETTE['meta']}]cancelled — patch skipped.[/{PALETTE['meta']}]")
+            continue
+        if not confirmed:
             print(f"[{PALETTE['attention']}]Patch denied.[/{PALETTE['attention']}]")
             continue
 
@@ -1015,23 +1027,35 @@ def run_repl(
                 )
                 _PENDING_TASK_QUEUE.append(follow_up)
             continue
-        except KeyboardInterrupt:
-            # Ctrl+C inside an apply prompt — treat as deny + return to REPL
-            # rather than letting it tear down the whole session.
+        except (KeyboardInterrupt, EOFError):
+            # Ctrl-C / Ctrl-D inside an apply prompt — treat as deny + return to
+            # REPL rather than letting it tear down the whole session. EOFError
+            # matters too: a piped or closed stdin raises it, not Ctrl-C.
             print(f"\n[{PALETTE['meta']}]cancelled — apply skipped.[/{PALETTE['meta']}]")
             continue
 
-        _apply_updates_and_verify(
-            repo_root=repo_root,
-            config=config,
-            trust_db=trust_db,
-            repo_root_str=repo_root_str,
-            run_session_id=run_session_id,
-            declaration=declaration,
-            updates=updates,
-            touched_files=touched_files,
-            file_hashes=file_hashes,
-        )
+        try:
+            _apply_updates_and_verify(
+                repo_root=repo_root,
+                config=config,
+                trust_db=trust_db,
+                repo_root_str=repo_root_str,
+                run_session_id=run_session_id,
+                declaration=declaration,
+                updates=updates,
+                touched_files=touched_files,
+                file_hashes=file_hashes,
+            )
+        except typer.Exit:
+            # The write step aborts with typer.Exit(1) when a touched file
+            # changed on disk since the model read it (a real-user race: an
+            # editor or another process saved it mid-task). That's a skip-this-
+            # patch signal, not a reason to kill the interactive session — the
+            # message was already printed; loop back to the prompt.
+            continue
+        except (KeyboardInterrupt, EOFError):
+            print(f"\n[{PALETTE['meta']}]cancelled — apply skipped.[/{PALETTE['meta']}]")
+            continue
 
         threading.Thread(
             target=_capture_logic_notes,

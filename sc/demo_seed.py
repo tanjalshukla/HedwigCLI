@@ -299,7 +299,6 @@ def prewarm_classifier(trust_db: TrustDB, repo_root: str, *, count_sample: bool 
     from dataclasses import replace as _replace
 
     apply_traces = [t for t in _SEED_TRACES if t.stage == "apply"]
-    split = len(apply_traces) // 2  # first half = early history
 
     def _pi(trace: SeedTrace) -> PolicyInput:
         return PolicyInput(

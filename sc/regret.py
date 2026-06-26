@@ -38,7 +38,7 @@ class RegretEvent:
     file_path: str
     auto_approve_trace_id: int
     regret_trace_id: int
-    reason: str  # "deny" | "failure_report" | "verification_failed"
+    reason: str  # "deny" | "interrupt" | "failure_report" | "verification_failed"
 
 
 def detect_regret_events(
@@ -85,7 +85,12 @@ def detect_regret_events(
             continue
 
         if decision in _REGRET_DECISIONS:
-            events.append(RegretEvent(file_path, earlier, trace_id, "deny"))
+            # Label with the actual decision ("deny" or "interrupt"), not a
+            # hardcoded "deny" — so researcher-facing surfaces (/retrospective,
+            # by_reason tallies, the HTML export) distinguish an explicit denial
+            # from an interrupt. Both are corrective negative signal; the
+            # gradient is identical, only the displayed cause differs.
+            events.append(RegretEvent(file_path, earlier, trace_id, decision))
             auto_approved.pop(file_path, None)
             continue
         if pushback == "failure_report":

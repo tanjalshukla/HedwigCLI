@@ -1,0 +1,496 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Hedwig — a governance layer for Claude Code</title>
+<meta name="description" content="Hedwig sits between Claude Code and you and decides, per edit, whether to apply it or pause for your review. It calibrates that from your past sessions, locally. Nothing leaves your machine." />
+
+<meta property="og:type" content="website" />
+<meta property="og:title" content="Hedwig — a governance layer for Claude Code" />
+<meta property="og:description" content="Decides per edit whether to auto-apply or pause for review, and adjusts from what happened last time. Honest heuristics plus local learning. Runs on your machine." />
+<meta name="theme-color" content="#0a0c11" />
+
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='3' fill='%230a0c11'/%3E%3Ctext x='2.5' y='12' font-family='monospace' font-size='11' fill='%2367c7d6'%3Ehw%3C/text%3E%3C/svg%3E" />
+
+<style>
+  :root{
+    --bg:#0a0c11;
+    --bg-2:#0c0f15;
+    --panel:#11151c;
+    --line:#1e2530;
+    --line-soft:#171c24;
+    --ink:#e6eaf0;
+    --ink-2:#aeb6c2;
+    --ink-3:#737d8c;
+    --ink-4:#525b68;
+    /* one accent (cyan = the CLI's "info"), green reserved for the learn step */
+    --accent:#67c7d6;
+    --accent-dim:#3f8a96;
+    --learn:#56c08a;
+    --attention:#cfa64a;
+    --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
+    --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,Helvetica,Arial,sans-serif;
+  }
+
+  *{box-sizing:border-box}
+  html{-webkit-text-size-adjust:100%}
+  body{
+    margin:0;color:var(--ink);background:var(--bg);
+    font-family:var(--sans);font-size:16px;line-height:1.6;
+    -webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility;
+  }
+  ::selection{background:rgba(103,199,214,.22)}
+  a{color:var(--ink);text-decoration:none}
+
+  .wrap{max-width:1080px;margin:0 auto;padding:0 28px}
+  .narrow{max-width:680px}
+  section{padding:104px 0;position:relative}
+  @media(max-width:720px){section{padding:72px 0}}
+
+  h1,h2,h3{margin:0;font-weight:600}
+  h1{font-size:clamp(2.3rem,5.2vw,3.5rem);line-height:1.05;letter-spacing:-.035em}
+  h2{font-size:clamp(1.55rem,3vw,2.05rem);line-height:1.15;letter-spacing:-.025em}
+  h3{font-size:1.04rem;letter-spacing:-.01em}
+  p{margin:0}
+
+  .eyebrow{font-family:var(--mono);font-size:.74rem;letter-spacing:.14em;
+    text-transform:uppercase;color:var(--accent-dim)}
+  .lead{color:var(--ink-2);font-size:1.16rem;line-height:1.55;max-width:60ch}
+  .sec-head{max-width:62ch}
+  .sec-head .lead{margin-top:14px;font-size:1.08rem}
+  .sec-head h2{margin-top:16px}
+  code{font-family:var(--mono);font-size:.86em;color:var(--ink);
+    background:var(--panel);border:1px solid var(--line-soft);
+    padding:.5px 5px;border-radius:4px}
+
+  /* ---------- nav ---------- */
+  header.nav{position:sticky;top:0;z-index:20;
+    background:rgba(10,12,17,.72);backdrop-filter:saturate(160%) blur(12px);
+    border-bottom:1px solid var(--line-soft)}
+  .nav .wrap{display:flex;align-items:center;justify-content:space-between;height:60px}
+  .brand{display:flex;align-items:center;gap:11px;font-weight:600;letter-spacing:-.01em}
+  .brand .owl{font-family:var(--mono);font-size:6.5px;line-height:1.04;white-space:pre;
+    color:var(--accent);margin:0}
+  .nav nav{display:flex;gap:28px;align-items:center}
+  .nav nav a{color:var(--ink-3);font-size:.88rem;transition:color .15s}
+  .nav nav a:hover{color:var(--ink)}
+  .nav .ghost{color:var(--ink);border:1px solid var(--line);padding:6px 14px;
+    border-radius:7px;font-size:.86rem}
+  .nav .ghost:hover{border-color:var(--accent-dim);color:var(--accent)}
+  @media(max-width:680px){.nav .navlink{display:none}}
+
+  /* ---------- buttons ---------- */
+  .btn{display:inline-flex;align-items:center;gap:8px;font-size:.92rem;font-weight:500;
+    padding:10px 18px;border-radius:8px;border:1px solid var(--line);
+    color:var(--ink);transition:border-color .15s,color .15s,background .15s}
+  .btn-primary{background:var(--accent);border-color:var(--accent);color:#04161a;font-weight:600}
+  .btn-primary:hover{background:#7ad2e0;border-color:#7ad2e0}
+  .btn-ghost:hover{border-color:var(--accent-dim);color:var(--accent)}
+
+  /* ---------- hero ---------- */
+  .hero{padding-top:96px;padding-bottom:96px;text-align:center;overflow:hidden}
+  .hero::before{content:"";position:absolute;left:50%;top:-180px;transform:translateX(-50%);
+    width:1100px;height:560px;pointer-events:none;
+    background:radial-gradient(closest-side,rgba(103,199,214,.10),transparent 72%)}
+  .hero .inner{position:relative;max-width:780px;margin:0 auto}
+  .hero .eyebrow{display:inline-block;margin-bottom:22px}
+  .hero h1{margin:0 auto;max-width:15ch}
+  .hero .lead{margin:20px auto 0;max-width:54ch;text-align:center}
+  .hero .links{margin-top:24px;display:flex;gap:24px;justify-content:center;
+    font-size:.9rem;color:var(--ink-3)}
+  .hero .links a{color:var(--ink-2);border-bottom:1px solid var(--line)}
+  .hero .links a:hover{color:var(--accent);border-color:var(--accent-dim)}
+
+  /* ---------- terminal card (the anchor) ---------- */
+  .term{max-width:560px;margin:34px auto 0;text-align:left;
+    border:1px solid var(--line);border-radius:11px;background:#070a0e;overflow:hidden;
+    box-shadow:0 30px 60px -34px rgba(0,0,0,.85),0 1px 0 rgba(255,255,255,.025) inset}
+  .term .bar{display:flex;align-items:center;gap:14px;padding:11px 14px;
+    background:#0b0e13;border-bottom:1px solid var(--line-soft)}
+  .term .dots{display:flex;gap:7px}
+  .term .dots i{width:10px;height:10px;border-radius:50%;background:#252d39}
+  .term .tab{font-family:var(--mono);font-size:.72rem;color:var(--accent);
+    padding:3px 10px;border-radius:6px;background:rgba(103,199,214,.1)}
+  .term .copy{margin-left:auto;background:transparent;border:1px solid var(--line);
+    color:var(--ink-3);font-family:var(--mono);font-size:.72rem;
+    padding:4px 12px;border-radius:6px;cursor:pointer;transition:.15s}
+  .term .copy:hover{border-color:var(--accent-dim);color:var(--accent)}
+  .term .body{padding:20px 18px}
+  .term .cmd{font-family:var(--mono);font-size:.98rem;line-height:1.5;color:var(--ink)}
+  .term .cmd .p{color:var(--learn)}
+  .term .sub{margin:15px 0 0;padding-top:15px;border-top:1px solid var(--line-soft);
+    font-family:var(--mono);font-size:.8rem;line-height:1.85;color:var(--ink-3);
+    white-space:pre-wrap;word-break:break-word}
+  .term .sub .cmt{color:var(--ink-4)}
+  .term .sub .p{color:var(--learn)}
+
+  /* ---------- demo video ---------- */
+  .demo{max-width:780px;margin:56px auto 0;text-align:center}
+  .video{border:1px solid var(--line);border-radius:11px;background:var(--bg-2);
+    aspect-ratio:16/9;display:flex;align-items:center;justify-content:center;
+    position:relative;color:var(--ink-4);font-size:.9rem;font-family:var(--mono)}
+  .ph{position:absolute;top:11px;left:11px;font-family:var(--mono);font-size:.7rem;
+    color:var(--attention);border:1px dashed var(--attention);opacity:.8;
+    padding:2px 8px;border-radius:5px}
+
+  /* ---------- the line example (problem→solution bridge) ---------- */
+  .example{border-top:1px solid var(--line-soft);border-bottom:1px solid var(--line-soft)}
+  .example .wrap{max-width:760px}
+  .example p{font-size:clamp(1.2rem,2.4vw,1.55rem);line-height:1.45;
+    letter-spacing:-.015em;color:var(--ink-2)}
+  .example b{color:var(--ink);font-weight:600}
+
+  /* ---------- problem (two columns, light) ---------- */
+  .two{display:grid;grid-template-columns:1fr 1fr;gap:48px;margin-top:36px}
+  @media(max-width:680px){.two{grid-template-columns:1fr;gap:32px}}
+  .two .tag{font-family:var(--mono);font-size:.72rem;letter-spacing:.06em;color:var(--ink-4)}
+  .two h3{margin:10px 0 8px}
+  .two p{color:var(--ink-2);font-size:.97rem}
+
+  /* ---------- how it works ---------- */
+  .layout{display:grid;grid-template-columns:1.05fr .95fr;gap:56px;align-items:center;margin-top:44px}
+  @media(max-width:860px){.layout{grid-template-columns:1fr;gap:40px}}
+  ol.steps{margin:0;padding:0;list-style:none;counter-reset:s;display:grid;gap:30px}
+  ol.steps li{counter-increment:s;padding-left:46px;position:relative}
+  ol.steps li::before{content:counter(s);position:absolute;left:0;top:-2px;
+    width:28px;height:28px;border:1px solid var(--line);border-radius:7px;
+    display:flex;align-items:center;justify-content:center;
+    font-family:var(--mono);font-size:.8rem;color:var(--accent);background:var(--panel)}
+  ol.steps h3{margin-bottom:6px}
+  ol.steps p{color:var(--ink-2);font-size:.97rem}
+  .diagram{border:1px solid var(--line);border-radius:11px;background:var(--bg-2);padding:22px}
+  .diagram svg{width:100%;height:auto;display:block}
+  .d-title{font-family:var(--sans);font-weight:600;font-size:13px;fill:var(--ink)}
+  .d-cap{font-family:var(--mono);font-size:10px;fill:var(--ink-3)}
+  .d-note{font-family:var(--mono);font-size:9.5px;fill:var(--ink-4)}
+
+  /* ---------- why different (editorial, hairline-separated) ---------- */
+  .feats{margin-top:40px;display:grid;grid-template-columns:repeat(3,1fr);gap:0}
+  @media(max-width:780px){.feats{grid-template-columns:1fr}}
+  .feat{padding:0 28px;border-left:1px solid var(--line-soft)}
+  .feat:first-child{padding-left:0;border-left:none}
+  @media(max-width:780px){.feat{padding:24px 0 0;border-left:none;border-top:1px solid var(--line-soft)}
+    .feat:first-child{padding-top:0;border-top:none}}
+  .feat .n{font-family:var(--mono);font-size:.74rem;color:var(--accent-dim)}
+  .feat h3{margin:12px 0 8px}
+  .feat p{color:var(--ink-2);font-size:.95rem}
+
+  /* ---------- the claim band ---------- */
+  .band{text-align:center;border-top:1px solid var(--line-soft);border-bottom:1px solid var(--line-soft);
+    background:linear-gradient(180deg,transparent,rgba(103,199,214,.03),transparent)}
+  .band .wrap{max-width:680px}
+  .band .big{font-size:clamp(1.5rem,3.4vw,2.1rem);font-weight:600;letter-spacing:-.025em;
+    color:var(--ink);line-height:1.25}
+  .band .cap{color:var(--ink-3);margin-top:16px;font-size:.98rem;line-height:1.6}
+
+  /* ---------- privacy (definition list, hairline dividers) ---------- */
+  .deflist{margin-top:36px;border-top:1px solid var(--line-soft)}
+  .deflist .row{display:grid;grid-template-columns:230px 1fr;gap:32px;
+    padding:22px 0;border-bottom:1px solid var(--line-soft)}
+  @media(max-width:680px){.deflist .row{grid-template-columns:1fr;gap:6px}}
+  .deflist dt{font-weight:600;color:var(--ink);font-size:.98rem}
+  .deflist dd{margin:0;color:var(--ink-2);font-size:.97rem}
+  .deflist .muted{color:var(--ink-4)}
+
+  /* ---------- install requirements ---------- */
+  .req{max-width:680px;margin:32px auto 0}
+  .req dl{margin:0;display:grid;gap:18px}
+  .req .row{display:grid;grid-template-columns:170px 1fr;gap:28px;align-items:baseline}
+  @media(max-width:680px){.req .row{grid-template-columns:1fr;gap:4px}}
+  .req dt{font-family:var(--mono);font-size:.82rem;color:var(--ink-3)}
+  .req dd{margin:0;color:var(--ink-2);font-size:.96rem}
+  .gate{margin-top:26px;font-family:var(--mono);font-size:.74rem;line-height:1.7;
+    color:var(--attention);border:1px dashed var(--attention);opacity:.85;
+    padding:11px 14px;border-radius:8px}
+  .install-cta{margin-top:32px;display:flex;gap:14px;justify-content:center;flex-wrap:wrap}
+
+  /* ---------- footer ---------- */
+  footer{border-top:1px solid var(--line-soft);padding:40px 0;color:var(--ink-4);font-size:.86rem}
+  footer .wrap{display:flex;flex-wrap:wrap;gap:16px;justify-content:space-between;align-items:center}
+  footer .lf{display:flex;align-items:center;gap:11px}
+  footer .owl{font-family:var(--mono);font-size:5.5px;line-height:1.04;white-space:pre;color:var(--ink-4);margin:0}
+  footer nav{display:flex;gap:22px}
+  footer a{color:var(--ink-3)}
+  footer a:hover{color:var(--ink)}
+</style>
+</head>
+<body>
+
+<header class="nav">
+  <div class="wrap">
+    <a class="brand" href="#top"><pre class="owl"> ,___,
+ (O,O)
+ (   )
+ -"-"-</pre><span>Hedwig</span></a>
+    <nav>
+      <a class="navlink" href="#how">How it works</a>
+      <a class="navlink" href="#different">Why it's different</a>
+      <a class="navlink" href="#privacy">Privacy</a>
+      <a class="ghost" href="#install">Install</a>
+    </nav>
+  </div>
+</header>
+
+<!-- hero -->
+<section class="hero" id="top">
+  <div class="wrap">
+    <div class="inner">
+      <span class="eyebrow">A governance layer for Claude Code</span>
+      <h1>Decides when to interrupt you, and when to stay out of the way.</h1>
+      <p class="lead">Hedwig decides, per edit, whether to apply it or pause for review —
+      calibrated from your past sessions, not rules you write up front.</p>
+
+      <div class="term">
+        <div class="bar">
+          <span class="dots"><i></i><i></i><i></i></span>
+          <span class="tab">claude code</span>
+          <button class="copy" data-copy="claude plugin marketplace add tanjalshukla/HedwigCLI&#10;claude plugin install hedwig@hedwig-marketplace">Copy</button>
+        </div>
+        <div class="body">
+          <div class="cmd"><span class="p">$</span> claude plugin marketplace add tanjalshukla/HedwigCLI</div>
+          <div class="cmd"><span class="p">$</span> claude plugin install hedwig@hedwig-marketplace</div>
+<pre class="sub"><span class="cmt"># then make an edit and see what Hedwig did:</span>
+<span class="p">$</span> /hedwig-status</pre>
+        </div>
+      </div>
+
+      <div class="links">
+        <a href="https://github.com/tanjalshukla/HedwigCLI">GitHub</a>
+        <a href="#demo">Watch the demo</a>
+        <a href="#install">Requirements</a>
+      </div>
+    </div>
+
+    <div class="demo" id="demo">
+      <div class="video">
+        <span class="ph">{{DEMO_VIDEO}} — embed the 90s demo here once it's recorded</span>
+        90-second demo
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- the one-line example -->
+<section class="example">
+  <div class="wrap">
+    <p><b>Hedwig auto-applied an edit. You reverted it. Next time it pauses on edits
+    like that.</b> That feedback loop is the whole idea.</p>
+  </div>
+</section>
+
+<!-- problem -->
+<section id="problem">
+  <div class="wrap narrow sec-head">
+    <span class="eyebrow">The problem</span>
+    <h2>Permission prompts are all or nothing.</h2>
+  </div>
+  <div class="wrap">
+    <div class="two">
+      <div>
+        <div class="tag">ASK ON EVERYTHING</div>
+        <h3>Too many prompts</h3>
+        <p>You hand-approve every trivial edit, and after a while stop reading the prompts
+        that matter.</p>
+      </div>
+      <div>
+        <div class="tag">ASK ON NOTHING</div>
+        <h3>No visibility</h3>
+        <p>You let it run wide open and find out afterward — including the
+        security-sensitive file you'd have wanted to see.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- how it works -->
+<section id="how">
+  <div class="wrap sec-head">
+    <span class="eyebrow">How it works</span>
+    <h2>Score, decide, learn — locally, on every edit.</h2>
+  </div>
+  <div class="wrap">
+    <div class="layout">
+      <ol class="steps">
+        <li>
+          <h3>It scores the edit</h3>
+          <p>Hedwig reads a few raw signals: change size, how many files depend on this one
+          (its blast radius), whether it's security-sensitive, and whether it's new.</p>
+        </li>
+        <li>
+          <h3>It decides: apply, or pause</h3>
+          <p>Low-risk, familiar edits apply quietly. Riskier ones surface with a plain reason —
+          "touches a security-sensitive file and creates a new file, so surfacing this one."</p>
+        </li>
+        <li>
+          <h3>It adjusts from what happened</h3>
+          <p>When an auto-applied edit gets reverted or fails verification, Hedwig gets more
+          cautious about similar edits. No retraining, no synthetic data.</p>
+        </li>
+      </ol>
+
+      <div class="diagram" aria-label="score, decide, learn loop">
+        <svg viewBox="0 0 360 290" role="img">
+          <defs>
+            <marker id="ar" markerWidth="8" markerHeight="8" refX="5" refY="3" orient="auto">
+              <path d="M0,0 L5,3 L0,6 Z" fill="#67c7d6"/>
+            </marker>
+            <marker id="arg" markerWidth="8" markerHeight="8" refX="5" refY="3" orient="auto">
+              <path d="M0,0 L5,3 L0,6 Z" fill="#56c08a"/>
+            </marker>
+          </defs>
+
+          <rect x="18" y="20" width="150" height="58" rx="8" fill="#11151c" stroke="#26303d"/>
+          <text x="34" y="44" class="d-title">1 · score</text>
+          <text x="34" y="62" class="d-cap">size · blast radius ·</text>
+          <text x="34" y="73" class="d-cap">sensitive · new file</text>
+
+          <rect x="192" y="20" width="150" height="58" rx="8" fill="#11151c" stroke="#26303d"/>
+          <text x="208" y="44" class="d-title">2 · decide</text>
+          <text x="208" y="62" class="d-cap">apply quietly,</text>
+          <text x="208" y="73" class="d-cap">or pause for review</text>
+
+          <rect x="192" y="148" width="150" height="64" rx="8" fill="#11151c" stroke="#26303d"/>
+          <text x="208" y="172" class="d-title">3 · outcome</text>
+          <text x="208" y="190" class="d-cap">kept? reverted?</text>
+          <text x="208" y="201" class="d-cap">verify failed?</text>
+
+          <rect x="18" y="148" width="150" height="64" rx="8" fill="#0e1c17" stroke="#2a5e44"/>
+          <text x="34" y="172" class="d-title" fill="#7fcfa3">4 · learn</text>
+          <text x="34" y="190" class="d-cap">regret tightens</text>
+          <text x="34" y="201" class="d-cap">similar edits</text>
+
+          <line x1="168" y1="49" x2="188" y2="49" stroke="#67c7d6" stroke-width="1.6" marker-end="url(#ar)"/>
+          <line x1="267" y1="78" x2="267" y2="144" stroke="#67c7d6" stroke-width="1.6" marker-end="url(#ar)"/>
+          <line x1="192" y1="180" x2="172" y2="180" stroke="#56c08a" stroke-width="1.6" marker-end="url(#arg)"/>
+          <path d="M93,148 C93,118 93,108 93,82" fill="none" stroke="#56c08a" stroke-width="1.6" stroke-dasharray="3 3" marker-end="url(#arg)"/>
+          <text x="100" y="116" class="d-note" fill="#7fcfa3">feeds back</text>
+
+          <text x="180" y="270" text-anchor="middle" class="d-note">the loop stays local — nothing is sent anywhere</text>
+        </svg>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- why different -->
+<section id="different">
+  <div class="wrap sec-head">
+    <span class="eyebrow">Why it's different</span>
+    <h2>Most tools make you write the policy. Hedwig learns it.</h2>
+  </div>
+  <div class="wrap">
+    <div class="feats">
+      <div class="feat">
+        <div class="n">01</div>
+        <h3>Learns from outcomes, not clicks</h3>
+        <p>It watches what survives and what gets undone, and recalibrates which
+        interruptions are worth your attention.</p>
+      </div>
+      <div class="feat">
+        <div class="n">02</div>
+        <h3>The agent can ask too</h3>
+        <p>Claude Code can flag its own uncertainty and ask to pause, and Hedwig honors it.
+        Governance runs both directions.</p>
+      </div>
+      <div class="feat">
+        <div class="n">03</div>
+        <h3>Reads your rules by meaning</h3>
+        <p>Guidelines are matched by meaning, not keywords — a rule about "dependency
+        injection" still surfaces when your task says "constructor arguments."</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- privacy -->
+<section id="privacy">
+  <div class="wrap sec-head">
+    <span class="eyebrow">Runs on your machine</span>
+    <h2>Nothing leaves your machine.</h2>
+    <p class="lead">Exactly what Hedwig is and isn't, so you can check it against the code.</p>
+  </div>
+  <div class="wrap">
+    <dl class="deflist">
+      <div class="row">
+        <dt>Local by default</dt>
+        <dd>All decision history stays in your plugin data directory. Nothing is sent to
+        any server.</dd>
+      </div>
+      <div class="row">
+        <dt>No credentials</dt>
+        <dd>The core loop needs none. Optional LLM features are opt-in and use your own
+        API key.</dd>
+      </div>
+      <div class="row">
+        <dt>Honest mechanism</dt>
+        <dd>The scoring is heuristics plus local learning from your decisions. It isn't a
+        black box.</dd>
+      </div>
+      <div class="row">
+        <dt>Scoped on purpose</dt>
+        <dd>Not a coding agent, a cloud service, or a per-person profile. It governs the
+        agent that writes the code, and learns per repo and per session.</dd>
+      </div>
+    </dl>
+  </div>
+</section>
+
+<!-- install -->
+<section id="install">
+  <div class="wrap narrow sec-head" style="margin:0 auto;text-align:center">
+    <span class="eyebrow">Install</span>
+    <h2>Up and running in about a minute.</h2>
+  </div>
+  <div class="req">
+    <dl>
+      <div class="row">
+        <dt>Requires</dt>
+        <dd>Claude Code, plus Python 3.11+ (the governance core runs locally in Python).</dd>
+      </div>
+      <div class="row">
+        <dt>Tier 0</dt>
+        <dd>No credentials. The full loop — risk scoring, the scorer, regret detection —
+        runs with no <code>ANTHROPIC_API_KEY</code>, no AWS, no Bedrock.</dd>
+      </div>
+      <div class="row">
+        <dt>Tier 1</dt>
+        <dd>Optional LLM features unlock when you set your own <code>ANTHROPIC_API_KEY</code>.</dd>
+      </div>
+    </dl>
+    <div class="install-cta">
+      <a class="btn btn-ghost" href="https://github.com/tanjalshukla/HedwigCLI">View on GitHub</a>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <div class="lf">
+      <pre class="owl"> ,___,
+ (O,O)
+ (   )
+ -"-"-</pre>
+      <span>As seen at ACM CAIS and the AI Engineer's World Fair.</span>
+    </div>
+    <nav>
+      <a href="https://github.com/tanjalshukla/HedwigCLI">GitHub</a>
+      <a href="#demo">Demo</a>
+      <a href="mailto:shuklatanjal@gmail.com">Contact</a>
+    </nav>
+  </div>
+</footer>
+
+<script>
+  document.querySelectorAll('.copy').forEach(function(btn){
+    btn.addEventListener('click', function(){
+      navigator.clipboard.writeText(btn.getAttribute('data-copy')).then(function(){
+        var old = btn.textContent;
+        btn.textContent = 'copied';
+        setTimeout(function(){ btn.textContent = old; }, 1300);
+      });
+    });
+  });
+</script>
+</body>
+</html>

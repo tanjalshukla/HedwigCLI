@@ -1,0 +1,53 @@
+name: Deploy landing site to GitHub Pages
+
+# Publishes the static one-pager in site/ to GitHub Pages.
+#
+# This workflow is INERT until Pages is enabled for the repo:
+#   Settings → Pages → Build and deployment → Source: "GitHub Actions"
+# Until then it runs (on pushes touching site/) but the deploy step has no
+# Pages environment to publish to and is a no-op / skipped.
+#
+# Manual trigger is provided so you can publish on demand once the R5/G2
+# publish gate is signed off (see site/README.md for the open blockers:
+# {{HEADLINE_NUMBER}}, demo video, clean-machine install verification).
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "site/**"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch: {}
+
+# Least-privilege: only what Pages deployment needs.
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# One live deploy at a time; don't cancel an in-flight publish.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload site/ as Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

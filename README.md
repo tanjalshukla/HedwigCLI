@@ -94,7 +94,30 @@ Everything inspectable from inside the REPL:
 
 ## Install
 
-Requirements: Python 3.11+, AWS SSO configured, Bedrock access to a Claude inference profile.
+There are two ways to run Hedwig.
+
+### As a Claude Code plugin (no credentials, no cloud)
+
+The governance loop — risk assessment, the scorer cascade, the online
+logistic-regression classifier, the SQLite trace store, and the regret loop —
+runs locally as a [Claude Code](https://code.claude.com) plugin. No AWS, no
+Bedrock, no API key.
+
+```bash
+claude plugin marketplace add tanjalshukla/HedwigCLI
+claude plugin install hedwig@hedwig-marketplace
+```
+
+Make an edit in any repo, then run `/hedwig-status` to see what Hedwig
+auto-applied versus surfaced, and why. The learned scorer additionally uses
+`numpy` + `scikit-learn` + `fastembed`; if they aren't importable by the
+interpreter that runs the hooks, Hedwig degrades cleanly to the stdlib
+heuristic rather than failing. See [`plugin/README.md`](plugin/README.md).
+
+### As the full research CLI (Bedrock-backed)
+
+The interactive REPL that drives a Claude agent end-to-end. Requirements:
+Python 3.11+, AWS SSO configured, Bedrock access to a Claude inference profile.
 
 ```bash
 python -m venv .venv && source .venv/bin/activate

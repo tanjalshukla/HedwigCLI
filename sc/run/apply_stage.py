@@ -154,6 +154,17 @@ def _apply_regret_corrections(
         if regret_row is None:
             continue
         history = trust_db.policy_history(repo_root_str, event.file_path, stage="apply")
+        # change_type is stored by change_type_label() with a legacy "new_file:"
+        # prefix when the action created a file. Split it back into the bare
+        # change_pattern + is_new_file flag the scorer expects — otherwise a
+        # prefixed pattern misses _PATTERN_RISK entirely (scores as a generic
+        # change) AND the new-file penalty is lost, under-weighting the very
+        # regrets that matter most (a reverted new-file edit).
+        stored_change_type = str(regret_row.get("change_type") or "general_change")
+        regret_is_new_file = stored_change_type.startswith("new_file:")
+        change_pattern = (
+            stored_change_type.split(":", 1)[-1] if regret_is_new_file else stored_change_type
+        )
         pi = PolicyInput(
             prior_approvals=max(0.0, history.effective_approvals - 1),
             prior_denials=history.denials,
@@ -161,9 +172,9 @@ def _apply_regret_corrections(
             avg_edit_distance=history.avg_edit_distance or 0.0,
             diff_size=int(regret_row.get("diff_size") or 0),
             blast_radius=int(regret_row.get("blast_radius") or 1),
-            is_new_file=False,
+            is_new_file=regret_is_new_file,
             is_security_sensitive=False,
-            change_pattern=str(regret_row.get("change_type") or "general_change"),
+            change_pattern=change_pattern,
             recent_denials=recent_apply_denials,
             files_in_action=1,
         )
