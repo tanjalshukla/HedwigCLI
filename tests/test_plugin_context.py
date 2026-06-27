@@ -136,6 +136,29 @@ def test_non_dict_payload_is_safe(tmp_path: Path) -> None:
     assert "Traceback" not in proc.stderr
 
 
+def test_context_hook_disables_embeddings(tmp_path: Path) -> None:
+    """Latency guard: the per-prompt hook must force keyword retrieval, never
+    materialize the fastembed model (~5s on a cold subprocess, and every hook is
+    a cold subprocess). The hook sets HEDWIG_DISABLE_EMBEDDINGS at import; here
+    we confirm (a) select_ranker honors the env var, in an isolated subprocess
+    so no module state leaks, and (b) importing the hook sets it."""
+    probe = (
+        "import os; os.environ['HEDWIG_DISABLE_EMBEDDINGS']='1';"
+        "import sys; sys.path.insert(0, %r);"
+        "from sc.retrieval import select_ranker;"
+        "print(select_ranker()[1])" % str(_VENDOR)
+    )
+    out = subprocess.run(["python3", "-c", probe], capture_output=True, text=True)
+    assert out.returncode == 0, out.stderr
+    assert out.stdout.strip() == "keyword", "env var must force keyword ranking"
+
+    # And the hook itself sets the var at import time.
+    hook_src = (_PLUGIN_BIN / "hedwig-context.py").read_text()
+    assert "HEDWIG_DISABLE_EMBEDDINGS" in hook_src, (
+        "hedwig-context must opt out of embeddings on the hot path"
+    )
+
+
 if __name__ == "__main__":
     import pytest
     pytest.main([__file__, "-v"])

@@ -35,6 +35,7 @@ keyword scoring for that call.
 """
 
 import math
+import os
 import re
 from typing import Protocol, Sequence
 
@@ -208,10 +209,17 @@ def select_ranker(*, prefer_embeddings: bool = True) -> tuple[Retrieval, str]:
     EmbeddingRanker is the default; it is chosen only if fastembed is
     importable and the model materializes. Otherwise we silently fall back to
     KeywordRanker — graceful degradation is part of the contract.
-    """
+
+    HEDWIG_DISABLE_EMBEDDINGS=1 forces keyword ranking regardless. The plugin's
+    per-prompt memory hook sets it: materializing the fastembed model costs
+    ~5s on a cold process, and every hook invocation is a fresh subprocess (the
+    cache below never warms across calls), so embeddings would add ~5s to every
+    prompt. Keyword ranking is instant and, at plugin scale (a handful of
+    guidelines), the quality difference is negligible. The long-lived CLI keeps
+    embeddings (the cache warms once per session)."""
     global _EMBED_FN_CACHE
 
-    if not prefer_embeddings:
+    if not prefer_embeddings or os.environ.get("HEDWIG_DISABLE_EMBEDDINGS"):
         return KeywordRanker(), "keyword"
 
     if _EMBED_FN_CACHE is None:

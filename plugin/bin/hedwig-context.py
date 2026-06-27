@@ -29,8 +29,17 @@ Claude Code's 10K additionalContext limit. No Bedrock, no credentials.
 from __future__ import annotations
 
 import json
+import os
 import sys
 from pathlib import Path
+
+# Force keyword retrieval on this hot path. This hook runs on EVERY
+# UserPromptSubmit / SessionStart as a fresh subprocess, so the fastembed
+# embedding cache never warms — materializing the model would add ~5s to every
+# prompt. Keyword ranking is instant and good enough at plugin scale. Set before
+# importing the retrieval seam so select_ranker honors it. (The long-lived CLI
+# keeps embeddings; only this per-invocation subprocess opts out.)
+os.environ.setdefault("HEDWIG_DISABLE_EMBEDDINGS", "1")
 
 _HERE = Path(__file__).resolve().parent
 _VENDOR = _HERE.parent / "vendor"
