@@ -59,6 +59,7 @@ from _hedwig_common import (  # noqa: E402
     load_classifier,
     open_trust_db,
     prior_deny_count,
+    repo_root_key,
     select_active_scorer,
 )
 
@@ -362,9 +363,15 @@ def _payload_to_risk_inputs(payload: dict) -> tuple[Path, str, str, str, bool, i
     if tool_name not in _GOVERNED_TOOLS:
         return None
 
-    tool_input = payload.get("tool_input") or {}
-    file_path = tool_input.get("file_path") or ""
-    if not file_path:
+    # Defend against malformed-but-valid-JSON payloads: a non-dict tool_input,
+    # a non-string file_path, or a non-list `edits` would otherwise crash the
+    # hook with AttributeError/TypeError and exit non-zero, breaking the edit.
+    # Anything unexpected → treat as ungovernable and pass through.
+    tool_input = payload.get("tool_input")
+    if not isinstance(tool_input, dict):
+        return None
+    file_path = tool_input.get("file_path")
+    if not isinstance(file_path, str) or not file_path:
         return None
 
     cwd = payload.get("cwd") or os.getcwd()
@@ -395,10 +402,13 @@ def _payload_to_risk_inputs(payload: dict) -> tuple[Path, str, str, str, bool, i
         existing, _ = _read_old_content(repo_root, rel)
         new_content = existing.replace(old_string, new_string, 1) if existing else new_string
     elif tool_name == "MultiEdit":
-        edits = tool_input.get("edits") or []
+        edits = tool_input.get("edits")
+        edits = edits if isinstance(edits, list) else []
         existing, _ = _read_old_content(repo_root, rel)
         new_content = existing
         for edit in edits:
+            if not isinstance(edit, dict):
+                continue  # skip malformed edit entries rather than crash
             new_content = new_content.replace(
                 edit.get("old_string") or "",
                 edit.get("new_string") or "",
@@ -414,6 +424,17 @@ def _payload_to_risk_inputs(payload: dict) -> tuple[Path, str, str, str, bool, i
 
 
 def main() -> int:
+    """Top-level guard: a PreToolUse hook must NEVER exit non-zero — that would
+    block/error the governed edit. Any unanticipated payload shape or internal
+    error falls through to a passthrough (native permission flow) rather than
+    crashing. The inner function holds the real logic."""
+    try:
+        return _main_inner()
+    except Exception:
+        return _passthrough()
+
+
+def _main_inner() -> int:
     # Re-exec under a deps-capable interpreter (if the current one lacks
     # numpy/sklearn) BEFORE touching stdin, so the learned classifier always
     # runs at the booth. No-op when this interpreter already has the deps, when
@@ -446,7 +467,10 @@ def main() -> int:
         diff_size=diff_size,
     )
 
-    repo_root_str = str(repo_root)
+    # DB key: canonicalize through repo_root_key so constraints/preferences
+    # authored by the slash commands (which key on the resolved getcwd) are
+    # found here. `repo_root` stays the raw payload path for file-path math.
+    repo_root_str = repo_root_key(str(repo_root))
 
     # Open the DB once and read history + the persisted classifier from it, so
     # the decide turn runs the full CAIS cascade: the heuristic carries

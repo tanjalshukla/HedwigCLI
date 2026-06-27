@@ -413,6 +413,26 @@ def data_dir() -> Path:
     return Path.home() / ".claude" / "plugins" / "data" / "hedwig"
 
 
+def repo_root_key(cwd: str | None) -> str:
+    """Canonical per-repo key for trust.db lookups. ALL hooks and slash commands
+    must derive their repo_root through this, or state authored by one is keyed
+    differently than another reads it.
+
+    The trap: slash commands run with the project as the OS cwd (os.getcwd(),
+    which on macOS is the realpath), while event hooks receive payload["cwd"]
+    (possibly an UNRESOLVED path with symlinks — /tmp, /var, symlinked worktrees,
+    network mounts). If those diverge, a constraint added via /hedwig-rules or a
+    preference confirmed via /hedwig-learn is stored under one key and the decide
+    hook reads another — so it silently never fires (a wrong-verdict bug for
+    always_deny / always_check_in). Resolving symlinks on BOTH sides makes the
+    keys identical. Falls back to the raw value if resolution fails."""
+    raw = cwd or os.getcwd()
+    try:
+        return str(Path(raw).resolve())
+    except Exception:
+        return str(raw)
+
+
 def append_jsonl(filename: str, record: dict) -> None:
     """Append one JSON record to <data_dir>/<filename>. Best-effort: never
     raise, since a logging failure must not break a hook."""

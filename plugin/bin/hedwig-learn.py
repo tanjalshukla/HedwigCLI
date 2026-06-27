@@ -34,7 +34,7 @@ if str(_VENDOR) not in sys.path:
 if str(_HERE) not in sys.path:
     sys.path.insert(0, str(_HERE))
 
-from _hedwig_common import open_trust_db  # noqa: E402
+from _hedwig_common import open_trust_db, repo_root_key  # noqa: E402
 
 # The plugin keys repo history on cwd (same as the other hooks); the slash
 # command runs in the project dir, and the session is the current one. We
@@ -48,7 +48,7 @@ def _ready(db):
     from sc.hypothesis_bank import get_ready_hypothesis  # noqa: PLC0415
 
     return get_ready_hypothesis(
-        trust_db=db, repo_root=os.getcwd(), session_id=_SESSION
+        trust_db=db, repo_root=repo_root_key(None), session_id=_SESSION
     )
 
 
@@ -85,7 +85,7 @@ def _resolve(confirmed: bool) -> int:
         if hyp is None:
             sys.stdout.write("Nothing is waiting for review — nothing to confirm or decline.\n")
             return 0
-        repo = os.getcwd()
+        repo = repo_root_key(None)
         if confirmed:
             payload = {
                 "accepted": True,

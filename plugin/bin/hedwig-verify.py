@@ -46,6 +46,7 @@ from _hedwig_common import (  # noqa: E402
     ensure_learned_interpreter,
     open_trust_db,
     policy_input_for_regret,
+    repo_root_key,
     update_classifier_for_regret,
 )
 
@@ -137,16 +138,17 @@ def _notify_ready_hypothesis(session_id: str, cwd: str) -> None:
     """
     if not cwd:
         return
+    repo_root = repo_root_key(cwd)  # canonical DB key (matches /hedwig-learn)
     try:
         from sc.hypothesis_bank import get_ready_hypothesis  # noqa: PLC0415
 
         db = open_trust_db()
         hypothesis = get_ready_hypothesis(
-            trust_db=db, repo_root=cwd, session_id=session_id
+            trust_db=db, repo_root=repo_root, session_id=session_id
         )
         if hypothesis is None:
             return
-        if db.session_has_confirmed_hypothesis(cwd, session_id, driver=hypothesis.driver):
+        if db.session_has_confirmed_hypothesis(repo_root, session_id, driver=hypothesis.driver):
             return
     except Exception:
         return
@@ -173,6 +175,7 @@ def _run_verification(payload: dict) -> None:
 
     session_id = payload.get("session_id") or ""
     cwd = payload.get("cwd") or os.getcwd()
+    repo_root = repo_root_key(cwd)  # DB key (cwd stays raw for git/subprocess)
 
     try:
         result = subprocess.run(
@@ -211,9 +214,9 @@ def _run_verification(payload: dict) -> None:
         db = open_trust_db()
         for rel in failed_files:
             db.record_trace(
-                repo_root=cwd,
+                repo_root=repo_root,
                 session_id=session_id,
-                task=cwd,
+                task=repo_root,
                 stage="apply",
                 action_type="file_update",
                 file_path=rel,
@@ -233,9 +236,9 @@ def _run_verification(payload: dict) -> None:
             # Corrective classifier gradient (S5), once per (session, file).
             # The trace tightens THIS file via per-file history; the classifier
             # update generalizes the negative signal to similar edits elsewhere.
-            pi = policy_input_for_regret(db, cwd, session_id, rel)
+            pi = policy_input_for_regret(db, repo_root, session_id, rel)
             update_classifier_for_regret(
-                db, cwd, pi, regret_key=f"verify_fail:{session_id}:{rel}"
+                db, repo_root, pi, regret_key=f"verify_fail:{session_id}:{rel}"
             )
     except Exception:
         pass

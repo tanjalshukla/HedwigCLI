@@ -39,6 +39,7 @@ from _hedwig_common import (  # noqa: E402
     open_trust_db,
     policy_input_for_decision,
     policy_input_for_regret,
+    repo_root_key,
     update_classifier_for_decision,
     update_classifier_for_regret,
 )
@@ -97,11 +98,12 @@ def _is_reversal(session_id: str | None, file_path: str | None, cur_old: str, cu
     return False
 
 
-def _record_reversal_regret(cwd: str, session_id: str, rel: str, change_pattern: str | None) -> None:
+def _record_reversal_regret(repo_root: str, session_id: str, rel: str, change_pattern: str | None) -> None:
     """Persist a reversal as a negative-outcome trace, feed it to the
     classifier as a corrective gradient, and mark the demoable regret event.
 
-    Two learning channels, both the CAIS mechanism (S5):
+    `repo_root` is the canonical (resolved) repo key, matching every other
+    trust.db access. Two learning channels, both the CAIS mechanism (S5):
       * a user_decision='deny' apply trace → the next decide on THIS file
         tightens via per-file history (the -0.7 denial weight / learned score);
       * classifier.update(approved=False, count_sample=False) → the negative
@@ -114,7 +116,7 @@ def _record_reversal_regret(cwd: str, session_id: str, rel: str, change_pattern:
         "regret.jsonl",
         {
             "session_id": session_id,
-            "cwd": cwd,
+            "cwd": repo_root,
             "files": [rel],
             "signal": "reversal",  # distinguishes from verification-failure regret
         },
@@ -122,9 +124,9 @@ def _record_reversal_regret(cwd: str, session_id: str, rel: str, change_pattern:
     try:
         db = open_trust_db()
         db.record_trace(
-            repo_root=cwd,
+            repo_root=repo_root,
             session_id=session_id,
-            task=cwd,
+            task=repo_root,
             stage="apply",
             action_type="file_update",
             file_path=rel,
@@ -142,8 +144,8 @@ def _record_reversal_regret(cwd: str, session_id: str, rel: str, change_pattern:
             verification_passed=False,
         )
         # Corrective classifier gradient — keyed so it fires exactly once.
-        pi = policy_input_for_regret(db, cwd, session_id, rel)
-        update_classifier_for_regret(db, cwd, pi, regret_key=f"reversal:{session_id}:{rel}")
+        pi = policy_input_for_regret(db, repo_root, session_id, rel)
+        update_classifier_for_regret(db, repo_root, pi, regret_key=f"reversal:{session_id}:{rel}")
     except Exception:
         pass
 
@@ -209,6 +211,16 @@ def _run_hypothesis_evidence(db, repo_root: str, session_id: str) -> None:
 
 
 def main() -> int:
+    """Top-level guard — a PostToolUse hook must never exit non-zero. Any
+    unanticipated payload shape or internal error is swallowed (exit 0); the
+    edit already ran, recording is best-effort."""
+    try:
+        return _main_inner()
+    except Exception:
+        return 0
+
+
+def _main_inner() -> int:
     # Re-exec under a deps-capable interpreter before reading stdin, so the
     # regret classifier update (update_classifier_for_regret) runs the real
     # learned path at the booth rather than silently degrading.
@@ -228,14 +240,21 @@ def main() -> int:
     if tool_name not in _GOVERNED:
         return 0
 
-    tool_input = payload.get("tool_input") or {}
-    abs_file = tool_input.get("file_path") or ""
-    if not abs_file:
+    # Defend against a non-dict tool_input or non-string file_path (valid JSON,
+    # unexpected shape) — would otherwise crash on .get and exit non-zero.
+    tool_input = payload.get("tool_input")
+    if not isinstance(tool_input, dict):
+        return 0
+    abs_file = tool_input.get("file_path")
+    if not isinstance(abs_file, str) or not abs_file:
         return 0
 
     session_id = payload.get("session_id") or ""
     cwd = payload.get("cwd") or ""
     rel = _rel_path(cwd, abs_file)
+    # DB key, canonicalized so it matches what the slash commands and decide
+    # hook derive (cwd stays raw for the _rel_path math above).
+    repo_root = repo_root_key(cwd)
 
     # decide.py logs the verdict keyed by the repo-relative path, so correlate
     # on `rel` (not the absolute path) — otherwise every lookup misses and
@@ -264,7 +283,7 @@ def main() -> int:
                     "signal": "reversal",
                 },
             )
-            _record_reversal_regret(cwd, session_id, rel, change_pattern)
+            _record_reversal_regret(repo_root, session_id, rel, change_pattern)
             return 0
     # Suppressed → Hedwig auto-applied it. Surfaced+executed → user approved at
     # the native prompt. Both are positive outcome history; the tag preserves
@@ -287,9 +306,9 @@ def main() -> int:
     try:
         db = open_trust_db()
         db.record_trace(
-            repo_root=cwd,
+            repo_root=repo_root,
             session_id=session_id,
-            task=cwd,  # plugin has no task string; key history per repo
+            task=repo_root,  # plugin has no task string; key history per repo
             stage="apply",
             action_type="file_update",
             file_path=rel,
@@ -313,13 +332,13 @@ def main() -> int:
         # learn on the exact features that decision was scored on. Skipped when
         # decide left no risk signals (e.g. cold log row from before this fix).
         if verdict_row and verdict_row.get("blast_radius") is not None:
-            pi = policy_input_for_decision(db, cwd, rel, verdict_row)
-            update_classifier_for_decision(db, cwd, pi, approved=True)
+            pi = policy_input_for_decision(db, repo_root, rel, verdict_row)
+            update_classifier_for_decision(db, repo_root, pi, approved=True)
         # Hypothesis bank: seed rule-based candidates from this session's traces
         # and accumulate evidence on the latest one. Pure-local (no Bedrock) —
         # the LLM noticer is a separate opt-in path. Candidates never affect
         # behavior until the developer confirms one via /hedwig-learn.
-        _run_hypothesis_evidence(db, cwd, session_id)
+        _run_hypothesis_evidence(db, repo_root, session_id)
     except Exception:
         # DB write is best-effort; the JSONL trace above is the fallback.
         pass

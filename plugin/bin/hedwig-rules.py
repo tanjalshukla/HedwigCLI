@@ -34,7 +34,7 @@ if str(_VENDOR) not in sys.path:
 if str(_HERE) not in sys.path:
     sys.path.insert(0, str(_HERE))
 
-from _hedwig_common import open_trust_db  # noqa: E402
+from _hedwig_common import open_trust_db, repo_root_key  # noqa: E402
 
 # The three policies a developer can set, mapped to the stored constraint_type
 # the cascade reads (HardConstraint.policy_for -> always_*). Short aliases on
@@ -49,10 +49,11 @@ _SOURCE = "plugin_user"  # provenance tag: authored via /hedwig-rules
 
 
 def _repo_root() -> str:
-    """The repo the rules apply to. The slash command runs in the project cwd,
-    which is the per-repo key the rest of the plugin uses."""
-    import os
-    return os.getcwd()
+    """The repo the rules apply to. The slash command runs in the project cwd;
+    canonicalized through repo_root_key so it matches the key the event hooks
+    derive from payload["cwd"] (else a rule added here keys differently than
+    hedwig-decide reads it and silently never fires)."""
+    return repo_root_key(None)
 
 
 def _cmd_list() -> int:

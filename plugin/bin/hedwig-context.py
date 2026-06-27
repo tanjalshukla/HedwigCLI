@@ -39,7 +39,7 @@ if str(_VENDOR) not in sys.path:
 if str(_HERE) not in sys.path:
     sys.path.insert(0, str(_HERE))
 
-from _hedwig_common import open_trust_db  # noqa: E402
+from _hedwig_common import open_trust_db, repo_root_key  # noqa: E402
 
 # Keep injected context well under Claude Code's 10K additionalContext cap.
 _MAX_CONTEXT_CHARS = 4000
@@ -63,9 +63,10 @@ def _emit(event: str, text: str) -> int:
 
 def _session_start(payload: dict) -> int:
     """One-paragraph "what we've learned about this repo" lead at session open."""
-    repo_root = payload.get("cwd") or ""
-    if not repo_root:
+    cwd = payload.get("cwd") or ""
+    if not cwd:
         return 0
+    repo_root = repo_root_key(cwd)  # canonical DB key (matches the slash commands)
     try:
         from sc.repo_memory import synthesize_repo_summary  # noqa: PLC0415
 
@@ -92,10 +93,11 @@ def _session_start(payload: dict) -> int:
 def _user_prompt_submit(payload: dict) -> int:
     """Task-relevant guidelines + repo facts retrieved by overlap with the
     submitted prompt, injected alongside it before the model responds."""
-    repo_root = payload.get("cwd") or ""
+    cwd = payload.get("cwd") or ""
     query = (payload.get("prompt") or "").strip()
-    if not repo_root or not query:
+    if not cwd or not query:
         return 0
+    repo_root = repo_root_key(cwd)  # canonical DB key (matches the slash commands)
     try:
         db = open_trust_db()
         guidelines = db.relevant_behavioral_guidelines(
