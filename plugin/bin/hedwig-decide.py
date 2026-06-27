@@ -53,6 +53,7 @@ from _hedwig_common import (  # noqa: E402
     LOW_CONFIDENCE_THRESHOLD,
     MAX_DENY_RETRIES,
     append_jsonl,
+    apply_confirmed_preferences,
     ensure_learned_interpreter,
     latest_self_checkin,
     load_classifier,
@@ -522,6 +523,12 @@ def main() -> int:
         proceed_threshold=proceed_threshold,
         flag_threshold=flag_threshold,
     )
+
+    # Cascade layer 5: developer-confirmed preferences override the scorer's
+    # decision (tighten by default; the one narrow auto_apply loosening exception
+    # is enforced inside PreferenceCoordinator). A pattern the developer
+    # confirmed via /hedwig-learn fires here. No-op when no preference matches.
+    decision = apply_confirmed_preferences(db, repo_root_str, decision, risk, rel)
 
     # R2 confidence handshake (tighten-only). If the agent self-declared low
     # confidence or explicitly requested a check-in for this file, honor it by

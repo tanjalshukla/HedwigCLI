@@ -125,25 +125,51 @@ def _auto_applied_files(session_id: str, cwd: str) -> list[str]:
     return seen
 
 
-def main() -> int:
-    # Re-exec under a deps-capable interpreter before reading stdin, so the
-    # verification-failure regret feeds the real learned classifier at the
-    # booth (update_classifier_for_regret) instead of degrading to heuristic.
-    ensure_learned_interpreter()
+def _notify_ready_hypothesis(session_id: str, cwd: str) -> None:
+    """If the hypothesis bank has a candidate ready to surface, tell the
+    developer via Stop additionalContext to run /hedwig-learn.
 
-    raw = sys.stdin.read()
-    if not raw.strip():
-        return 0
+    Hooks are non-interactive — they can't pop a y/n prompt — so the plugin's
+    hypothesis-confirmation surface is the /hedwig-learn slash command. This
+    end-of-turn nudge is the only channel to let the developer know one is
+    waiting. Best-effort: emits nothing on any failure (never blocks Stop).
+    Writes the additionalContext JSON to stdout (the hook's single emit).
+    """
+    if not cwd:
+        return
     try:
-        payload = json.loads(raw)
-    except json.JSONDecodeError:
-        return 0
-    if not isinstance(payload, dict):
-        return 0  # valid JSON but not an object (list/str/num)
+        from sc.hypothesis_bank import get_ready_hypothesis  # noqa: PLC0415
 
+        db = open_trust_db()
+        hypothesis = get_ready_hypothesis(
+            trust_db=db, repo_root=cwd, session_id=session_id
+        )
+        if hypothesis is None:
+            return
+        if db.session_has_confirmed_hypothesis(cwd, session_id, driver=hypothesis.driver):
+            return
+    except Exception:
+        return
+    msg = (
+        "Hedwig noticed a pattern in how you've been working and has a "
+        "suggestion ready. Run /hedwig-learn to review and confirm or decline it."
+    )
+    sys.stdout.write(json.dumps({
+        "hookSpecificOutput": {
+            "hookEventName": "Stop",
+            "additionalContext": msg,
+        },
+    }))
+
+
+def _run_verification(payload: dict) -> None:
+    """Run the configured verification command and, on failure, record a
+    negative-outcome trace (+ classifier gradient) for the auto-applied files in
+    the failing change. No stdout — pure side effects. No-op when verification
+    isn't configured. Best-effort: swallows all failures."""
     cmd = _verify_cmd()
     if not cmd:
-        return 0  # verification is opt-in; nothing to do
+        return  # verification is opt-in; nothing to do
 
     session_id = payload.get("session_id") or ""
     cwd = payload.get("cwd") or os.getcwd()
@@ -153,10 +179,10 @@ def main() -> int:
             cmd, shell=True, cwd=cwd, capture_output=True, text=True, timeout=120
         )
     except Exception:
-        return 0  # can't run verification → record nothing
+        return  # can't run verification → record nothing
 
     if result.returncode == 0:
-        return 0  # verification passed → no negative signal
+        return  # verification passed → no negative signal
 
     # Verification failed → record a negative-outcome trace, but ONLY for the
     # auto-applied files that are actually part of the failing change (R1 fix
@@ -165,16 +191,16 @@ def main() -> int:
     # the build. Scope to the working-tree diff.
     auto_applied = _auto_applied_files(session_id, cwd)
     if not auto_applied:
-        return 0
+        return
 
     changed = _changed_files(cwd)
     if changed is None:
         # Can't determine the failing change (no git / git error). Record
         # nothing rather than over-attribute — conservative by design.
-        return 0
+        return
     failed_files = [f for f in auto_applied if f in changed]
     if not failed_files:
-        return 0
+        return
 
     append_jsonl(
         "regret.jsonl",
@@ -214,6 +240,32 @@ def main() -> int:
     except Exception:
         pass
 
+
+def main() -> int:
+    # Re-exec under a deps-capable interpreter before reading stdin, so the
+    # verification-failure regret feeds the real learned classifier at the
+    # booth (update_classifier_for_regret) instead of degrading to heuristic.
+    ensure_learned_interpreter()
+
+    raw = sys.stdin.read()
+    if not raw.strip():
+        return 0
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError:
+        return 0
+    if not isinstance(payload, dict):
+        return 0  # valid JSON but not an object (list/str/num)
+
+    # Run verification first (pure side effects, no stdout), then surface a
+    # ready hypothesis if one is waiting. The notification is the hook's single
+    # stdout emit; verification only writes traces. Both are best-effort and
+    # independent — verification not being configured doesn't suppress the
+    # hypothesis nudge, and vice versa.
+    _run_verification(payload)
+    _notify_ready_hypothesis(
+        payload.get("session_id") or "", payload.get("cwd") or os.getcwd()
+    )
     return 0
 
 

@@ -51,10 +51,16 @@ are stdlib only (math, re) — `fastembed` is imported lazily inside
 _build_fastembed_fn(); when fastembed isn't installed the EmbeddingRanker
 silently degrades to KeywordRanker, exactly as the seam's fallback specifies.
 
-sc/preferences.py and sc/session_state.py are likewise NOT in the live
-closure today (the bins don't import them). When the deferred protocol work
-wires session_state into a bin, add it here — the closure-violation check
-below will demand it the moment a vendored module imports it at module scope.
+sc/preferences.py, sc/preference_inference.py, sc/hypothesis_bank.py,
+sc/repo_memory.py and sc/session.py ARE vendored (Parts B + D): the plugin's
+memory-layer hook (hedwig-context.py) and hypothesis bank (hedwig-record /
+hedwig-learn) run the rule-based generators + evidence accumulation + repo
+summary locally. None import boto/anthropic/torch at module scope — the LLM
+noticer's Bedrock client is a passed-in parameter (lazy), so the Tier-0
+zero-credential contract holds. sc/session_state.py is still NOT vendored (no
+bin imports it); add it when the deferred protocol work wires it in — the
+closure-violation check below will demand it the moment a vendored module
+imports it at module scope.
 """
 
 from __future__ import annotations
@@ -75,11 +81,15 @@ from pathlib import Path
 VENDORED_MODULES: tuple[str, ...] = (
     "__init__.py",
     "features.py",
+    "hypothesis_bank.py",
     "ml_policy.py",
     "policy.py",
+    "preference_coordinator.py",
+    "preference_inference.py",
     "preferences.py",
     "repo_memory.py",
     "retrieval.py",
+    "session.py",
     "trust_db.py",
     "store/__init__.py",
     "store/types.py",
@@ -97,8 +107,6 @@ VENDORED_MODULES: tuple[str, ...] = (
 NON_VENDORED_SC = {
     "autonomy",
     "agent_client",
-    "preference_inference",
-    "hypothesis_bank",
     "regret",
     "cochange",
     "prompt_builder",

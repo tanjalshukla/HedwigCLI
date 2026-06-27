@@ -324,6 +324,82 @@ def update_classifier_for_decision(db, repo_root: str, pi, *, approved: bool) ->
         pass
 
 
+def apply_confirmed_preferences(db, repo_root: str, decision, risk, file_path: str):
+    """Cascade layer 5: tighten (or, in the one narrow exception, loosen) the
+    scorer's decision by the developer's confirmed preferences. Returns the
+    (possibly new) PolicyDecision; returns the input decision unchanged on any
+    failure or when no preference matches.
+
+    The plugin analogue of apply_stage's PreferenceCoordinator step. Preferences
+    match primarily on risk + file_path; the plugin doesn't track the CLI's rich
+    session context, so session_summary is empty and task_intent/turn_purpose are
+    neutral — confirmed file/risk-scoped preferences still match. The safety
+    invariant lives entirely in PreferenceCoordinator._apply_forced_action
+    (tighten by default; auto_apply loosens only for developer-confirmed,
+    genuinely-low-risk actions) — we reuse it verbatim so the plugin can't drift
+    from the documented rule. Best-effort: never raises into the hook.
+    """
+    try:
+        from sc.preference_coordinator import PreferenceCoordinator  # noqa: PLC0415
+        from sc.preference_inference import summarize_session  # noqa: PLC0415
+        from sc.preferences import TaskIntent  # noqa: PLC0415
+
+        confirmed = _confirmed_preferences(db, repo_root)
+        if not confirmed:
+            return decision
+        try:
+            summary = summarize_session(db.session_traces(repo_root, "") or [])
+        except Exception:
+            summary = summarize_session([])
+        coordinator = PreferenceCoordinator(
+            confirmed_prefs=confirmed,
+            autonomy_derived_prefs=(),
+            matched_defaults=(),
+            session_summary=summary,
+            current_task_intent=TaskIntent.OTHER,
+            current_turn_purpose=None,
+            recent_verification_failures=0,
+            session_position=1.0,
+            session_id="",
+        )
+        result = coordinator.apply_to_decision(
+            decision=decision, file_path=file_path, risk=risk
+        )
+        return result.decision
+    except Exception:
+        return decision
+
+
+def _confirmed_preferences(db, repo_root: str):
+    """Decode accepted confirmed-preference rows for this repo into Preference
+    objects. Mirrors apply_stage._load_confirmed_preferences. Repo-scoped so a
+    preference confirmed in a prior session still fires. Best-effort: [] on any
+    failure."""
+    import json as _json  # noqa: PLC0415
+
+    try:
+        from sc.preferences import preference_from_dict  # noqa: PLC0415
+
+        out = []
+        for row in db.confirmed_preferences_for_repo(repo_root):
+            try:
+                payload = _json.loads(row["preference_json"])
+            except Exception:
+                continue
+            if not payload.get("accepted"):
+                continue
+            pref_dict = payload.get("preference")
+            if pref_dict is None:
+                continue
+            try:
+                out.append(preference_from_dict(pref_dict))
+            except Exception:
+                continue
+        return out
+    except Exception:
+        return []
+
+
 def data_dir() -> Path:
     """Resolve the plugin's persistent data dir.
 

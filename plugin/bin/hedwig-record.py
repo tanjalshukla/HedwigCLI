@@ -158,6 +158,56 @@ def _rel_path(cwd: str, file_path: str) -> str:
     return file_path
 
 
+def _run_hypothesis_evidence(db, repo_root: str, session_id: str) -> None:
+    """Seed rule-based hypothesis candidates and accumulate evidence.
+
+    The plugin's evidence side of the hypothesis bank, mirroring
+    apply_stage._run_hypothesis_pipeline but local-only: read this session's
+    traces back, build the SessionSummary + pushback counts the generators
+    expect, seed any candidates whose signals fit, and score the latest trace
+    against pending candidates. No Bedrock — the LLM noticer is a separate
+    opt-in path. Candidates accumulate silently; nothing surfaces or affects
+    behavior here (the /hedwig-learn command surfaces ready ones for
+    confirmation). Best-effort: any failure is swallowed so recording never
+    breaks.
+    """
+    try:
+        from sc.hypothesis_bank import (  # noqa: PLC0415
+            seed_candidates_from_session,
+            update_evidence,
+        )
+        from sc.preference_inference import (  # noqa: PLC0415
+            infer_user_persona,
+            pushback_counts_from_rows,
+            summarize_session,
+        )
+
+        rows = db.session_traces(repo_root, session_id)
+        if not rows:
+            return
+        summary = summarize_session(rows)
+        pushback_counts = pushback_counts_from_rows(rows)
+        persona = infer_user_persona(summary)
+        seed_candidates_from_session(
+            trust_db=db,
+            repo_root=repo_root,
+            session_id=session_id,
+            session_summary=summary,
+            pushback_counts=pushback_counts,
+            inferred_persona=persona,
+        )
+        # Score the most recent trace against all pending candidates.
+        last = rows[-1]
+        update_evidence(
+            trust_db=db,
+            repo_root=repo_root,
+            session_id=session_id,
+            trace=dict(last),
+        )
+    except Exception:
+        pass
+
+
 def main() -> int:
     # Re-exec under a deps-capable interpreter before reading stdin, so the
     # regret classifier update (update_classifier_for_regret) runs the real
@@ -265,6 +315,11 @@ def main() -> int:
         if verdict_row and verdict_row.get("blast_radius") is not None:
             pi = policy_input_for_decision(db, cwd, rel, verdict_row)
             update_classifier_for_decision(db, cwd, pi, approved=True)
+        # Hypothesis bank: seed rule-based candidates from this session's traces
+        # and accumulate evidence on the latest one. Pure-local (no Bedrock) —
+        # the LLM noticer is a separate opt-in path. Candidates never affect
+        # behavior until the developer confirms one via /hedwig-learn.
+        _run_hypothesis_evidence(db, cwd, session_id)
     except Exception:
         # DB write is best-effort; the JSONL trace above is the fallback.
         pass
