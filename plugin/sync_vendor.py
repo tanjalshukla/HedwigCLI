@@ -77,6 +77,8 @@ VENDORED_MODULES: tuple[str, ...] = (
     "features.py",
     "ml_policy.py",
     "policy.py",
+    "preferences.py",
+    "repo_memory.py",
     "retrieval.py",
     "trust_db.py",
     "store/__init__.py",

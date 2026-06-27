@@ -15,7 +15,6 @@ from rich.text import Text
 
 from ..commands.shared import open_trust_db, require_repo_root
 from ..preference_inference import infer_coding_mode, infer_user_persona, summarize_session
-from ..preferences import preference_from_dict
 from ..run.theme import PALETTE, panel_title
 from ..status import (
     LearnedPreference,
@@ -26,56 +25,9 @@ from ..status import (
 )
 
 
-def _humanize_preference(payload: dict, *, scope: str) -> LearnedPreference | None:
-    """Turn a persisted confirmed-preference payload into a human-readable
-    LearnedPreference. Returns None for non-accepted payloads."""
-    if not payload.get("accepted"):
-        return None
-    pref_dict = payload.get("preference")
-    driver = payload.get("driver", "")
-
-    # Humanize by driver — these are the only drivers we emit today.
-    driver_map = {
-        "scope_constraint": (
-            "I'll pause before adding test files in the same change as service code",
-            "You narrowed scope when tests were bundled with service changes.",
-        ),
-        "positive_redirect": (
-            "I'll soft-check-in on small follow-ups",
-            "You've been accepting quick small changes — I'll surface them without blocking.",
-        ),
-        "failure_reactive": (
-            "I'll check in on non-trivial changes while things are unstable",
-            "We've hit failures this session — I'm tightening oversight on larger edits until it stabilizes.",
-        ),
-        "deliberate_reviewer": (
-            "I'll use soft check-ins on small diffs, full prompts for bigger ones",
-            "You've been reviewing carefully — I'll save the full pause for changes that need your attention.",
-        ),
-        "rapid_approver": (
-            "I'll always check in on larger changes",
-            "You've been approving quickly — I'll make sure you stay in the loop on the bigger stuff.",
-        ),
-        "soft_checkin_tests": (
-            "I'll surface a brief countdown panel before writes to test files",
-            "You confirmed a soft pause for test-file changes so you stay in the loop without full interruption.",
-        ),
-    }
-    if driver in driver_map:
-        headline, basis = driver_map[driver]
-        return LearnedPreference(headline=headline, basis=basis, scope=scope)
-    # Fallback — if we can deserialize, use the driver name.
-    if pref_dict:
-        try:
-            preference_from_dict(pref_dict)
-        except Exception:
-            return None
-        return LearnedPreference(
-            headline="Adjusted check-in behavior",
-            basis=f"Confirmed via hypothesis: {driver}.",
-            scope=scope,
-        )
-    return None
+# Preference humanization now lives in sc/repo_memory.py (shared with the
+# plugin's SessionStart hook). Thin alias preserves this module's callers.
+from ..repo_memory import humanize_preference as _humanize_preference  # noqa: E402,F401
 
 
 def _count_reviewer_calls(session_rows: list[dict]) -> int:

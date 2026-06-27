@@ -6,6 +6,20 @@
           {
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/bin/hedwig-sentinel.py SessionStart"
+          },
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/bin/hedwig-context.py SessionStart"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/bin/hedwig-context.py UserPromptSubmit"
           }
         ]
       }

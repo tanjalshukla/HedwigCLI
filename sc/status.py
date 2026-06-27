@@ -20,20 +20,14 @@ sentence. Demo never breaks.
 from dataclasses import dataclass
 
 from .preference_inference import SessionSummary, infer_user_persona
+# LearnedPreference now lives in repo_memory.py (shared with the plugin).
+# Re-exported here so existing importers (commands/status, repl) are unchanged.
+from .repo_memory import LearnedPreference  # noqa: F401
 
 
 # ---------------------------------------------------------------------------
 # Structured status data — computed from traces + trust DB, no jargon.
 # ---------------------------------------------------------------------------
-
-
-@dataclass(frozen=True)
-class LearnedPreference:
-    """One learned preference, with a short why."""
-
-    headline: str       # "I'll check in before multi-file changes"
-    basis: str          # "You narrowed scope 3 times this session."
-    scope: str          # "this session" | "this repo" | "everywhere"
 
 
 @dataclass(frozen=True)

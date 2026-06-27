@@ -8,6 +8,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+from .repo_memory import synthesize_repo_summary  # noqa: F401 — re-exported for callers
 from .schema import WorkflowPhase
 from .trust_db import TrustDB
 
@@ -43,48 +44,9 @@ def _constraint_text(read_policy: str | None, write_policy: str | None) -> str:
     return f"read={read_policy}, write={write_policy}"
 
 
-def synthesize_repo_summary(
-    *,
-    trust_db: TrustDB,
-    repo_root: str,
-    logic_note_lines: list[str],
-    feedback_snippets: list[str],
-) -> str:
-    """One-paragraph "what we've learned about this repo" lead.
-
-    Pure string templating over already-retrieved data — no Bedrock call,
-    no new query path. Returns "" when there's nothing meaningful to say.
-    Surfaced at the top of the system prompt and in `/context`.
-    """
-    import json as _json
-    from .commands.status import _humanize_preference
-
-    fragments: list[str] = []
-
-    pref_rows = trust_db.confirmed_preferences_for_repo(repo_root)
-    pref_headlines: list[str] = []
-    for r in pref_rows:
-        try:
-            payload = _json.loads(r["preference_json"])
-        except Exception:
-            continue
-        learned = _humanize_preference(payload, scope="this repo")
-        if learned and learned.headline:
-            pref_headlines.append(learned.headline.rstrip("."))
-        if len(pref_headlines) >= 3:
-            break
-    if pref_headlines:
-        fragments.append("Confirmed preferences: " + "; ".join(pref_headlines) + ".")
-
-    notes = [n.strip().rstrip(".") for n in logic_note_lines if n and n.strip()][:2]
-    if notes:
-        fragments.append("Repo facts: " + "; ".join(notes) + ".")
-
-    fb = [f.strip().rstrip(".") for f in feedback_snippets if f and f.strip()][:1]
-    if fb:
-        fragments.append("Recent developer feedback: " + fb[0] + ".")
-
-    return " ".join(fragments)
+# synthesize_repo_summary now lives in sc/repo_memory.py (shared with the
+# plugin's SessionStart hook so the "what we've learned" paragraph never drifts
+# between front-ends). Imported above; re-exported for existing callers.
 
 
 def build_run_system_prompt(
