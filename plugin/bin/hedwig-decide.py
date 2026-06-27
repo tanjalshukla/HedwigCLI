@@ -217,6 +217,35 @@ def _history_from(db, repo_root: str, file_path: str) -> PolicyHistory:
         return _empty_history()
 
 
+def _constraint_decision(db, repo_root: str, rel: str) -> tuple[str, str] | None:
+    """Cascade layer 1 — hard constraints override everything.
+
+    Returns (action, reason) when a stored hard constraint matches this file,
+    else None (fall through to leases/scorer). Resolved for write access:
+      always_deny      -> ("deny", reason)     block the edit outright
+      always_check_in  -> ("check_in", reason) force the native prompt
+      always_allow     -> ("allow", reason)    auto-apply, skip scoring
+    Best-effort: any failure returns None so a DB hiccup never blocks an edit
+    (the scorer still runs). This is the first gate, before the scorer.
+    """
+    if db is None:
+        return None
+    try:
+        constraint = db.strongest_constraint(repo_root, rel, access_type="write")
+    except Exception:
+        return None
+    if constraint is None:
+        return None
+    policy = constraint.policy_for("write")
+    if policy == "always_deny":
+        return "deny", f"hard constraint: writes to {constraint.path_pattern} are always denied"
+    if policy == "always_check_in":
+        return "check_in", f"hard constraint: writes to {constraint.path_pattern} always require review"
+    if policy == "always_allow":
+        return "allow", f"hard constraint: writes to {constraint.path_pattern} are always allowed"
+    return None
+
+
 def _apply_handshake(action: str, session_id, rel: str) -> tuple[str, str]:
     """Honor an agent self-declaration for this file — TIGHTEN ONLY.
 
@@ -423,6 +452,50 @@ def main() -> int:
     # cold-start, the online log-reg PolicyClassifier takes over once it has
     # seen MIN_SAMPLES_FOR_LEARNED (10) real decisions (select_active_scorer).
     db = _open_db_safe()
+
+    # Cascade layer 1: hard constraints override everything (before the scorer).
+    # A developer-set always_deny/always_allow is non-negotiable; always_check_in
+    # forces the native prompt. Capture the Edit substitution first so a
+    # constraint deny is logged with the same shape as a scorer decision.
+    _ti = payload.get("tool_input") or {}
+    _c_edit_old = _ti.get("old_string") or "" if payload.get("tool_name") == "Edit" else ""
+    _c_edit_new = _ti.get("new_string") or "" if payload.get("tool_name") == "Edit" else ""
+    constraint = _constraint_decision(db, repo_root_str, rel)
+    if constraint is not None:
+        c_action, c_reason = constraint
+        if c_action == "allow":
+            _log_decision(
+                payload, rel, "suppressed", 0.0, risk, c_reason,
+                edit_old=_c_edit_old, edit_new=_c_edit_new, scorer="constraint",
+            )
+            _emit({
+                "hookSpecificOutput": {
+                    "hookEventName": "PreToolUse",
+                    "permissionDecision": "allow",
+                    "permissionDecisionReason": c_reason,
+                },
+            })
+            return 0
+        if c_action == "deny":
+            _log_decision(
+                payload, rel, DENIED_VERDICT, 0.0, risk, c_reason,
+                edit_old=_c_edit_old, edit_new=_c_edit_new, scorer="constraint",
+            )
+            _emit({
+                "hookSpecificOutput": {
+                    "hookEventName": "PreToolUse",
+                    "permissionDecision": "deny",
+                    "permissionDecisionReason": c_reason,
+                },
+            })
+            return 0
+        # always_check_in: surface to the native prompt, skip the scorer entirely.
+        _log_decision(
+            payload, rel, "surfaced", 0.0, risk, c_reason,
+            edit_old=_c_edit_old, edit_new=_c_edit_new, scorer="constraint",
+        )
+        return _passthrough()
+
     history = _history_from(db, repo_root_str, rel)
     classifier = load_classifier(db, repo_root_str) if db is not None else None
 
