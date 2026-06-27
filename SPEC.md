@@ -402,7 +402,7 @@ today:
 | Preference application | ✅ | ✅ | `apply_confirmed_preferences` in the decide gate (layer 5); reuses `PreferenceCoordinator` |
 | Threshold adaptation + session signals | ✅ | 🔜 | needs per-turn session-state tracking in the hooks |
 | `/rules add` NL classification + LLM hypothesis noticer | ✅ | 🔜 opt-in | a model call; opt-in when an `ANTHROPIC_API_KEY` is present |
-| Observability beyond `/hedwig-status` | ✅ | partial | `/hedwig-status` + `/hedwig-rules` + `/hedwig-learn`; richer panels TBD |
+| Observability | ✅ | mostly | `/hedwig-status`, `/hedwig-weights` (classifier drift), `/hedwig-retrospective` (regret), `/hedwig-rules`, `/hedwig-learn`; `/cochange` + HTML export still CLI-only |
 
 **Two structural platform differences** (not gaps): the plugin learns from edit
 **outcomes**, not approve/deny clicks (Claude Code owns the native prompt and

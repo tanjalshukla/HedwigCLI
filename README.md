@@ -136,7 +136,7 @@ surfaces that differ by platform (noted below):
 | Preference application (confirmed prefs tighten/loosen decisions) | ✅ | ✅ (cascade layer 5 in the decide gate) |
 | Threshold adaptation + session-signal inference | ✅ | 🔜 in progress |
 | `/rules add` natural-language rule classification | ✅ | 🔜 opt-in with an API key |
-| Full observability (`/weights`, `/prefs`, `/retrospective`, `/cochange`, HTML export) | ✅ | partial — `/hedwig-status` + `/hedwig-rules` + `/hedwig-learn` |
+| Observability (`/weights`, `/retrospective`, `/prefs`, `/cochange`, HTML export) | ✅ | `/hedwig-status` + `/hedwig-weights` (classifier drift) + `/hedwig-retrospective` (regret) + `/hedwig-rules` + `/hedwig-learn`; `/cochange` + HTML export still CLI-only |
 
 **Two honest platform differences** (not gaps — they're structural): the plugin
 learns from edit **outcomes** (reversals, verification failures), not approve/deny
