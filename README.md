@@ -156,8 +156,9 @@ sc/
   store/                  # trace, rule, lease, preference, model stores
   run/                    # REPL, apply/read cascade, UI, retrospective
 
+plugin/                   # Claude Code plugin: hooks + vendored governance core
 demo_recipe_api/          # demo fixture (recipe REST API)
-tests/                    # 329 tests, ~10s
+tests/                    # full suite — run with `make test`
 ```
 
 ## Testing
@@ -171,6 +172,6 @@ PYTHONPATH=demo_recipe_api .venv/bin/python -m pytest demo_recipe_api/tests -q
 
 ## Further reading
 
-- [`HEDWIG_END_TO_END.md`](HEDWIG_END_TO_END.md) — full architecture walkthrough with file references
-- [`CONTEXT.md`](CONTEXT.md) — domain vocabulary
-- [`SPEC.md`](SPEC.md) — runtime architecture, policy weights, data model
+- [`HEDWIG_END_TO_END.md`](HEDWIG_END_TO_END.md) — narrative walkthrough of one task + a file-by-file reading list for learning the codebase
+- [`SPEC.md`](SPEC.md) — architecture reference: domain vocabulary, cascade, policy weights, data model, design decisions, non-goals
+- [`CLAUDE.md`](CLAUDE.md) — working agreement for agents and humans (behavioral rules + invariants)

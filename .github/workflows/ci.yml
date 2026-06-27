@@ -1,0 +1,28 @@
+name: CI
+
+# The verify loop, enforced on every push and PR to main: ruff lint, the full
+# test suite, and the plugin vendor-sync check. Same `make verify` a developer
+# or agent runs locally (see CLAUDE.md §4).
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install (editable + dev deps)
+        run: make install
+
+      - name: Verify (lint + test + vendor-sync)
+        run: make verify

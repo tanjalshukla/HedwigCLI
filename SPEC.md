@@ -1,107 +1,140 @@
-# Hedwig
+# Hedwig — Specification
 
-Hedwig is a local CLI that sits between a developer and an LLM coding agent. Its job is to decide when the agent should continue independently and when it should stop for review.
+The architecture reference. **What the system is now**, its data model, its
+weight tables, and the decisions (and non-goals) behind it.
 
-The model is untrusted. It can request reads, propose plans, generate edits, and initiate architectural check-ins, but the CLI is the enforcement boundary for every read, write, and verification step.
+- New here? Start with [`README.md`](README.md) (pitch + install), then read
+  [`HEDWIG_END_TO_END.md`](HEDWIG_END_TO_END.md) for a narrative walkthrough of
+  one task through the system and a file-by-file reading list.
+- Working in the code? [`CLAUDE.md`](CLAUDE.md) has the behavioral rules and the
+  load-bearing invariants.
+- This doc is the lookup: vocabulary, cascade, weights, schema, non-goals.
 
-The system is designed for developers who already supervise and validate agent work. The goal is not zero oversight; it is lower-friction oversight that adapts to the developer's actual behavior over time.
+Hedwig is a **governance layer that wraps an LLM coding agent**. It does not
+generate code. For each agent-proposed action it decides whether to proceed
+autonomously or pause for review, and calibrates that decision from real
+interaction traces — not static configuration. The model is untrusted: it can
+request reads, propose plans, generate edits, and raise check-ins, but the CLI
+is the enforcement boundary for every read, write, and verification step.
+
+It ships in **two forms over one core** (see [Two entry points](#two-entry-points)):
+the Bedrock-backed research CLI (`hw`) and a local Claude Code plugin
+(`plugin/`).
 
 ---
 
-# Part 1: Technical Implementation
+## Domain vocabulary
 
-This document focuses on architecture, runtime behavior, data flow, and future implementation work. Installation, command-line usage, and operator steps live in `README.md` and `demo_recipe_api/DEMO_FLOW.md`.
+Use these exact terms in code, docs, and discussion — not "component,"
+"handler," "service," or "feature." Each has a precise form (for code) and a
+plain form (for reviewers / non-code audiences).
+
+| Term | Precise | Plain |
+|---|---|---|
+| **Action** | One agent-proposed operation scoped to one file — read, write, patch, verify. The unit of authority. | One thing the agent wants to do to one file. |
+| **Stage** | A phase of the workflow: `read` / `plan` / `apply` / `verify` / `report`. Each action belongs to one stage; authority is granted per stage. | Which phase of work the agent is in. |
+| **Check-in** | A pause where Hedwig asks the developer to approve, edit, or deny. Tagged with `initiator`: `model` (agent asked) or `policy` (Hedwig decided). | A pause to ask before continuing — agent raised a hand, or Hedwig did. |
+| **Hard constraint** | A deterministic rule enforced at the CLI boundary (`always_deny` / `always_check_in` / `always_allow`). Not negotiable at runtime; overrides everything. | A hard rule Hedwig always obeys. |
+| **Behavioral guideline** | A soft preference retrieved into the agent's prompt when task-relevant. Shapes behavior without blocking. | A soft hint added to the prompt when relevant. Doesn't block. |
+| **Decision trace** | An immutable per-action record in `decision_traces` (SQLite) — inputs, scorer decision, initiator, developer response, edit distance, outcome. | The log of every decision, why, and what the developer did. All learning comes from these. |
+| **PolicyScorer** | The seam (`policy.py`) that decides auto-apply / flag / check-in. Two adapters: `HeuristicScorer` (hand-weighted, carries cold-start) and `PolicyClassifier` (online logistic regression, takes over at `MIN_SAMPLES_FOR_LEARNED=10`). `select_scorer()` picks one and tags the decision. | The part that decides "auto-do it" / "ask first" / "just flag it." Rules-based until 10 real decisions, then the learned version. |
+| **RiskSignals** | Pure data object from `assess_risk()` (`features.py`). Raw signals only — no weights, no scores. Fields: `change_pattern`, `blast_radius`, `is_security_sensitive`, `is_new_file`, `diff_size`. | What we know about a change before deciding whether to ask. |
+| **Preference** | A stored signal about how the developer wants oversight to work; 5 dimensions (see [Preference taxonomy](#preference-taxonomy)). | Something we've learned about how this developer wants Hedwig to behave. |
+| **Hypothesis** | A candidate `Preference` accumulating trace-cited evidence in `hypothesis_candidates`. Surfaces for confirmation; never affects behavior until accepted. | A pattern Hedwig suspects but won't act on until it has evidence and you confirm. |
+| **Regret event** | An auto-approved action the developer later denied, corrected, or that failed verification. Detected by `regret.py`; replayed as negative classifier signal exactly once per trace. | An auto-approve that turned out wrong — used to make the next similar one more cautious. |
+
+**Verbs (use consistently):** **assess** (compute risk signals) / **score**
+(policy's numeric output) / **decide** (categorical output) / **record** (write
+a trace) / **retrieve** (pull guidelines into the prompt) / **revoke** (remove a
+preference) / **infer** (derive a session signal). Do **not** use *classify*,
+*estimate*, or *evaluate* as top-level verbs — collapsed into *assess*.
+
+---
 
 ## Architecture
 
-Check-ins come from two independent sources:
+Check-ins come from two independent sources, both logged with `check_in_initiator`:
 
-1. **CLI governance + policy engine** — evaluates constraints, leases, trace history, file-level risk signals, and session state. Decides auto-approve vs. check-in vs. deny. Runs regardless of what the model does.
-2. **Model-side reasoning** — the system prompt gives the model trust context and asks it to surface uncertainty. It should pause for architectural decisions, approach tradeoffs, and plan deviations, not for routine file access or style choices.
-
-Either side can trigger a check-in independently. Both are logged with `check_in_initiator` so we can learn which source is better calibrated over time.
+1. **CLI governance + policy engine** — evaluates constraints, leases, trace
+   history, risk signals, and session state. Decides auto-approve vs. check-in
+   vs. deny. Runs regardless of what the model does.
+2. **Model-side reasoning** — the system prompt gives the model trust context
+   and asks it to surface uncertainty (architectural decisions, approach
+   tradeoffs, plan deviations) — not routine file access or style choices.
 
 ```
-┌─────────────────────────────────────────────────────┐
-│                    Developer                         │
-│  (terminal / IDE / reviews async queue)              │
-└──────────────────────┬──────────────────────────────┘
-                       │ commands, approvals, corrections
-                       ▼
-┌─────────────────────────────────────────────────────┐
-│                  Hedwig CLI                     │
-│                                                     │
-│  ┌─────────────┐  ┌──────────────┐  ┌────────────┐ │
-│  │  Governance  │  │   Policy     │  │   Trace    │ │
-│  │  Engine      │←─│   Engine     │  │   Logger   │ │
-│  │ - validates  │  │  (check-in   │  │  (records   │ │
-│  │   diffs      │  │   vs. auto)  │  │   every    │ │
-│  │ - enforces   │  │              │  │   decision │ │
-│  │   scope      │  │ CLI-SIDE     │  │   + who    │ │
-│  │ - hash check │  │ CHECK-INS    │  │   started  │ │
-│  └─────────────┘  └──────────────┘  │   it)      │ │
-│         │              ▲            └────────────┘  │
-│         │              │ features         │          │
-│         │         ┌────┴─────────┐        │ traces   │
-│         │         │  Trust DB    │◄───────┘          │
-│         │         │  (SQLite)    │                   │
-│         │         └──────────────┘                   │
-│         ▼                                            │
-│  ┌──────────────────────────────────────────────┐   │
-│  │   Rules importer                             │   │
-│  │   (`hw rules import ...` -> constraints)     │   │
-│  └──────────────────────────────────────────────┘   │
-│  ┌──────────────────────────────────────────────┐   │
-│  │   System prompt builder                      │   │
-│  │   (injects trust context into model prompt)  │   │
-│  └──────────────────────────────────────────────┘   │
-└──────────────────────┬──────────────────────────────┘
-                       │ governed API calls + system prompt
-                       ▼
-┌─────────────────────────────────────────────────────┐
-│              LLM Agent (untrusted)                   │
-│                                                     │
-│  MODEL-SIDE CHECK-INS:                              │
-│  Pauses for: architectural decisions, approach      │
-│  tradeoffs, plan deviations, phase transitions,     │
-│  low confidence on design intent.                   │
-│                                                     │
-│  Does NOT pause for: file permissions, routine      │
-│  implementation, style choices.                     │
-│                                                     │
-│  Communicates via structured JSON protocol:         │
-│  read_request, intent_declaration, file_update,     │
-│  check_in_message, plan_revision                    │
-└─────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────┐
+│ Developer (terminal / IDE)                                 │
+└───────────────────────┬────────────────────────────────────┘
+            commands, approvals, corrections
+                        ▼
+┌──────────────────────────────────────────────────────────┐
+│ Hedwig                                                     │
+│   Governance engine ── Policy engine ── Trace logger       │
+│   (validates diffs,    (select_scorer:  (records every     │
+│    enforces scope)      heuristic vs.    decision + who     │
+│         │               classifier)      initiated it)     │
+│         │                   ▲                 │            │
+│         │              risk signals      traces│            │
+│         │              (features.py)          ▼            │
+│         │                   └──── Trust DB (SQLite) ◄──────┐│
+│         ▼                                                 ││
+│   System prompt builder (injects trust state into prompt) ││
+└───────────────────────┬────────────────────────────────────┘
+            governed API calls + system prompt
+                        ▼
+┌──────────────────────────────────────────────────────────┐
+│ LLM agent (untrusted) — structured JSON protocol:          │
+│   read_request, intent_declaration, file_update,           │
+│   check_in_message, plan_revision                          │
+└──────────────────────────────────────────────────────────┘
 ```
 
-## Runtime Flow
+### Runtime flow
 
-Every task flows through:
+1. **Intent declaration** (`run/repl.py`) — model produces a structured plan of
+   files to read and modify.
+2. **Read stage** (`run/read_stage.py`) — each read goes through the cascade;
+   approved files load into context.
+3. **Generate** (`run/model.py`) — model generates changes; can raise proactive
+   check-ins.
+4. **Apply + verify** (`run/apply_stage.py`) — each write goes through the
+   cascade; approved writes use atomic two-phase writes (temp + `os.replace`);
+   verification runs post-write.
 
-1. **Intent declaration** (`run/repl.py`) — model produces a structured plan listing files to read and modify.
-2. **Read stage** (`run/read_stage.py`) — each read request goes through the approval cascade. Approved files are loaded into context.
-3. **Generate updates** (`run/model.py`) — model generates code changes. Can initiate proactive check-ins during generation.
-4. **Apply + verify** (`run/apply_stage.py`) — each write goes through the approval cascade. Approved writes use atomic two-phase file writes (temp + `os.replace`). Verification runs post-write.
+### Approval cascade
 
-## Approval Cascade
+For every file access, evaluated in order, separately for reads and writes:
 
-For every file access, evaluated in order, and separately for reads and writes:
+1. **Hard constraints** — permanent rules, resolved per access type. Override everything.
+2. **Active leases** — temporary trust grants from prior approvals.
+3. **Adaptive policy** — `select_scorer()` picks the active `PolicyScorer`
+   adapter and scores the `RiskSignals` from `assess_risk()`.
+4. **Threshold adaptation** (`autonomy.py`) — thresholds shift from learned
+   preferences, model check-in calibration, and session intensity.
+5. **Preference override** (apply only — `run/preference_coordinator.py`) —
+   confirmed `Preference`s match per-file and **tighten** the verdict (one
+   narrow loosening exception — see [the safety invariant in CLAUDE.md](CLAUDE.md)).
 
-1. **Hard constraints** — permanent rules (`always_deny`, `always_check_in`, `always_allow`) resolved per access type. Override everything.
-2. **Active leases** — temporary trust grants from prior approvals. Resolved per access type.
-3. **Adaptive policy** — `select_scorer()` in `policy.py` picks between two adapters at the `PolicyScorer` seam: the hand-weighted `HeuristicScorer` (default, carries cold-start behavior) and the online `PolicyClassifier` (`ml_policy.py`, takes over once ≥ 10 real developer decisions are recorded). Risk signals for each action come from `assess_risk()` in `features.py`, which returns a pure `RiskSignals` data object consumed by whichever scorer is active.
-4. **Threshold adaptation** (`autonomy.py`) — thresholds shift based on learned preferences and check-in calibration.
+Steps 1–3 are shared between read and apply via
+`helpers._resolve_pre_scorer` and `_policy_decision_for_file`. The remaining
+differences are **intentional asymmetries**: apply has regret correction, the
+hypothesis pipeline, classifier updates, and atomic writes; read does not. Each
+stage's module docstring enumerates them.
 
-## Policy Engine
+---
 
-Heuristic scoring from `policy.py`. The current weights are an explicit baseline, not a claimed optimum. Lab studies are meant to produce the data needed to recalibrate or replace them.
+## Policy engine
 
-**Signals and weights (actual implementation):**
+Heuristic scoring from `policy.py`. The weights are an explicit documented
+baseline, **not a claimed optimum or a tuning target** — change one, update this
+table in the same commit.
+
+**Signals and weights:**
 
 | Category | Signal | Weight | Notes |
 |----------|--------|--------|-------|
-| History | Prior approvals (rubber-stamp-discounted) | +0.4 per | Rubber-stamps <5s count as 0.5x |
+| History | Prior approvals (rubber-stamp-discounted) | +0.4 per | Rubber-stamps <5s count 0.5× |
 | History | Prior denials | -0.7 per | |
 | History | Deliberate review pace (>15s) | +0.15 | |
 | History | High edit distance | -0.5 max | Developer heavily corrects output |
@@ -120,289 +153,374 @@ Heuristic scoring from `policy.py`. The current weights are an explicit baseline
 | Session | Recent denials | -0.7 per (max 3) | |
 | Quality | Verification failure rate >30% | -0.6 | From trace history |
 | Quality | Low model confidence (<0.40, 3+ samples) | -0.3 | From trace history |
-| Quality | Adversarial-reviewer score (advisory) | ±0.3 max | `model_risk_score` from `model_risk.assess_risk_via_model`; mapped to [-1, +1] around the 0.5 "no opinion" default and weighted 0.3. Apply-stage only. Failure default 0.5 contributes nothing. |
+| Quality | Adversarial-reviewer score (advisory) | ±0.3 max | `model_risk_score`; mapped to [-1,+1] around the 0.5 default, weighted 0.3. Apply-stage only. Failure default 0.5 contributes nothing. |
 
-**Reviewer call budget.** The adversarial-reviewer Bedrock call is gated by `model_risk.should_review(risk, history)`. The reviewer fires only if at least one of the following holds; otherwise the call is skipped entirely and `model_risk_score` stays at its 0.5 default (zero contribution to the heuristic score):
+**Reviewer call budget.** The adversarial-reviewer Bedrock call is gated by
+`model_risk.should_review(risk, history)`. It fires only if at least one holds,
+else the call is skipped and `model_risk_score` stays at 0.5 (zero contribution):
 
 1. `risk.is_new_file` — no history for the path.
-2. `risk.is_security_sensitive` — security path or content hint.
-3. `risk.blast_radius >= 4` — many dependents touched.
-4. `risk.diff_size >= 80` — large diff.
+2. `risk.is_security_sensitive`.
+3. `risk.blast_radius >= 4`.
+4. `risk.diff_size >= 80`.
 5. `risk.change_pattern in {api_change, data_model_change, config_change, dependency_update, security_change}`.
 6. `history.effective_approvals == 0 and history.denials == 0` — cold path.
 
-A per-stage cap of **5 reviewer calls per `_evaluate_apply_stage`** invocation acts as a backstop: once the budget is exhausted, remaining gated files fall back to the 0.5 default and a single dim line is rendered in the apply UI. The cap is loop-local — every task gets a fresh budget.
+A per-stage cap of **5 reviewer calls per `_evaluate_apply_stage`** is a
+backstop; once exhausted, remaining gated files fall back to 0.5 and a single
+dim line renders in the apply UI. The cap is loop-local.
 
-**Scoring band behavior (three tiers):**
+**Scoring bands:**
 
-| Score Range | Action | Developer Sees |
-|-------------|--------|----------------|
-| >= 0.9 (default) | `proceed` — auto-approve silently | Nothing at apply time; appears in session summary |
-| >= 0.2 and < 0.9 | `proceed_flag` — auto-approve, flag for review | "Apply approved. Flagged for review: [file]" |
-| < 0.2 | `check_in` — pause for developer review | Full check-in UI with policy reasons |
+| Score | Action | Developer sees |
+|-------|--------|----------------|
+| ≥ 0.9 | `proceed` — auto-approve silently | Nothing at apply time; appears in session summary |
+| ≥ 0.2 and < 0.9 | `proceed_flag` — auto-approve, flag for review | "Apply approved. Flagged for review: [file]" |
+| < 0.2 | `check_in` — pause for review | Full check-in UI with policy reasons |
 
-**Gray-area handling:** When a score lands in the `proceed_flag` band, the system auto-approves but ensures the action appears in the session summary and is tagged in traces. The developer can inspect it with `hw observe traces` and, if incorrect, use `hw observe revoke` to revoke the lease and `hw observe preferences-revoke` to undo any preference that contributed to the auto-approval. No action silently disappears — everything is logged with full policy reasons.
+No action silently disappears — everything is logged with full policy reasons.
+`proceed_flag` actions land in the session summary and traces; inspect via `hw
+observe traces`, undo via `hw observe revoke` / `preferences-revoke`. These
+numeric thresholds are implementation details: lab participants interact with
+qualitative autonomy modes and reason strings, not raw scores.
 
-These numeric thresholds remain implementation details. Lab participants should interact with qualitative autonomy modes and reason strings, not raw scores. The thresholds shift based on stored preferences (see `adjusted_policy_thresholds()` in `autonomy.py`) and are visible at any time via `hw observe preferences`.
+---
 
-## Online Learning Policy
+## Online learning policy
 
-The policy engine includes an online logistic regression classifier (`ml_policy.py`) that personalizes approval decisions to each developer's observed behavior. It runs alongside the heuristic scorer and activates once 10 real developer decisions have been recorded.
+`ml_policy.py` holds an online logistic-regression classifier (scikit-learn
+`SGDClassifier`, log loss) that personalizes approval decisions to a repo's
+observed behavior. It runs alongside the heuristic and **takes over once 10 real
+developer decisions are recorded** (`select_scorer()`'s `ready()` gate).
 
 **Feature vector (14 dimensions):**
 
 | Feature | Source | Rationale |
 |---------|--------|-----------|
-| `prior_approvals` | Trace history (per file/stage) | Files with repeated approvals warrant less interruption |
-| `prior_denials` | Trace history | Recurring denials signal persistent risk for this file |
-| `avg_response_ms` | Trace history | Slow review pace → developer took the action seriously |
-| `avg_edit_distance` | Trace history | Heavy developer corrections → output quality low |
-| `diff_size_log` | Current action | Larger diffs are riskier; log-scaled to reduce outlier dominance |
-| `blast_radius` | `features.py` | Import fan-out: how many modules depend on this file |
-| `is_new_file` | `features.py` | New files carry more uncertainty than modifications |
-| `is_security_sensitive` | `features.py` | Path/content keyword detection (auth, credentials, secrets) |
-| `files_in_action` | Current action | Multi-file writes are harder to review and revert |
-| `recent_denials` | Session state | In-session denial streak signals the agent is off-track |
-| `verification_failure_rate` | Trace history | Files with frequent test failures get tighter oversight |
-| `model_confidence_avg` | Trace history | Aggregated model self-reported confidence on this file |
-| `change_pattern_risk` | `features.py` | Semantic change class (api_change, config_change, test_generation, …) mapped to a risk scalar |
-| `model_risk_score` | `model_risk.py` | Advisory adversarial-reviewer score in [0, 1]. Apply-stage only. Defaults to 0.5 ("no opinion") on Bedrock error, JSON parse failure, schema validation failure, or timeout — failure mode never silently flips a decision. |
+| `prior_approvals` | Trace history (per file/stage) | Repeated approvals warrant less interruption |
+| `prior_denials` | Trace history | Recurring denials signal persistent risk |
+| `avg_response_ms` | Trace history | Slow review → took it seriously |
+| `avg_edit_distance` | Trace history | Heavy corrections → output quality low |
+| `diff_size_log` | Current action | Larger diffs riskier; log-scaled |
+| `blast_radius` | `features.py` | Import fan-out: dependents of this file |
+| `is_new_file` | `features.py` | New files carry more uncertainty |
+| `is_security_sensitive` | `features.py` | Path/content keyword detection |
+| `files_in_action` | Current action | Multi-file writes harder to review/revert |
+| `recent_denials` | Session state | In-session denial streak → agent off-track |
+| `verification_failure_rate` | Trace history | Frequent test failures → tighter oversight |
+| `model_confidence_avg` | Trace history | Aggregated model self-reported confidence |
+| `change_pattern_risk` | `features.py` | Semantic change class mapped to a risk scalar |
+| `model_risk_score` | `model_risk.py` | Advisory adversarial-reviewer score [0,1]. Apply-stage only. Defaults to 0.5 on any failure — never silently flips a decision. |
 
-**Cold start:** At `hw init` time, `build_cold_classifier()` creates an uninitialized `SGDClassifier` seeded with a single zero+one pair so `partial_fit` has seen both classes. No synthetic labels are generated. The `HeuristicScorer` in `policy.py` carries all cold-start behavior until real developer decisions accumulate. This makes the claim *"we learn from real traces, not fabricated priors"* defensible end-to-end — there is no synthetic data in the learning path.
+**Cold start.** `build_cold_classifier()` creates an uninitialized
+`SGDClassifier` seeded with a single zero+one pair so `partial_fit` has seen both
+classes. **No synthetic labels.** The `HeuristicScorer` carries all cold-start
+behavior until real decisions accumulate — so "we learn from real traces, not
+fabricated priors" is defensible end-to-end.
 
-**Online update rule:** After each developer decision (approve or deny at a check-in prompt, or approve-all on an auto-approved batch), the classifier receives one `partial_fit(x, y)` call. The feature vector at decision time is the same 14 features used for scoring. No batch retraining or offline collection period is required.
+**Online update.** After each developer decision (approve/deny at a check-in, or
+approve-all on an auto-approved batch), the classifier receives one
+`partial_fit(x, y)` on the same 14 features used for scoring. No batch
+retraining, no offline collection period.
 
-**Minimum sample gate:** `select_scorer()` returns the heuristic scorer until `PolicyClassifier.sample_count >= MIN_SAMPLES_FOR_LEARNED` (10). This prevents the learned scorer from acting on samples too small to generalize. The threshold is visible at any time via `hw observe weights`. Which scorer fired is recorded in `PolicyDecision.reasons` and persisted into `decision_traces` so longitudinal analysis can separate heuristic-era decisions from learned-era decisions.
+**Sample gate.** `select_scorer()` returns the heuristic until
+`sample_count >= MIN_SAMPLES_FOR_LEARNED` (10). Which scorer fired is recorded
+in `PolicyDecision.reasons` and persisted into `decision_traces`, so analysis
+can separate heuristic-era from learned-era decisions. The classifier also
+maintains an isotonic-regression calibrator that takes over after 20 real
+decisions, and a `_corrected_regret_ids` set **persisted with the pickle** so
+each regret is replayed exactly once across the repo's lifetime.
 
-**Observability:** `hw observe weights` displays a Rich table with three columns — Prior (cold-start coefficient, effectively zero), Current (learned coefficient after real decisions), Delta (signed drift) — one row per feature. Green/red coloring highlights features where the developer's behavior has meaningfully shifted the policy.
+**Observability.** `hw observe weights` (REPL: `/weights`) shows a per-feature
+table — Prior (cold-start ≈ zero) / Current (learned) / Delta (signed drift) —
+with color on features the developer's behavior meaningfully shifted.
 
-### Worked Example: Policy Update from Trace Data
+### Worked example: policy update from trace data
 
-**Scenario:** A developer is working on a Python API project. Over three sessions, the following interactions are recorded in `decision_traces`:
+Three sessions on a Python API project record:
 
-| Session | File | change_pattern | diff_size | user_decision | response_ms |
-|---------|------|----------------|-----------|---------------|-------------|
-| 1 | `api/routes.py` | `api_change` | 42 | `deny` | 18,400 |
-| 2 | `api/routes.py` | `api_change` | 31 | `deny` | 22,100 |
-| 3 | `api/routes.py` | `api_change` | 55 | `check_in → deny` | 31,200 |
+| Session | File | change_pattern | diff_size | user_decision |
+|---|---|---|---|---|
+| 1 | `api/routes.py` | `api_change` | 42 | `deny` |
+| 2 | `api/routes.py` | `api_change` | 31 | `deny` |
+| 3 | `api/routes.py` | `api_change` | 55 | `check_in → deny` |
 
-After three denials on `api/routes.py`, the `prior_denials` feature value for future scoring of that file is `min(3 / 10.0, 3.0) = 0.3`, and the classifier has received three negative labels for the feature vectors associated with those decisions.
-
-**Effect on the learned model:** The coefficient on `prior_denials` drifts more negative (strengthening its already-negative heuristic prior). The coefficient on `change_pattern_risk` for `api_change` also shifts negative, because all three training examples shared that pattern. Future `api_change` proposals on `api/routes.py` produce lower approval probabilities, increasing the likelihood of a check-in.
-
-**Contrast with a different file:** Meanwhile, `utils/helpers.py` accumulates 5 approvals across the same sessions (`change_pattern = "general_change"`, avg response 4.2s, `diff_size ≤ 20`). The `prior_approvals` feature value is `min(5 / 10.0, 3.0) = 0.5`, and the classifier has received five positive labels for low-risk feature vectors. The `prior_approvals` coefficient drifts more positive. Future writes to `utils/helpers.py` score above the 0.9 `proceed` threshold and are auto-approved silently.
-
-**What this means end-to-end:** After session 3, `hw observe weights` shows coefficients that have drifted from their cold-start zero baseline based on this developer's actual decisions — `prior_denials` and `change_pattern_risk` (for `api_change`) trending more negative, `prior_approvals` trending more positive. Because there are no synthetic priors, every bit of drift is attributable to real interaction data. The developer never tuned a weight. The policy shifted from observed behavior alone.
-
-**Conflict resolution:** When a file has a mix of approvals and denials, the logistic regression resolves the conflict by the full feature vector, not just counts. A file with 3 approvals and 2 denials at `diff_size ≈ 80` will score lower than the same approval/denial ratio at `diff_size ≈ 15` because `diff_size_log` is a strong negative contributor and those two histories represent different risk profiles. The scoping is per `(repo_root, file_path, stage)` — signals from one file do not contaminate scoring for another.
-
-## Autonomy Modes
-
-For lab studies and product UX, the user should control autonomy through one qualitative setting instead of threshold tuning:
-
-- `strict` — conservative approvals, heavier plan gating, more milestone check-ins.
-- `balanced` — default mode; risk-aware with moderate autonomy.
-- `milestone` — minimize routine interruptions, but always check in at milestone boundaries and meaningful design pivots.
-- `autonomous` — proceed aggressively on low-risk routine work; still stop on hard constraints, security, interface changes, or verification failures.
-
-Modes compile down to internal thresholds and plan-gate behavior. The numeric policy remains active, but it is not part of the normal user-facing API.
-
-**Threshold adaptation** (`autonomy.py::adjusted_policy_thresholds`):
-- User prefers fewer check-ins → thresholds drop by 0.25 (+ 0.10 if topic-scoped)
-- Model check-in approval rate <40% (5+ samples) → thresholds rise by 0.15
-- Floor clamp at -0.5 to prevent nonsensical values
-
-## Heuristic Preference Inference
-
-When the user gives feedback at any approval point, the text is parsed into structured preference data by `summarize_autonomy_feedback()`. This is an LLM-based extraction step — not model training or learned parameter updates. The resulting preference state has four fields:
-
-- `prefer_fewer_checkins` (boolean)
-- `allowed_checkin_topics` (subset of: api, signature, schema, security, architecture, config, test, deployment)
-- `skip_low_risk_plan_checkpoint` (boolean)
-- `scoped_paths` (file path patterns where preferences apply)
-
-Preferences merge additively (OR for booleans, UNION for collections) and persist in SQLite. They directly influence threshold adaptation.
-
-**Revocation path:** Because additive merges are monotonic, the system exposes `revoke_preferences()` / `trust_db.revoke_autonomy_preference()` so developers can walk back specific preferences without a full reset. The CLI surface is `hw observe preferences-revoke`. This ensures the system can tighten oversight when the developer's trust posture changes, not only loosen it. See also: `hw observe preferences-clear` to reset everything.
-
-**Important framing note:** The preference inference mechanism described here (LLM text extraction → structured preference merge → threshold shift) is distinct from the online logistic regression in `ml_policy.py`. Preference inference has no gradient updates, no learned parameters, and no training loop. The "adaptation" is: an LLM parses feedback text → extracts a structured preference object → that object is OR/UNION-merged into stored state → stored state shifts the thresholds that gate the scoring function. The weights in `policy.py` are engineering priors documented as such. The actual parameter learning — gradient updates against real developer decisions — lives in the `PolicyClassifier` in `ml_policy.py` (see "Online Learning Policy" above).
-
-## Behavioral Guidelines
-
-When the system sees repeated denial feedback on the same pattern, `guideline_candidates()` drafts a candidate guideline (for example: "Use AppError with error codes, not generic Error"). Accepted guidelines are injected into the system prompt. The CLI proposes them; the developer decides whether they become part of the working policy context.
-
-## Database Schema
-
-SQLite with 8 tables:
-
-| Table | Purpose |
-|-------|---------|
-| `leases` | Temporary write trust grants (repo_root, file_path, expires_at, source) |
-| `read_leases` | Temporary read trust grants (same structure) |
-| `decisions` | High-level approval records (task, approved, planned/touched files) |
-| `decision_traces` | Per-file decision log — 33 columns capturing every signal, decision, and outcome |
-| `plan_revisions` | Plan checkpoint history (revision rounds, developer feedback, approval) |
-| `hard_constraints` | Permanent rules (path_pattern, read_policy, write_policy, source, overridable) |
-| `behavioral_guidelines` | Learned/imported prompt directives (guideline text, source) |
-| `autonomy_preferences` | Learned check-in preferences per repo (JSON blob) |
-
-The `decision_traces` table is the primary data source for post-study analysis. It records: stage, action_type, file_path, change_type, diff_size, blast_radius, lease state, approval history, policy score + reasons, user decision, response time, rubber-stamp flag, edit distance, feedback text, verification result, model confidence, check-in initiator, participant/run/task study metadata, and autonomy mode.
-
-## External Interface
-
-The public interface is intentionally small:
-
-- `hw` — start the REPL (main governed coding loop)
-- `hw ask` — no-write question answering
-- `hw rules ...` — import and inspect constraints/guidelines
-- `hw rules add` — compile a freeform natural-language rule into either enforced constraints or prompt-level guidance
-- `hw observe ...` — traces, exports, explainability, resets
-- `hw config ...` — autonomy mode and verification setup
-
-The operator-facing details belong in `README.md`. In this spec, only the behavior of those surfaces matters:
-
-- the user selects a qualitative `autonomy_mode`
-- verification is a configured local command
-- exported study artifacts come from `observe export`
-- mutable local state can be reset between sessions/participants
-
-## Project Structure
-
-Key modules, by responsibility:
-
-- `agent_client.py` — Bedrock client + strict structured output protocol
-- `prompt_builder.py` — dynamic system prompt from trust state
-- `policy.py` / `autonomy.py` — heuristic approval scoring + autonomy adaptation
-- `plan_gate.py` / `phase.py` — milestone and phase enforcement
-- `trust_db.py` — SQLite persistence, analytics, traces, exports
-- `constraints.py` — rule import and path-policy resolution
-- `features.py` — blast radius, sensitivity, semantic change classification
-- `verification.py` — post-write checks
-- `run/` — orchestration for declare/read/check-in/apply/report
-- `commands/` — user-facing CLI surface
-- `tests/` — behavior and regression coverage for policy, DB, parsing, prompts, and run stages
-- `README.md` — installation, usage, operator workflow
-- `SPEC.md` — architecture, data model, research framing, future work
+After three denials, `prior_denials` for that file is `min(3/10, 3.0) = 0.3` and
+the classifier has three negative labels for those vectors. The `prior_denials`
+and `change_pattern_risk` (for `api_change`) coefficients drift more negative;
+future `api_change` proposals on that file score lower → more check-ins.
+Meanwhile `utils/helpers.py` accumulates 5 fast approvals
+(`general_change`, diff ≤ 20); its vectors drift `prior_approvals` positive, and
+future writes score above 0.9 and auto-apply. Per-`(repo_root, file_path,
+stage)` scoping means one file's history never contaminates another's. Every bit
+of drift traces to a real decision — the developer never tuned a weight.
 
 ---
 
-# Part 2: Research
+## Threshold adaptation and autonomy modes
 
-## Why This Matters
+`AutonomyPreferences` (`autonomy.py`) is the coarse, repo-scoped surface that
+shifts the scorer's proceed/flag thresholds **before** the score is compared
+(`adjusted_policy_thresholds`):
 
-Current tools calibrate autonomy through developer-authored static configuration — CLAUDE.md files, permission lists, rule files. These capture preferences the developer can articulate in advance, but most preferences are implicit — they emerge as correction patterns, review timing, edit distance, and phase-of-work context that no static config file can anticipate.
+- Prefers fewer check-ins → thresholds drop 0.25 (+0.10 if topic-scoped).
+- Model check-in approval rate <40% (5+ samples) → thresholds rise 0.15.
+- Floor clamp at -0.5.
 
-Recent studies suggest the main bottleneck is not raw model capability but trust infrastructure: when to let the agent continue, when to intervene, and how to turn observed behavior into future calibration. Hedwig is an attempt to make that boundary explicit and measurable.
+Qualitative modes (`strict` / `balanced` / `milestone` / `autonomous`) are
+cold-start presets that compile to these thresholds; the scorer + preferences
+then carry the load. Preference state has four legacy fields
+(`prefer_fewer_checkins`, `allowed_checkin_topics`, `skip_low_risk_plan_checkpoint`,
+`scoped_paths`), populated by `summarize_autonomy_feedback()` (an LLM text
+extraction — **not** parameter learning) and merged additively (OR/UNION).
+`revoke_preferences()` walks them back (`hw observe preferences-revoke`).
 
-## The Trace-Prompt Feedback Loop
+This is distinct from the `ml_policy.py` classifier: preference inference has no
+gradient updates, no learned parameters, no training loop. It parses feedback →
+extracts a structured object → OR/UNION-merges it → that shifts thresholds. The
+only parameter learning is in the `PolicyClassifier`.
 
-This is the core mechanism. Every developer interaction produces a trace. Traces accumulate into trust scores, correction patterns, and behavioral guidelines. These are queried at session start to build the system prompt the model receives. The model then uses that context to reason about when to check in.
+---
 
-Concretely: the developer corrects the agent's error handling in session 3. That correction is logged as a trace with `change_pattern = "error_handling"`, `user_decision = "approve"`, `user_feedback_text = "Use AppError with error codes"`. In session 4, the prompt builder does two things:
+## Preference taxonomy
 
-1. **Trust summary**: the model sees "Low-trust areas: error_handling — the developer has corrected you here before." Vague on purpose — no numeric scores, just enough for the model to reason about its own uncertainty.
-2. **Recent corrections**: the model sees the developer's own words. Specific and actionable.
+The 5-dimension `Preference` (`preferences.py`) is the richer surface, matched
+per-file per-action by `PreferenceCoordinator`. Each dimension captures
+something the legacy 4-field schema couldn't:
 
-After 3+ corrections on the same pattern, the system suggests a behavioral guideline. Once accepted, the model follows the directive instead of checking in. Correction overhead drops to zero for that pattern.
-
-Full cycle: **traces → trust scores → prompt context → model reasoning → check-in decisions → developer response → traces**.
-
-## Pair Mode UX (implemented)
-
-In pair mode, the developer sees:
-
-- a structured plan before implementation when the plan gate fires
-- policy snapshots for reads and writes
-- model-initiated architectural check-ins when the model identifies uncertainty
-- diff approval only for files that actually require review
-- a run summary with session id, change patterns, and trace/export support
-
-## Phase-Aware Behavior
-
-| Phase | Default | Learns to... |
+| Dimension | Precise | Plain |
 |---|---|---|
-| Research | Read freely, write findings to markdown | Which modules need deep vs. shallow reads |
-| Planning | Heavy check-ins, developer annotates iteratively | What the developer always overrides in plans |
-| Implementation | Minimal interruptions, execute approved plan | Which implementation patterns get corrected |
-| Review | Surface results, flag failures | Which test failures are blocking vs. ignorable |
+| **Trigger** | Predicate over `RiskSignals` + action context (AND semantics; `None` = wildcard). | What kind of action this cares about. |
+| **Condition** | Contextual predicate at decision time — session state, persona, scorer confidence. `None` = don't care. | When it should fire, based on what's happening around the action. |
+| **PreferenceAction** | Enum — `AUTO_APPLY` / `SOFT_CHECKIN` / `FULL_CHECKIN`. | What to do: just do it / quick non-blocking panel / full pause. |
+| **Scope** | `global` / `repo` / `session` / `path`. Checked outermost-first. | How widely it applies. |
+| **Lifecycle** | `provenance` (`user_explicit` / `inferred` / `default`), `confidence` (0..1), `last_reinforced_at`, `half_life_seconds`. | How we got it, how sure we are, how fast it fades. |
 
-## System Prompt
+Preferences come from: built-in defaults (e.g. `FAILURE_SIGNAL_CHECKIN`),
+developer confirmations via the hypothesis flow, and the
+`autonomy_prefs_to_preferences()` bridge from the legacy surface.
 
-Built dynamically per-session from the trust DB. The model is an active participant in oversight but doesn't get information it could exploit — no exact trust scores (could game thresholds), no list of which files will be auto-approved (prevents strategic behavior). It does know which areas it's been corrected on and what the hard constraints are.
+---
 
-The prompt includes: role framing, check-in guidance, trust summary (high/low trust areas by name, no scores), hard constraints, relevance-ranked behavioral guidelines, relevance-ranked historical corrections with developer feedback text, autonomy preferences, phase-specific guidance, session warnings.
+## Session signals (SWE-chat grounded)
 
-The current prototype already uses a lightweight local retrieval step over historical corrections and guidelines, keyed by task/spec text and simple token-overlap features. That is enough to move beyond pure recency. A future version should replace this with stronger semantic retrieval over richer task, file, and pattern context.
+Computed each turn from traces, no developer input required:
 
-## Evaluation
-
-The evaluation plan is intentionally simple:
-
-- **Primary metrics** — correct trust rate, correct caution rate, unnecessary interruption rate, and missed check-in rate.
-- **Calibration metrics** — useful vs. wasted check-ins, split by initiator (CLI vs. model), plus agreement rates between CLI, model, and developer.
-- **Learning metrics** — correction repeat rate, trust trajectory, preference carryover across sessions, and change in interruption rate after feedback.
-- **Quality metrics** — rubber-stamp rate, review duration, verification outcomes, and false-confidence indicators.
-- **Human-centered metrics** — interruption burden, check-in usefulness, developer understanding, and trust calibration are first-class outcomes alongside task completion.
-
-Planned baselines:
-- Always Ask
-- Never Ask
-- Static Rules
-- Heuristic (current implementation)
-- Future learned policy
-
-Study protocol:
-- cold start sessions
-- stable-use sessions
-- preference-shift sessions
-- post-shift adaptation sessions
-
-The key comparison is between static rules and adaptive behavior learned from traces.
-
-## Related Work
-
-- **Zhou et al. (CHI '26)** model confirmation as a minimum-time scheduling problem (dynamic programming over CDCR recovery costs + per-step agent accuracy), validated with 48 participants — 81% preferred intermediate checkpoints, 13.54% time reduction vs. confirm-at-end. Their §5.4.3 explicitly defers personalization to future work. Hedwig addresses that gap: rather than scheduling globally optimal interruptions, Hedwig learns per-repo and per-session risk tolerance from interaction traces and adapts check-in frequency to that repo's and session's history.
-- **CowCorpus** motivates the idea that interaction styles are stable enough for oversight behavior to be learned from traces. Hedwig takes the same premise but scopes adaptation to the repo and the current session — cross-session behavioral stability was low in our SWE-chat analysis (ICC 0.249) — and keeps the adaptation in a separable governance layer rather than retraining the model.
-- **Grunde-McLaughlin et al.** motivate review-quality signals: Hedwig uses assumptions in check-ins and discounts rubber-stamp approvals instead of treating every approval equally.
-- **PAHF** motivates post-action personalization. Hedwig adopts the same feedback-driven idea but keeps the memory and adaptation loop outside the model, in the local CLI.
-- **Humans are Missing from AI Coding Agent Research** strengthens the motivation for Hedwig's study design: oversight quality, steerability, verifiability, and adaptability should be evaluated on realistic human-agent workflows rather than only offline autonomous benchmarks.
-- **Appropriate reliance / scalable oversight / capability security** provide the broader framing: the goal is calibrated reliance, meaningful oversight as capability grows, and explicit scoped authority rather than broad agent trust.
-
-## Current Status
-
-### Lab-study baseline (implemented)
-
-The current prototype is in a lab-study-ready state with the following baseline:
-
-- qualitative autonomy modes (`strict`, `balanced`, `milestone`, `autonomous`)
-- hybrid milestone + heuristic check-ins
-- read/write-split hard constraints
-- plan gating, phase gating, and post-write verification
-- trace capture with participant/run/task metadata
-- export/reset commands for study operations
-- qualitative reason strings in the runtime UI
-- spec-aware planning via optional `--spec`
-
-## Gaps and backlog
-
-Moved to [`BRAINSTORM.md`](BRAINSTORM.md). SPEC.md describes what the system is now; BRAINSTORM.md tracks what it isn't yet.
-
-## Design Decisions
-
-| Decision | Current | Revisit if... |
+| Signal | Precise | Plain |
 |---|---|---|
-| Learning algorithm | Online logistic regression (SGD, log-loss, cold-start); `HeuristicScorer` adapter carries behavior until `MIN_SAMPLES_FOR_LEARNED` (10) real decisions | Enough lab data → contextual bandit (context → choose approval action → update from observed outcome) as a third adapter at the `PolicyScorer` seam |
-| Change pattern classification | Rule-based (features.py) | Rules miss too many patterns → lightweight LLM |
-| Trust decay | None implemented | Users report stale trust → add exponential decay |
-| Lease threshold | 3 consecutive approvals | Too aggressive or conservative |
-| Model trust visibility | Vague summary, no scores | Model needs more to reason well, or is gaming it |
-| Initiator weighting | Equal CLI vs. model | Data shows one source is consistently better |
-| Model confidence | Logged, not trusted | Correlates well with outcomes → make it active |
-| Cold start | Sensible defaults, no interview | Takes too many interactions → add light interview |
-| Guideline threshold | 3 corrections on same pattern | Too noisy or too conservative |
-| Guideline authorship | CLI drafts, developer confirms | Consistently accepted → reduce friction |
+| **CodingMode** | `human_only` / `collaborative` / `vibe`. Inferred from edit_distance + approval rate. | How much surviving code is the agent's. |
+| **UserPersona** | Intensity enum `active` / `delegating` / `unknown`. Inferred from turn count + tool-calls-per-turn (SWE-chat centers: 24.9 vs. 7.6 turns). Affects thresholds and hypothesis surfacing (delegating sessions never see hypothesis prompts). | How engaged the developer is. |
+| **Oversight** | User-facing label via `/oversight`: `hands-on` (→ `active`) / `balanced` (→ auto-infer) / `delegating`. Explicit overrides inference. | How much the developer wants Hedwig in their face. |
+| **PushbackType** | Per-turn: `correction` / `rejection` / `failure_report` / `non_pushback` / `scope_constraint` / `positive_redirect`. The last two added because 33% of real pushback fell outside the original 4. | What kind of response the developer gave. |
+
+**Key empirical finding:** developer style is **not** stable across a person's
+own sessions (SWE-chat ICC = 0.249). Per-developer personalization would encode
+noise — so preferences are per-session and per-repo, never per-person.
+
+---
+
+## Hypothesis bank (Trial-Error-Explain loop)
+
+`hypothesis_bank.py` accumulates candidate `Preference`s in
+`hypothesis_candidates`. Two generators feed it:
+
+- **Rule-based** (`preference_inference.py`) — pattern-matchers that emit
+  candidates every apply turn when session signals fit.
+- **LLM noticer** (`maybe_generate_llm_hypotheses`) — every
+  `LLM_GENERATION_INTERVAL` turns, sends a digest of recent traces to Bedrock for
+  novel hypotheses. Each candidate must cite real `decision_traces.id` values;
+  uncited/hallucinated cites are dropped. JSON parsing is string-aware bracket
+  balancing (`_extract_json_array`). It is **supplemental** — disabling it
+  doesn't break the loop.
+
+Each new trace scores `+1 for` / `+1 against` every pending candidate
+(`update_evidence`). Candidates surface when `evidence_for / total ≥
+SURFACE_CONFIDENCE` (0.70) over ≥ `MIN_EVIDENCE` (3) traces; pruned when ≤
+`PRUNE_THRESHOLD` (0.30). LLM candidates may mark `high_stakes` to raise their
+own bar (2× `MIN_EVIDENCE`); one citing ≥ `MIN_EVIDENCE` real trace IDs is
+promoted straight to `ready_to_surface`. **Confirmed → becomes a `Preference`
+that fires in the cascade. Declined → stays in the bank with status. Nothing
+affects behavior until the developer confirms.**
+
+---
+
+## Regret loop
+
+`regret.py::detect_regret_events` walks session traces in order: an
+auto-approved action followed by a denial, failure report, or verification
+failure becomes a `RegretEvent` (reason: `deny` / `interrupt` /
+`failure_report` / `verification_failed`). `apply_stage._apply_regret_corrections`
+replays each as `classifier.update(pi, approved=False, count_sample=False)` —
+`count_sample=False` because regret replay is a corrective gradient, not a new
+decision (must not push past `MIN_SAMPLES_FOR_LEARNED`). `_corrected_regret_ids`
+(persisted with the pickle) ensures each regret fires exactly once. Regret events
+also surface in `/retrospective` and the HTML export.
+
+Maps to the three governance layers (Sahoo 2026): **preventive** (hard
+constraints), **detective** (regret tracking), **corrective** (the
+calibration retrospective).
+
+---
+
+## Two entry points
+
+One governance core, two front-ends:
+
+| | Research CLI (`hw`) | Claude Code plugin |
+|---|---|---|
+| Lives in | `sc/`, `sc/cli.py` | `plugin/` |
+| Drives | A Claude agent end-to-end via Bedrock | Claude Code's own edits via hooks |
+| Needs cloud? | Yes — AWS SSO + Bedrock | No — fully local |
+| Governance core | `sc/` directly | vendored into `plugin/vendor/sc/` |
+| Decision point | The REPL cascade | `PreToolUse` / `PostToolUse` / `Stop` hooks |
+| Learns from | Approvals/denials at REPL prompts | Outcomes of auto-applied edits (reversal, verification failure) — Claude Code owns the native prompt, so clicks are invisible |
+
+The plugin vendors a standalone copy of the core so it installs without the
+research repo. **Regenerate it with `make sync-vendor`** (`plugin/sync_vendor.py`)
+after editing `sc/`; `make verify` checks for drift. The learned scorer needs
+`numpy` + `scikit-learn`; if the hook interpreter lacks them the plugin degrades
+cleanly to the stdlib heuristic. `plugin/bin/hedwig-setup.py` builds a dedicated
+`~/.hedwig/venv` and the hooks re-exec under it so the learned scorer always runs.
+See [`plugin/README.md`](plugin/README.md).
+
+---
+
+## Database schema
+
+SQLite (WAL mode). `decision_traces` is the primary artifact for any post-hoc
+analysis.
+
+| Table | Purpose |
+|-------|---------|
+| `leases` / `read_leases` | Temporary write/read trust grants (repo_root, file_path, expires_at, source) |
+| `decisions` | High-level approval records (task, approved, planned/touched files) |
+| `decision_traces` | Per-file decision log — every signal, decision, and outcome |
+| `plan_revisions` | Plan checkpoint history (rounds, feedback, approval) |
+| `hard_constraints` | Permanent rules (path_pattern, read/write policy, source, overridable) |
+| `behavioral_guidelines` | Prompt directives (text, source) |
+| `autonomy_preferences` | Per-repo check-in preferences (JSON blob) |
+| `hypothesis_candidates` | Pending hypotheses with evidence counts and provenance |
+| `policy_models` | The persisted per-repo `PolicyClassifier` pickle |
+
+`trust_db.py` is a thin facade over five focused mixin stores under `sc/store/`
+(`lease_store`, `rule_store`, `trace_store`, `pref_store`, `model_store`);
+`TrustDB` inherits from all five. Relatedness scoring for prompt retrieval goes
+through the `Retrieval` seam (`sc/retrieval.py`): `EmbeddingRanker` (fastembed,
+default) with `KeywordRanker` (token-overlap) as the offline fallback.
+
+---
+
+## Module map
+
+| Module | Responsibility |
+|--------|----------------|
+| `features.py` | `assess_risk` → `RiskSignals`; single source of truth for change-pattern categories |
+| `policy.py` / `ml_policy.py` | `PolicyScorer` seam: heuristic scorer + online classifier + isotonic calibration |
+| `autonomy.py` | `AutonomyPreferences` + threshold adaptation |
+| `preferences.py` | 5-dim `Preference` taxonomy + matching |
+| `preference_inference.py` | Session-signal inference + rule-based candidate generators |
+| `hypothesis_bank.py` | Evidence accumulation, LLM noticer, surfacing |
+| `regret.py` | Regret detection + correction loop |
+| `cochange.py` | Co-change graph from trace history |
+| `model_risk.py` | Adversarial reviewer + `should_review` gate |
+| `plan_gate.py` | Plan-stage authority shift before apply |
+| `constraints.py` | Rule import and path-policy resolution |
+| `retrieval.py` | `Retrieval` seam — embedding + keyword rankers |
+| `prompt_builder.py` | Dynamic system prompt from trust state |
+| `agent_client.py` / `schema.py` | Bedrock wrapper + strict structured-JSON protocol (untrusted-model boundary) |
+| `verification.py` | Post-write checks |
+| `trust_db.py` + `store/*` | SQLite persistence, analytics, traces, exports |
+| `run/` | Orchestration: REPL, read/apply cascade, UI, retrospective |
+| `commands/` | User-facing CLI surface (`observe`, `learning`, `admin`, `status`) |
+| `plugin/` | Claude Code plugin: hooks (`bin/`), vendored core (`vendor/sc/`) |
+
+For the recommended order to read these when learning the codebase, see
+[`HEDWIG_END_TO_END.md` §14](HEDWIG_END_TO_END.md).
+
+---
+
+## Design decisions
+
+| Decision | Current | Revisit if… |
+|---|---|---|
+| Learning algorithm | Online logistic regression (SGD, log-loss, cold-start); heuristic carries behavior until 10 real decisions | Enough lab data → contextual bandit as a third `PolicyScorer` adapter |
+| Change pattern classification | Rule-based (`features.py`) | Rules miss too many patterns → lightweight LLM |
+| Rule retrieval | `Retrieval` seam: embedding default, keyword fallback | — (extraction done; was parked, now shipped) |
+| Trust decay | None implemented | Users report stale trust → exponential decay |
+| Lease threshold | 3 consecutive approvals | Too aggressive/conservative |
+| Model trust visibility | Vague summary, no scores | Model needs more to reason, or is gaming it |
+| Initiator weighting | Equal CLI vs. model | Data shows one source is better calibrated |
+| Model confidence | Logged, not trusted | Correlates with outcomes → make it active |
 | Model writes own rules | Never | N/A — hard architectural constraint |
-| Rubber-stamp threshold | <5s review duration | 5s too aggressive → adjust per task complexity |
-| Approval quality discount | 0.5x rubber-stamp | Starves learning or corrupts trust |
-| Preference learning | Model-based (no regex) | Model calls too slow → add fast-path heuristics |
-| Preference accumulation | OR/UNION additive merge; revocation via `preferences-revoke` | Preferences go stale → add decay mechanism |
+| Rubber-stamp threshold | <5s review duration | 5s too aggressive |
+| Preference accumulation | OR/UNION additive merge; revocation via `preferences-revoke` | Preferences go stale → add decay |
+
+---
+
+## Deliberate non-goals
+
+Parked decisions, not oversights. Don't re-propose without strong new evidence.
+
+- **A third `PolicyScorer` adapter** (LinUCB / Thompson / RF / XGBoost). Tree
+  models don't support `partial_fit` and would re-introduce the "static,
+  retrained" shape reviewers criticized. A contextual bandit is the interesting
+  one but needs real trace bootstrap to demo well. Post-camera-ready.
+- **Per-developer (vs. per-repo) preferences.** SWE-chat ICC 0.249 says style
+  isn't stable cross-session. Reviewer 148D asked us not to *claim* this — not to
+  build it. Parked.
+- **Unifying the read and apply cascades** into one parameterized `Cascade`. The
+  shared work already lives in `helpers.py`; the remaining differences are
+  intentional asymmetries. Cost is real, win is mostly cosmetic.
+- **Any "learned" language not backed by `PolicyClassifier`** — the reviewer-148D
+  critique. Don't reintroduce it in code or docs.
+- **Further `trust_db` decomposition** — already split into five `sc/store/`
+  mixins.
+
+**Mid-leverage refactors deferred (not blockers):** factor a `PostApplyPipeline`
+out of the ~1100-line `apply_stage.py` (concentrate hypothesis + regret +
+classifier-update + trace recording behind one seam); deprecate
+`AutonomyPreferences` into `Preference` (two surfaces, one bridge function);
+tighter retrieval scoping (key on touched files, not just task prompt). A longer
+research/feature backlog (reversibility as a risk dimension, async delegation
+mode, checkpoint/rewind, git-aware risk, richer interrupt taxonomy) is tracked
+separately and is not part of what the system is today.
+
+---
+
+## Research framing
+
+**Why this matters.** Current tools calibrate autonomy through developer-authored
+static config (CLAUDE.md, permission lists). Those capture only what a developer
+can articulate in advance — but most preferences are implicit, emerging as
+correction patterns, review timing, edit distance, and phase-of-work context.
+The bottleneck isn't raw model capability; it's trust infrastructure. Hedwig
+makes that boundary explicit and measurable.
+
+**The trace-prompt feedback loop** is the core mechanism: every interaction
+produces a trace → traces accumulate into trust scores, correction patterns, and
+guidelines → those build the system prompt at session start → the model reasons
+about when to check in → the developer responds → more traces. After 3+
+corrections on the same pattern, the system suggests a behavioral guideline;
+once accepted, correction overhead for that pattern drops to zero.
+
+**O1–O5 (Bui & Evangelopoulos, 2026).** Hedwig is the first system to
+meaningfully satisfy O1+O2+O3: cost-of-interruption is computed (O1), "stay
+silent" is an explicit first-class action (O2), and per-developer feedback
+updates the policy (O3). No deployed agent they audited (Cursor, Copilot, Jules,
+Claude Code Routines) did.
+
+**Related work.** Zhou et al. (CHI '26) schedule confirmations as a minimum-time
+problem and defer personalization to future work — Hedwig fills that gap with
+per-repo/per-session adaptation. CowCorpus motivates learning oversight from
+traces. Grunde-McLaughlin et al. motivate review-quality signals (Hedwig
+discounts rubber-stamps). PAHF motivates post-action personalization kept outside
+the model.
+
+**Evaluation plan.** Primary metrics: correct-trust / correct-caution /
+unnecessary-interruption / missed-check-in rates. Plus calibration (useful vs.
+wasted check-ins by initiator), learning (correction-repeat rate, trust
+trajectory, preference carryover), and quality (rubber-stamp rate, review
+duration, verification outcomes). Baselines: Always Ask, Never Ask, Static Rules,
+Heuristic (current), Future Learned. The pilot (2 tasks, 11 ops) already shows
+Hedwig catching 4/4 cautious-developer check-ins vs. 2/4 for agent+rules and 0/4
+baseline; a larger lab study is the camera-ready follow-up.

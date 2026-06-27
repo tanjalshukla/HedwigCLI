@@ -844,8 +844,8 @@ Read these in order. Each step builds vocabulary needed for the next.
 
 ### Tier 1 — vocabulary and core data shapes
 
-1. `CONTEXT.md` — what is and isn't Hedwig's job.
-2. `CLAUDE.md` — domain vocabulary and the safety invariant.
+1. `SPEC.md` — domain vocabulary, the cascade, and what is/isn't Hedwig's job.
+2. `CLAUDE.md` — how to work here + the safety invariant.
 3. `sc/features.py` — `RiskSignals` dataclass + `assess_risk`. Single source of truth for change-pattern categories.
 4. `sc/policy.py` — `PolicyInput`, `PolicyDecision`, `PolicyScorer` protocol, `HeuristicScorer`, `select_scorer`.
 5. `sc/preferences.py` — the 5-dim `Preference` taxonomy + matching.

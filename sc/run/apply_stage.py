@@ -19,9 +19,9 @@ adds on top of that shared cascade and the read stage does not:
 * **Stricter thresholds** and the full ``PreferenceCoordinator`` override
   (defaults + autonomy-derived + confirmed prefs).
 
-Unifying the read and apply cascades into one parameterized module is
-parked post-conference (see BRAINSTORM.md): the shared work already lives
-in ``helpers``, and the differences listed above are intentional asymmetries
+Unifying the read and apply cascades into one parameterized module is a
+deliberate non-goal (see SPEC.md): the shared work already lives in
+``helpers``, and the differences listed above are intentional asymmetries
 between read-stage and apply-stage authority.
 """
 

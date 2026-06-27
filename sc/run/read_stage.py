@@ -18,9 +18,9 @@ helpers in the same order. What differs by stage and is intentional:
 * **UI surface** — read prompts are simpler (``a``/``r``/``d``) and never
   touch the apply check-in flow.
 
-Unifying the two cascades into one parameterized module is parked
-post-conference (see BRAINSTORM.md): the shared work already lives in
-``helpers``, and the remaining differences are all intentional.
+Unifying the two cascades into one parameterized module is a deliberate
+non-goal (see SPEC.md): the shared work already lives in ``helpers``, and the
+remaining differences are all intentional.
 """
 
 import time
