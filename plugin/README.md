@@ -43,9 +43,16 @@ Without this step, every hook still **degrades gracefully** to the stdlib
 heuristic — a governed edit always works on a bare interpreter; you just don't
 get the learned scorer or semantic retrieval until a capable interpreter exists.
 
-The full governance loop runs **locally, in Python, with no LLM access and no cloud** — `assess_risk`, the cascade, the SQLite trace store, the online logistic-regression classifier, and rule retrieval. No `ANTHROPIC_API_KEY`, no AWS, no Bedrock.
+The governed-edit decision path runs **locally, in Python, with no LLM access and no cloud** — `assess_risk`, the scorer cascade, the SQLite trace store, the online logistic-regression classifier, and the regret loop. No `ANTHROPIC_API_KEY`, no AWS, no Bedrock.
 
-It is **SQLite-backed and learns locally.** The heuristic scorer carries the first ~10 decisions (cold-start); the online classifier then takes over (`select_scorer()`'s `ready()` gate), exactly as in the research CLI. This uses `numpy` + `scikit-learn` (and `fastembed` for semantic rule retrieval) on the Python that runs the hooks — **no torch, no GPU, no AWS.** If any of those are missing, every hook **degrades gracefully** to the stdlib heuristic / keyword retrieval rather than crashing — a governed edit still works on a bare interpreter; you just don't get the learned scorer or semantic retrieval until the deps are present.
+It is **SQLite-backed and learns locally.** The heuristic scorer carries the first ~10 decisions (cold-start); the online classifier then takes over (`select_scorer()`'s `ready()` gate). The plugin learns from edit **outcomes** rather than approve/deny clicks — Claude Code owns the native prompt, so clicks are invisible (see "How it learns from outcomes" below; this is the one substantive difference from the research CLI, which learns from REPL approvals). This uses `numpy` + `scikit-learn` on the Python that runs the hooks — **no torch, no GPU, no AWS.** If they're missing, every hook **degrades gracefully** to the stdlib heuristic rather than crashing — a governed edit still works on a bare interpreter; you just don't get the learned scorer until the deps are present (run `hedwig-setup.py`, below).
+
+> **Scope today.** The plugin currently delivers the governed-edit decision path
+> and the outcome-based learning loop. The richer Hedwig surfaces — the repo
+> memory layer injected into the agent, the hypothesis bank, hard-constraint
+> authoring, and the full observability panels — are CLI features being wired
+> into the plugin's `SessionStart` / `UserPromptSubmit` and slash-command
+> surfaces. See the capability table in the root [`README.md`](../README.md).
 
 ## How it learns from outcomes
 

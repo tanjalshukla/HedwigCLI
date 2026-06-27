@@ -384,6 +384,29 @@ cleanly to the stdlib heuristic. `plugin/bin/hedwig-setup.py` builds a dedicated
 `~/.hedwig/venv` and the hooks re-exec under it so the learned scorer always runs.
 See [`plugin/README.md`](plugin/README.md).
 
+### Capability parity (current state)
+
+This SPEC describes the full system as realized in the **CLI**. The plugin
+shares the governance core but delivers a growing subset. The honest split
+today:
+
+| Capability | CLI | Plugin | Delivery channel in the plugin |
+|---|---|---|---|
+| Risk assessment + scorer cascade | ✅ | ✅ | `PreToolUse` decision |
+| Online classifier | ✅ | ✅ | grows from edit outcomes (needs `hedwig-setup.py`) |
+| Regret loop | ✅ | ✅ | `PostToolUse` (reversal) + `Stop` (verify-fail) |
+| Confidence handshake | ✅ | ✅ (agent opt-in) | `hedwig-declare.py` → decide honors it |
+| Memory layer (repo facts / guidelines / co-change into the model) | ✅ | 🔜 | **`SessionStart` / `UserPromptSubmit` `additionalContext`** — the plugin can inject context the model reads; this is the build path, not a dead end |
+| Hypothesis bank | ✅ | 🔜 | generate/accumulate in hooks; **confirm via a slash command** (hooks are non-interactive) |
+| Hard constraints + `/rules add` | ✅ | 🔜 | constraint API is vendored; wire into the decide gate + a `/rules` command |
+| Preference application + threshold adaptation | ✅ | 🔜 | vendor `preferences.py` / `autonomy.py`; apply in decide |
+| Observability beyond `/hedwig-status` | ✅ | 🔜 | slash commands reading the shared DB |
+
+The 🔜 rows are a **wiring effort, not a redesign**: each capability's logic
+already exists in the shared core. Two features need a model call (the LLM
+hypothesis noticer and `/rules add` classification) and become opt-in in the
+plugin when an `ANTHROPIC_API_KEY` is present — everything else stays local.
+
 ---
 
 ## Database schema

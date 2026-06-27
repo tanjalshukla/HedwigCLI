@@ -13,14 +13,15 @@ emits a hookSpecificOutput JSON object on stdout that either:
   * blocks (`permissionDecision: "deny"` with reason fed back to the
     agent) when a hard constraint matched
 
-This is the Tier-0 entry point: zero credentials required. The full
-governance loop (classifier, hypothesis bank, regret) lives in the
-existing sc/ codebase and is reachable from here without pulling
-Bedrock or boto.
-
-Day 1 scope: the heuristic scorer with no history or session-state
-plumbing. Day 2-4 layer in classifier, session signals, and
-closed-loop self-correction via additionalContext.
+This is the Tier-0 entry point: zero credentials required. What runs on
+this path today: hard-constraint-free risk assessment, the heuristic /
+learned scorer cascade, per-file history, the confidence handshake, and
+the deny gate. The hypothesis bank, the repo memory layer, hard-constraint
+enforcement, and preference application live in sc/ but are NOT yet wired
+into the plugin's hook surfaces — see the capability table in the root
+README. Wiring them is an active effort, not a Bedrock dependency: the
+memory layer lands via SessionStart / UserPromptSubmit additionalContext,
+and hypothesis confirmation via a slash command.
 """
 
 from __future__ import annotations

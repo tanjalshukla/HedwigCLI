@@ -18,6 +18,11 @@ While built for coding agents, the architecture generalizes to any agent operati
 
 ## What's novel
 
+> These contributions describe the full system as realized in the research CLI.
+> The Claude Code plugin shares the same governance core and delivers a growing
+> subset today — see [What runs where](#as-a-claude-code-plugin-no-credentials-no-cloud)
+> for the current CLI-vs-plugin breakdown.
+
 **1. Oversight that adapts from real decisions, not config.** Every approve, deny, and pushback updates an online classifier, with the developer is the labeler. The system cold-starts with defensible defaults and shifts toward what *this developer* actually accepts. Run `/weights` at any point to see exactly which signals have shifted and in which direction.
 
 **2. A memory layer that grows from both explicit input and observed behavior.** Every task rebuilds the agent's prompt from repo-scoped memory: hard rules and style guidelines the developer stated, repo facts and style patterns the LLM noticer inferred from trace history, and verbatim past corrections auto-accumulated from prior sessions. All retrieved by keyword overlap with the current task. The agent opens each session with a synthesized "What we've learned about this repo" paragraph — oriented before it writes a line. The system captures both explicit and implicit developer intent, both deterministic (hard constraints, governance preferences that fire in the cascade) and soft (behavioral guidelines, logic notes retrieved into the prompt). See the Contribution table below for the full breakdown.
@@ -98,7 +103,7 @@ There are two ways to run Hedwig.
 
 ### As a Claude Code plugin (no credentials, no cloud)
 
-The governance loop — risk assessment, the scorer cascade, the online
+The governance core — risk assessment, the scorer cascade, the online
 logistic-regression classifier, the SQLite trace store, and the regret loop —
 runs locally as a [Claude Code](https://code.claude.com) plugin. No AWS, no
 Bedrock, no API key.
@@ -113,6 +118,28 @@ auto-applied versus surfaced, and why. The learned scorer additionally uses
 `numpy` + `scikit-learn` + `fastembed`; if they aren't importable by the
 interpreter that runs the hooks, Hedwig degrades cleanly to the stdlib
 heuristic rather than failing. See [`plugin/README.md`](plugin/README.md).
+
+**What runs where (current state).** The plugin and the research CLI share one
+governance core but deliver different slices of the feature set today. The
+contributions above describe the full system as realized in the **CLI**; the
+plugin currently delivers the governed-edit decision path and is growing toward
+parity:
+
+| Capability | CLI | Plugin (today) |
+|---|---|---|
+| Risk assessment + scorer cascade (auto-apply / surface / deny) | ✅ | ✅ |
+| Online logistic-regression classifier | ✅ | ✅ (after one-time `hedwig-setup.py`; learns from edit outcomes) |
+| Regret loop (reversal / verification-failure → classifier correction) | ✅ | ✅ |
+| Confidence handshake (agent self-pause) | ✅ | ✅ (when the agent opts in) |
+| Memory layer ("what we've learned about this repo", retrieved guidelines, logic notes, co-change hints) | ✅ | 🔜 in progress (via `SessionStart` / `UserPromptSubmit` context injection) |
+| Hypothesis bank (pattern surfacing + confirmation) | ✅ | 🔜 in progress (confirmation via slash command) |
+| Hard-constraint enforcement + `/rules add` | ✅ | 🔜 in progress |
+| Preference application + threshold adaptation | ✅ | 🔜 in progress |
+| Full observability (`/weights`, `/prefs`, `/retrospective`, `/cochange`, HTML export) | ✅ | partial — `/hedwig-status` only |
+
+The 🔜 rows are an active wiring effort, not a redesign: the logic exists in the
+shared core and is being connected to the plugin's hook and slash-command
+surfaces.
 
 ### As the full research CLI (Bedrock-backed)
 
