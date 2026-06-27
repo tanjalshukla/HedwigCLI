@@ -85,13 +85,29 @@ def _changed_files(cwd: str) -> set[str] | None:
     if result.returncode != 0:
         return None
     changed: set[str] = set()
-    # -z output: each entry is "XY <path>\0" (rename adds a second \0 path).
-    for entry in result.stdout.split("\0"):
+    # -z output: each record is "XY <path>\0". A rename/copy (status R/C) adds
+    # a SECOND \0-delimited field — the source path, with NO "XY " prefix. We
+    # must consume that field, not treat it as another record: blindly slicing
+    # [3:] off the bare source path corrupts it (drops its first 3 chars) and
+    # loses the real old path. Walk the fields with an index so a rename/copy
+    # record can skip its trailing source field.
+    fields = result.stdout.split("\0")
+    i = 0
+    while i < len(fields):
+        entry = fields[i]
         if len(entry) < 4:
+            i += 1
             continue
+        status = entry[:2]
         path = entry[3:].strip()
         if path:
             changed.add(path)
+        # R (rename) / C (copy) in either column → the next field is the source
+        # path for this record; consume it so it isn't mis-parsed as a record.
+        if "R" in status or "C" in status:
+            i += 2
+        else:
+            i += 1
     return changed
 
 
@@ -122,6 +138,8 @@ def main() -> int:
         payload = json.loads(raw)
     except json.JSONDecodeError:
         return 0
+    if not isinstance(payload, dict):
+        return 0  # valid JSON but not an object (list/str/num)
 
     cmd = _verify_cmd()
     if not cmd:

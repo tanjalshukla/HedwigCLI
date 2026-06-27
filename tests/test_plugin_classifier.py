@@ -152,3 +152,56 @@ def test_load_classifier_persists_cold_model(tmp_path: Path) -> None:
     assert db.load_policy_model(repo) is None
     common.load_classifier(db, repo)
     assert db.load_policy_model(repo) is not None, "cold classifier must be persisted on first load"
+
+
+def test_positive_decision_updates_grow_sample_count_to_activation(tmp_path: Path) -> None:
+    """The capability that was broken: positive decision updates on the PLUGIN
+    path must grow sample_count so the learned scorer reaches ready(). Before
+    the fix the plugin only ever applied negative regret updates
+    (count_sample=False), so sample_count was pinned at 0 and select_active_scorer
+    returned the heuristic forever. This replays MIN_SAMPLES executed-decision
+    updates through update_classifier_for_decision (what hedwig-record now calls)
+    and asserts the scorer flips to learned."""
+    common = _load_common()
+    db = _db(common, tmp_path)
+    repo = str(tmp_path)
+    common.load_classifier(db, repo)
+
+    _, label = common.select_active_scorer(db.load_policy_model(repo))
+    assert label == "heuristic", "must start on the heuristic before any decisions"
+
+    from sc.ml_policy import MIN_SAMPLES_FOR_LEARNED
+    pi = _pi(common)
+    for _ in range(MIN_SAMPLES_FOR_LEARNED):
+        common.update_classifier_for_decision(db, repo, pi, approved=True)
+
+    learned = db.load_policy_model(repo)
+    assert learned.sample_count >= MIN_SAMPLES_FOR_LEARNED, (
+        "positive decision updates must advance sample_count on the plugin path"
+    )
+    _, label = common.select_active_scorer(learned)
+    assert label == "learned", "after MIN_SAMPLES executed decisions the learned scorer must take over"
+
+
+def test_policy_input_for_decision_reconstructs_from_logged_signals(tmp_path: Path) -> None:
+    """hedwig-decide logs the full RiskSignals with each decision; the recorder
+    rebuilds the exact PolicyInput from that row (not a re-read of the file) so
+    the positive update learns on the features the decision was scored on."""
+    common = _load_common()
+    db = _db(common, tmp_path)
+    repo = str(tmp_path)
+    common.load_classifier(db, repo)
+
+    decision_row = {
+        "change_pattern": "api_change",
+        "blast_radius": 4,
+        "is_new_file": True,
+        "is_security_sensitive": False,
+        "diff_size": 42,
+    }
+    pi = common.policy_input_for_decision(db, repo, "src/api.py", decision_row)
+    assert pi is not None
+    assert pi.change_pattern == "api_change"
+    assert pi.blast_radius == 4
+    assert pi.is_new_file is True
+    assert pi.diff_size == 42

@@ -166,9 +166,10 @@ else the call is skipped and `model_risk_score` stays at 0.5 (zero contribution)
 5. `risk.change_pattern in {api_change, data_model_change, config_change, dependency_update, security_change}`.
 6. `history.effective_approvals == 0 and history.denials == 0` — cold path.
 
-A per-stage cap of **5 reviewer calls per `_evaluate_apply_stage`** is a
-backstop; once exhausted, remaining gated files fall back to 0.5 and a single
-dim line renders in the apply UI. The cap is loop-local.
+There is deliberately **no cap** on reviewer calls: `should_review()` is the
+gate, and silently skipping a security-sensitive file because of an arbitrary
+per-turn budget would be worse than the cost of one extra Bedrock call (see the
+comment at `apply_stage.py`). The gate keeps the call count low in practice.
 
 **Scoring bands:**
 

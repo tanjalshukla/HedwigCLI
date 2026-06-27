@@ -45,6 +45,23 @@ class FeatureTests(unittest.TestCase):
             radius = estimate_blast_radius(root, "pkg/a.py")
             self.assertGreaterEqual(radius, 2)
 
+    def test_blast_radius_skips_dependency_dirs(self) -> None:
+        """The walk must prune .venv / node_modules / .git etc. — importer
+        matches inside a vendored dependency tree are not real blast radius,
+        and scanning them added seconds of latency per edit on real repos."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "pkg").mkdir()
+            (root / "pkg" / "a.py").write_text("def run():\n    return 1\n")
+            (root / "pkg" / "b.py").write_text("from pkg.a import run\n")
+            # A vendored copy that also imports pkg.a — must NOT be counted.
+            venv = root / ".venv" / "lib"
+            venv.mkdir(parents=True)
+            (venv / "shadow.py").write_text("from pkg.a import run\n")
+            radius = estimate_blast_radius(root, "pkg/a.py")
+            # Only pkg/b.py counts; the .venv match is pruned.
+            self.assertEqual(radius, 1)
+
 
 class AssessRiskTests(unittest.TestCase):
     def test_assess_risk_aggregates_all_signals(self) -> None:

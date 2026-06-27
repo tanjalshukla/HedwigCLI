@@ -488,19 +488,23 @@ def _accumulate_hypothesis_evidence(
     ).start()
 
 
-def _surface_ready_hypothesis(
+def _surface_ready_candidate(
     *,
-    ctx: _SessionContext,
     trust_db: TrustDB,
     repo_root_str: str,
     run_session_id: str,
 ) -> None:
-    """Confirmation side: surface the highest-confidence ready candidate and
-    persist the developer's accept/reject. Gated on intensity — delegating
-    sessions don't get interrupted; evidence still accumulates upstream."""
-    if ctx.effective_persona.value == "delegating":
-        return
+    """Surface the highest-confidence ready candidate and persist the
+    developer's accept/reject. Behavioral-guideline candidates are written to
+    the rule store on accept; everything else becomes a confirmed preference.
 
+    Shared by both entry points (`_surface_ready_hypothesis` during apply,
+    `_surface_ready_hypothesis_after_no_op` on no-op turns) — the ONLY
+    difference between them is the delegating gate, applied by the caller. The
+    persist-before-mark ordering here is a correctness invariant: a candidate
+    must not be marked surfaced unless its backing preference row was saved,
+    or it strands as 'confirmed' with nothing behind it and can never re-surface.
+    """
     hypothesis = get_ready_hypothesis(
         trust_db=trust_db, repo_root=repo_root_str, session_id=run_session_id
     )
@@ -519,32 +523,23 @@ def _surface_ready_hypothesis(
         _time.sleep(0.5)
     confirmation = render_hypothesis_confirmation(hypothesis)
 
-    # Route based on the type stored in preference_json.
-    # hypothesis only carries proposed_preference (a Preference object), not the raw JSON,
-    # so fetch preference_json directly from the DB to read the type field.
-    _pref_data: dict = {}
+    # Route on the `type` stored in preference_json. The Preference object the
+    # hypothesis carries doesn't include it, so read the raw JSON via the store
+    # (which owns the candidate table's shape).
+    pref_data: dict = {}
     try:
-        with trust_db._connect() as _conn:
-            _row = _conn.execute(
-                "SELECT preference_json FROM hypothesis_candidates "
-                "WHERE repo_root = ? AND driver = ? AND status = 'ready_to_surface' LIMIT 1",
-                (repo_root_str, hypothesis.driver),
-            ).fetchone()
-        if _row and _row["preference_json"]:
-            _pref_data = json.loads(_row["preference_json"])
+        raw = trust_db.ready_candidate_preference_json(repo_root_str, hypothesis.driver)
+        if raw:
+            pref_data = json.loads(raw)
     except Exception:
-        _pref_data = {}
+        pref_data = {}
 
-    candidate_type = _pref_data.get("type", "preference")
-
-    if candidate_type == "behavioral_guideline":
+    if pref_data.get("type", "preference") == "behavioral_guideline":
         if confirmation.confirmed:
-            _text = _pref_data.get("text", "").strip()
-            if _text:
+            text = pref_data.get("text", "").strip()
+            if text:
                 trust_db.add_behavioral_guidelines(
-                    repo_root_str,
-                    source="llm_inferred",
-                    guidelines=[_text],
+                    repo_root_str, source="llm_inferred", guidelines=[text]
                 )
         mark_candidate_surfaced(
             trust_db=trust_db,
@@ -564,9 +559,7 @@ def _surface_ready_hypothesis(
         if confirmation.confirmed
         else {"accepted": False, "driver": hypothesis.driver}
     )
-    # Persist preference first; only mark the candidate surfaced if the save
-    # succeeds. Otherwise the candidate would be left as 'confirmed' with no
-    # backing preference row and re-surfacing would be impossible.
+    # Persist preference first; only mark surfaced if the save succeeds.
     try:
         trust_db.save_confirmed_preference(
             repo_root=repo_root_str,
@@ -583,6 +576,24 @@ def _surface_ready_hypothesis(
         session_id=run_session_id,
         driver=hypothesis.driver,
         confirmed=confirmation.confirmed,
+    )
+
+
+def _surface_ready_hypothesis(
+    *,
+    ctx: _SessionContext,
+    trust_db: TrustDB,
+    repo_root_str: str,
+    run_session_id: str,
+) -> None:
+    """Confirmation side during apply. Gated on intensity — delegating sessions
+    don't get interrupted; evidence still accumulates upstream."""
+    if ctx.effective_persona.value == "delegating":
+        return
+    _surface_ready_candidate(
+        trust_db=trust_db,
+        repo_root_str=repo_root_str,
+        run_session_id=run_session_id,
     )
 
 
@@ -602,79 +613,10 @@ def _surface_ready_hypothesis_after_no_op(
     No delegating gate here: on no-op tasks we have no session context to
     infer intensity from, so we always surface if a candidate is ready.
     """
-    hypothesis = get_ready_hypothesis(
-        trust_db=trust_db, repo_root=repo_root_str, session_id=run_session_id
-    )
-    if hypothesis is None:
-        return
-    if trust_db.session_has_confirmed_hypothesis(
-        repo_root_str, run_session_id, driver=hypothesis.driver
-    ):
-        return
-    import sys as _sys
-    if _sys.stdin.isatty():
-        import time as _time
-        _time.sleep(0.5)
-    confirmation = render_hypothesis_confirmation(hypothesis)
-
-    _pref_data_noop: dict = {}
-    try:
-        with trust_db._connect() as _conn:
-            _row_noop = _conn.execute(
-                "SELECT preference_json FROM hypothesis_candidates "
-                "WHERE repo_root = ? AND driver = ? AND status = 'ready_to_surface' LIMIT 1",
-                (repo_root_str, hypothesis.driver),
-            ).fetchone()
-        if _row_noop and _row_noop["preference_json"]:
-            _pref_data_noop = json.loads(_row_noop["preference_json"])
-    except Exception:
-        _pref_data_noop = {}
-
-    candidate_type_noop = _pref_data_noop.get("type", "preference")
-
-    if candidate_type_noop == "behavioral_guideline":
-        if confirmation.confirmed:
-            _text_noop = _pref_data_noop.get("text", "").strip()
-            if _text_noop:
-                trust_db.add_behavioral_guidelines(
-                    repo_root_str,
-                    source="llm_inferred",
-                    guidelines=[_text_noop],
-                )
-        mark_candidate_surfaced(
-            trust_db=trust_db,
-            repo_root=repo_root_str,
-            session_id=run_session_id,
-            driver=hypothesis.driver,
-            confirmed=confirmation.confirmed,
-        )
-        return  # don't save to confirmed_preferences
-
-    payload = (
-        {
-            "accepted": True,
-            "driver": hypothesis.driver,
-            "preference": preference_to_dict(hypothesis.proposed_preference),
-        }
-        if confirmation.confirmed
-        else {"accepted": False, "driver": hypothesis.driver}
-    )
-    try:
-        trust_db.save_confirmed_preference(
-            repo_root=repo_root_str,
-            session_id=run_session_id,
-            preference_json=json.dumps(payload),
-            driver=hypothesis.driver,
-        )
-    except Exception as exc:
-        print(f"[apply] preference save failed: {exc}", file=_sys.stderr)
-        return
-    mark_candidate_surfaced(
+    _surface_ready_candidate(
         trust_db=trust_db,
-        repo_root=repo_root_str,
-        session_id=run_session_id,
-        driver=hypothesis.driver,
-        confirmed=confirmation.confirmed,
+        repo_root_str=repo_root_str,
+        run_session_id=run_session_id,
     )
 
 
@@ -811,11 +753,9 @@ def _evaluate_apply_stage(
         session_id=run_session_id,
     )
 
-    # Counter for the status display — tracks how many reviewer calls fired
-    # this turn. No cap: should_review() is the gate; silently skipping a
-    # security-sensitive file because of an arbitrary budget is worse than
-    # the cost of one extra call.
-    reviewer_calls = 0
+    # No cap on reviewer calls: should_review() is the gate; silently skipping a
+    # security-sensitive file because of an arbitrary budget is worse than the
+    # cost of one extra call.
 
     # Score each touched file independently, then aggregate to one approval decision.
     for path in touched_files:
@@ -848,7 +788,6 @@ def _evaluate_apply_stage(
                 file_context=old_content,
                 agent_client=client,
             )
-            reviewer_calls += 1
             risk = RiskSignals(
                 change_pattern=risk.change_pattern,
                 blast_radius=risk.blast_radius,
@@ -933,7 +872,6 @@ def _evaluate_apply_stage(
                     file_context=old_content_for_vote,
                     agent_client=client,
                 )
-                reviewer_calls += 1
                 if _vote is not None:
                     # Nudge score toward or away from the threshold by
                     # _BORDERLINE_MAX_SHIFT, then re-bucket. The shift is

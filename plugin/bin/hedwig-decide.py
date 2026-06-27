@@ -156,6 +156,14 @@ def _log_decision(
         "verdict": verdict,
         "score": round(float(score), 3),
         "change_pattern": risk.change_pattern,
+        # Full risk signals so the PostToolUse recorder can reconstruct the
+        # exact PolicyInput this decision scored on and replay it as a positive
+        # classifier update — the only way sample_count grows on the plugin
+        # path, so the learned scorer can actually reach ready() at the booth.
+        "blast_radius": risk.blast_radius,
+        "is_new_file": risk.is_new_file,
+        "is_security_sensitive": risk.is_security_sensitive,
+        "diff_size": risk.diff_size,
         "reason": reason,
         "scorer": scorer,
     }
@@ -389,6 +397,8 @@ def main() -> int:
         payload = json.loads(raw)
     except json.JSONDecodeError:
         return _passthrough()
+    if not isinstance(payload, dict):
+        return _passthrough()  # valid JSON but not an object (list/str/num)
 
     inputs = _payload_to_risk_inputs(payload)
     if inputs is None:

@@ -231,3 +231,27 @@ def test_edit_payload_shape_handled(tmp_path: Path, tool_name: str) -> None:
     # Either silent passthrough or a valid hookSpecificOutput; never a crash.
     if out:
         json.loads(out)
+
+
+@pytest.mark.parametrize("script", ["hedwig-decide", "hedwig-record", "hedwig-verify"])
+@pytest.mark.parametrize("raw", ["[1, 2, 3]", '"a string"', "42", "true", "null"])
+def test_non_dict_json_payload_never_crashes(tmp_path: Path, script: str, raw: str) -> None:
+    """Valid JSON that isn't an object (list / string / number / bool / null)
+    must not crash a hook with AttributeError on payload.get(...). All three
+    classifier-touching hooks guard with isinstance(payload, dict) like
+    declare.py does. Run as a real subprocess so the top-level escape path is
+    exercised — the hook must exit 0 and emit no traceback."""
+    import os
+    import subprocess
+
+    env = {**os.environ, "CLAUDE_PLUGIN_DATA": str(tmp_path / "data"),
+           "HEDWIG_NO_REEXEC": "1"}
+    # verify only reaches the payload after a verify cmd is configured.
+    if script == "hedwig-verify":
+        env["HEDWIG_VERIFY_CMD"] = "true"
+    proc = subprocess.run(
+        ["python3", str(_PLUGIN_BIN / f"{script}.py")],
+        input=raw, capture_output=True, text=True, cwd=str(tmp_path), env=env,
+    )
+    assert proc.returncode == 0, f"{script} crashed on {raw!r}: {proc.stderr}"
+    assert "Traceback" not in proc.stderr, f"{script} raised on {raw!r}: {proc.stderr}"

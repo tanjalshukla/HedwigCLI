@@ -226,6 +226,27 @@ class PrefStoreMixin:
                 (repo_root,),
             ).fetchall()
 
+    def ready_candidate_preference_json(
+        self, repo_root: str, driver: str
+    ) -> str | None:
+        """The raw preference_json for a ready-to-surface candidate, or None.
+
+        The surfacing layer needs the stored JSON (to read the `type` field —
+        preference vs. behavioral_guideline — that the Preference object doesn't
+        carry). Owning the query here keeps the candidate table's column shape
+        inside the store rather than leaking it into the run layer.
+        """
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT preference_json FROM hypothesis_candidates "
+                "WHERE repo_root = ? AND driver = ? AND status = 'ready_to_surface' "
+                "LIMIT 1",
+                (repo_root, driver),
+            ).fetchone()
+        if row and row["preference_json"]:
+            return row["preference_json"]
+        return None
+
     def update_hypothesis_evidence(
         self,
         candidate_id: int,

@@ -275,6 +275,45 @@ def test_decide_degrades_when_sklearn_unimportable(tmp_path: Path) -> None:
     assert "traceback" not in proc.stderr.lower()
 
 
+def _load_verify_module():
+    """Import plugin/bin/hedwig-verify.py as a module to test _changed_files."""
+    import importlib.util
+    path = _PLUGIN_BIN / "hedwig-verify.py"
+    spec = importlib.util.spec_from_file_location("hedwig_verify_under_test", path)
+    assert spec and spec.loader
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_changed_files_handles_git_rename(tmp_path: Path) -> None:
+    """git status --porcelain -z emits a rename as 'R  new\\0old' — two
+    \\0-delimited fields for one record. The parser must consume the source
+    field, not slice [3:] off the bare old path (which drops its first 3 chars
+    and loses the real old name). Otherwise a verification-failure regret on a
+    renamed auto-applied file is mis-attributed."""
+    verify = _load_verify_module()
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    (proj / "torename.py").write_text("x = 1\n")
+    (proj / "untouched.py").write_text("y = 2\n")
+    _git_init(proj)
+
+    # Rename via git so it shows as a staged rename (status R).
+    env = {**os.environ, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t",
+           "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}
+    subprocess.run(["git", "mv", "torename.py", "renamed.py"],
+                   cwd=str(proj), env=env, capture_output=True, check=True)
+
+    changed = verify._changed_files(str(proj))
+    assert changed is not None
+    # The new path is present and uncorrupted; no mangled 3-char-stripped entry.
+    assert "renamed.py" in changed, f"new path missing/corrupt: {changed}"
+    assert "ename.py" not in changed, f"corrupted source-path slice leaked in: {changed}"
+    # untouched.py wasn't part of the change → must not appear.
+    assert "untouched.py" not in changed
+
+
 def test_ml_policy_is_vendored() -> None:
     """S5 INVERTED the old wall: ml_policy.py (the online log-reg
     PolicyClassifier) IS the contribution and MUST ship in the default plugin.

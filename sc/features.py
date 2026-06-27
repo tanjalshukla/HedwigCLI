@@ -14,9 +14,22 @@ Key exports:
   change_type_label() — human-readable string for display
 """
 
+import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
+
+# Directories never worth scanning for import fan-out: dependency trees, VCS
+# metadata, build output, caches. On a repo with a co-located virtualenv,
+# rglob over these added seconds of latency to every governed edit (the walk
+# runs synchronously inside the PreToolUse decide hook). Pruning them keeps
+# blast-radius estimation to the project's own source.
+_BLAST_RADIUS_SKIP_DIRS = frozenset({
+    ".venv", "venv", "env", ".env",
+    "node_modules", "site-packages", ".git", ".hg", ".svn",
+    "__pycache__", ".mypy_cache", ".pytest_cache", ".ruff_cache",
+    "build", "dist", ".tox", ".eggs",
+})
 
 
 @dataclass(frozen=True)
@@ -158,14 +171,21 @@ def estimate_blast_radius(repo_root: Path, file_path: str) -> int:
 
     pattern = re.compile(rf"(from\s+[\w\.]*{re.escape(module_name)}\s+import|import\s+[\w\.,\s]*\b{re.escape(module_name)}\b)")
     count = 0
-    for candidate in repo_root.rglob("*.py"):
-        rel = str(candidate.relative_to(repo_root))
-        if rel == file_path:
-            continue
-        try:
-            text = candidate.read_text()
-        except Exception:
-            continue
-        if pattern.search(text):
-            count += 1
+    # os.walk (not rglob) so we can prune dependency/build/VCS dirs in place —
+    # rglob has no way to skip a subtree and would read every .py under .venv.
+    for dirpath, dirnames, filenames in os.walk(repo_root):
+        dirnames[:] = [d for d in dirnames if d not in _BLAST_RADIUS_SKIP_DIRS]
+        for fname in filenames:
+            if not fname.endswith(".py"):
+                continue
+            candidate = Path(dirpath) / fname
+            rel = str(candidate.relative_to(repo_root))
+            if rel == file_path:
+                continue
+            try:
+                text = candidate.read_text()
+            except Exception:
+                continue
+            if pattern.search(text):
+                count += 1
     return max(count, 1)

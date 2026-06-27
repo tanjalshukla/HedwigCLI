@@ -37,7 +37,9 @@ from _hedwig_common import (  # noqa: E402
     data_dir,
     ensure_learned_interpreter,
     open_trust_db,
+    policy_input_for_decision,
     policy_input_for_regret,
+    update_classifier_for_decision,
     update_classifier_for_regret,
 )
 
@@ -169,6 +171,8 @@ def main() -> int:
         payload = json.loads(raw)
     except json.JSONDecodeError:
         return 0
+    if not isinstance(payload, dict):
+        return 0  # valid JSON but not an object (list/str/num)
 
     tool_name = payload.get("tool_name") or ""
     if tool_name not in _GOVERNED:
@@ -250,6 +254,17 @@ def main() -> int:
             policy_score=float(score) if score is not None else 0.0,
             user_decision=user_decision,
         )
+        # Positive learning sample. An executed governed edit — auto-applied or
+        # approved at the native prompt — is positive outcome history, so replay
+        # it as classifier.update(approved=True). This is the ONLY place
+        # sample_count grows on the plugin path; without it the online scorer
+        # never reaches ready() and the learned scorer never takes over. The
+        # PolicyInput is rebuilt from the RiskSignals decide.py logged, so we
+        # learn on the exact features that decision was scored on. Skipped when
+        # decide left no risk signals (e.g. cold log row from before this fix).
+        if verdict_row and verdict_row.get("blast_radius") is not None:
+            pi = policy_input_for_decision(db, cwd, rel, verdict_row)
+            update_classifier_for_decision(db, cwd, pi, approved=True)
     except Exception:
         # DB write is best-effort; the JSONL trace above is the fallback.
         pass

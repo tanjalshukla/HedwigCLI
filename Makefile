@@ -43,16 +43,25 @@ verify: lint test vendor-check # lint + test + vendor-sync check
 sync-vendor: # regenerate plugin/vendor/sc from sc/
 	$(PY) plugin/sync_vendor.py
 
-# Regenerate into a temp check: run the sync, then fail if it changed anything
-# tracked. Keeps "edited sc/ but forgot to re-vendor" out of main.
+# Verify plugin/vendor matches what sync_vendor would produce from the current
+# sc/ — by CONTENT, not commit status. Checksum the vendor tree, regenerate,
+# checksum again: if regeneration changed any byte, the on-disk vendor was
+# stale vs. sc/ (someone edited sc/ but forgot to re-vendor). A
+# correctly-synced-but-uncommitted vendor passes; a stale one fails. Content
+# comparison, so it doesn't depend on what's committed.
+# Checksum only source files — exclude __pycache__/*.pyc, which the test suite
+# generates inside the vendor tree at import time and would otherwise look like
+# drift.
 vendor-check: # fail if plugin/vendor is out of sync with sc/
-	@$(PY) plugin/sync_vendor.py >/dev/null
-	@if ! git diff --quiet -- plugin/vendor/; then \
+	@before=$$(find plugin/vendor/sc -name '*.py' -type f -exec shasum {} \; | sort | shasum); \
+	$(PY) plugin/sync_vendor.py >/dev/null; \
+	after=$$(find plugin/vendor/sc -name '*.py' -type f -exec shasum {} \; | sort | shasum); \
+	if [ "$$before" != "$$after" ]; then \
 		echo "✗ plugin/vendor is out of sync with sc/ — run 'make sync-vendor' and commit."; \
 		git --no-pager diff --stat -- plugin/vendor/; \
 		exit 1; \
-	fi
-	@echo "✓ plugin/vendor in sync with sc/"
+	fi; \
+	echo "✓ plugin/vendor in sync with sc/"
 
 demo-test: # run the demo-fixture suite (separate PYTHONPATH)
 	PYTHONPATH=demo_recipe_api $(PY) -m pytest demo_recipe_api/tests -q

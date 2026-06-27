@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -49,12 +50,36 @@ def _interpreter_has_learned_deps() -> bool:
         return False
 
 
+def _python_can_import_deps(python_path: str) -> bool:
+    """Probe: does `python_path` actually import numpy + sklearn?
+
+    os.execv only fails if the target file is missing/non-executable — a venv
+    that exists but is broken (half-built by an interrupted setup, base
+    interpreter relocated, wrong arch after a machine migration) execs FINE and
+    then dies in the replacement process, which the parent can't trap: the
+    stdin payload is gone and the hook exits non-zero, breaking the user's edit.
+    So we must confirm the deps load BEFORE handing the process over, not just
+    that the file exists. Short timeout; any failure → not capable."""
+    try:
+        result = subprocess.run(
+            [python_path, "-c", "import numpy, sklearn"],
+            capture_output=True,
+            timeout=10,
+        )
+        return result.returncode == 0
+    except Exception:
+        return False
+
+
 def _resolve_capable_python() -> str | None:
-    """A python interpreter expected to have the learned-scorer deps, or None.
+    """A python interpreter VERIFIED to have the learned-scorer deps, or None.
 
     Order: $HEDWIG_PYTHON (explicit override), then the fixed setup venv
-    (~/.hedwig/venv) that hedwig-setup.py creates. Never returns the current
-    interpreter — that's the one we're trying to escape."""
+    (~/.hedwig/venv) that hedwig-setup.py creates. Each candidate is probed
+    (_python_can_import_deps) — existence alone is not enough, because execv
+    into a broken-but-present interpreter loses the payload and can't be
+    unwound. Never returns the current interpreter — that's the one we're
+    trying to escape."""
     candidates = []
     env_python = os.environ.get("HEDWIG_PYTHON")
     if env_python:
@@ -62,7 +87,12 @@ def _resolve_capable_python() -> str | None:
     candidates.append(str(_BOOTH_VENV))
     for cand in candidates:
         try:
-            if cand and cand != sys.executable and Path(cand).exists():
+            if (
+                cand
+                and cand != sys.executable
+                and Path(cand).exists()
+                and _python_can_import_deps(cand)
+            ):
                 return cand
         except Exception:
             continue
@@ -235,6 +265,60 @@ def update_classifier_for_regret(db, repo_root: str, pi, regret_key) -> None:
         classifier.update(pi, approved=False, count_sample=False)
         if regret_key is not None:
             classifier._corrected_regret_ids.add(regret_key)
+        db.save_policy_model(repo_root, classifier)
+    except Exception:
+        pass
+
+
+def policy_input_for_decision(db, repo_root: str, file_path: str, decision_row: dict):
+    """Reconstruct the PolicyInput a logged decision scored on, or None.
+
+    decide.py logs the full RiskSignals (change_pattern + blast_radius +
+    is_new_file + is_security_sensitive + diff_size) with each decision; pair
+    them with the file's current per-file history to rebuild the exact scorer
+    input. Used by update_classifier_for_decision to replay an executed
+    auto-apply / approve as a positive learning sample. Best-effort: None on any
+    failure (caller then skips the classifier update but keeps the trace).
+    """
+    _ensure_vendor_on_path()
+    try:
+        from sc.features import RiskSignals  # noqa: PLC0415
+        from sc.policy import PolicyInput  # noqa: PLC0415
+
+        history = db.policy_history(repo_root, file_path, stage="apply")
+        risk = RiskSignals(
+            change_pattern=str(decision_row.get("change_pattern") or "general_change"),
+            blast_radius=int(decision_row.get("blast_radius") or 1),
+            is_security_sensitive=bool(decision_row.get("is_security_sensitive")),
+            is_new_file=bool(decision_row.get("is_new_file")),
+            diff_size=int(decision_row.get("diff_size") or 0),
+        )
+        return PolicyInput.from_signals(
+            history, risk, recent_denials=0, files_in_action=1
+        )
+    except Exception:
+        return None
+
+
+def update_classifier_for_decision(db, repo_root: str, pi, *, approved: bool) -> None:
+    """Replay an executed developer decision as one positive/negative sample.
+
+    This is the plugin analogue of apply_stage._update_classifier and the ONLY
+    place sample_count grows on the plugin path — without it the online
+    classifier never reaches ready() and the learned scorer can never take over
+    (select_scorer stays on the heuristic forever). Called from the PostToolUse
+    recorder when a governed edit actually executed: a suppressed (auto-applied)
+    or surfaced-then-approved edit is positive history. count_sample defaults to
+    True so each executed decision advances toward MIN_SAMPLES_FOR_LEARNED.
+    Best-effort: never raises into the hook.
+    """
+    if pi is None:
+        return
+    try:
+        classifier = load_classifier(db, repo_root)
+        if classifier is None:
+            return
+        classifier.update(pi, approved=approved)
         db.save_policy_model(repo_root, classifier)
     except Exception:
         pass
