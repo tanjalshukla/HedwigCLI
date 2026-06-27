@@ -13,15 +13,15 @@ emits a hookSpecificOutput JSON object on stdout that either:
   * blocks (`permissionDecision: "deny"` with reason fed back to the
     agent) when a hard constraint matched
 
-This is the Tier-0 entry point: zero credentials required. What runs on
-this path today: hard-constraint-free risk assessment, the heuristic /
-learned scorer cascade, per-file history, the confidence handshake, and
-the deny gate. The hypothesis bank, the repo memory layer, hard-constraint
-enforcement, and preference application live in sc/ but are NOT yet wired
-into the plugin's hook surfaces — see the capability table in the root
-README. Wiring them is an active effort, not a Bedrock dependency: the
-memory layer lands via SessionStart / UserPromptSubmit additionalContext,
-and hypothesis confirmation via a slash command.
+This is the Tier-0 entry point: zero credentials required. The cascade run
+here, in order: (1) hard constraints (_constraint_decision — always_deny /
+always_check_in / always_allow override everything), (2) per-file history +
+the heuristic / learned scorer, (3) confirmed-preference application
+(apply_confirmed_preferences — cascade layer 5, tighten/loosen), (4) the
+confidence handshake (tighten-only), (5) the R6 deny gate. The repo memory
+layer (SessionStart / UserPromptSubmit) and the hypothesis bank's
+generate/surface/confirm loop live in the record / verify / learn hooks. See
+the capability table in the root README for the full CLI-vs-plugin split.
 """
 
 from __future__ import annotations

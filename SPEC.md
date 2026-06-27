@@ -387,7 +387,7 @@ See [`plugin/README.md`](plugin/README.md).
 ### Capability parity (current state)
 
 This SPEC describes the full system as realized in the **CLI**. The plugin
-shares the governance core but delivers a growing subset. The honest split
+shares the governance core and now delivers the headline mechanisms; the split
 today:
 
 | Capability | CLI | Plugin | Delivery channel in the plugin |
@@ -396,16 +396,19 @@ today:
 | Online classifier | ✅ | ✅ | grows from edit outcomes (needs `hedwig-setup.py`) |
 | Regret loop | ✅ | ✅ | `PostToolUse` (reversal) + `Stop` (verify-fail) |
 | Confidence handshake | ✅ | ✅ (agent opt-in) | `hedwig-declare.py` → decide honors it |
-| Memory layer (repo facts / guidelines / co-change into the model) | ✅ | 🔜 | **`SessionStart` / `UserPromptSubmit` `additionalContext`** — the plugin can inject context the model reads; this is the build path, not a dead end |
-| Hypothesis bank | ✅ | 🔜 | generate/accumulate in hooks; **confirm via a slash command** (hooks are non-interactive) |
-| Hard constraints + `/rules add` | ✅ | 🔜 | constraint API is vendored; wire into the decide gate + a `/rules` command |
-| Preference application + threshold adaptation | ✅ | 🔜 | vendor `preferences.py` / `autonomy.py`; apply in decide |
-| Observability beyond `/hedwig-status` | ✅ | 🔜 | slash commands reading the shared DB |
+| Hard constraints | ✅ | ✅ | `_constraint_decision` in the decide gate (layer 1); authored via `/hedwig-rules` |
+| Memory layer (repo facts / guidelines into the model) | ✅ | ✅ | `SessionStart` / `UserPromptSubmit` `additionalContext` (`hedwig-context.py`); reuses `repo_memory.synthesize_repo_summary` |
+| Hypothesis bank | ✅ | ✅ | generate/accumulate in `PostToolUse`; surface via `Stop` `additionalContext`; **confirm via `/hedwig-learn`** (hooks are non-interactive) |
+| Preference application | ✅ | ✅ | `apply_confirmed_preferences` in the decide gate (layer 5); reuses `PreferenceCoordinator` |
+| Threshold adaptation + session signals | ✅ | 🔜 | needs per-turn session-state tracking in the hooks |
+| `/rules add` NL classification + LLM hypothesis noticer | ✅ | 🔜 opt-in | a model call; opt-in when an `ANTHROPIC_API_KEY` is present |
+| Observability beyond `/hedwig-status` | ✅ | partial | `/hedwig-status` + `/hedwig-rules` + `/hedwig-learn`; richer panels TBD |
 
-The 🔜 rows are a **wiring effort, not a redesign**: each capability's logic
-already exists in the shared core. Two features need a model call (the LLM
-hypothesis noticer and `/rules add` classification) and become opt-in in the
-plugin when an `ANTHROPIC_API_KEY` is present — everything else stays local.
+**Two structural platform differences** (not gaps): the plugin learns from edit
+**outcomes**, not approve/deny clicks (Claude Code owns the native prompt and
+hides the click from hooks); and hypothesis **confirmation** is a slash command,
+not inline y/n (hooks are non-interactive). The remaining 🔜 rows are a wiring
+effort, not a redesign — the logic exists in the shared core.
 
 ---
 

@@ -47,12 +47,15 @@ The governed-edit decision path runs **locally, in Python, with no LLM access an
 
 It is **SQLite-backed and learns locally.** The heuristic scorer carries the first ~10 decisions (cold-start); the online classifier then takes over (`select_scorer()`'s `ready()` gate). The plugin learns from edit **outcomes** rather than approve/deny clicks — Claude Code owns the native prompt, so clicks are invisible (see "How it learns from outcomes" below; this is the one substantive difference from the research CLI, which learns from REPL approvals). This uses `numpy` + `scikit-learn` on the Python that runs the hooks — **no torch, no GPU, no AWS.** If they're missing, every hook **degrades gracefully** to the stdlib heuristic rather than crashing — a governed edit still works on a bare interpreter; you just don't get the learned scorer until the deps are present (run `hedwig-setup.py`, below).
 
-> **Scope today.** The plugin currently delivers the governed-edit decision path
-> and the outcome-based learning loop. The richer Hedwig surfaces — the repo
-> memory layer injected into the agent, the hypothesis bank, hard-constraint
-> authoring, and the full observability panels — are CLI features being wired
-> into the plugin's `SessionStart` / `UserPromptSubmit` and slash-command
-> surfaces. See the capability table in the root [`README.md`](../README.md).
+> **Scope today.** The plugin delivers the headline Hedwig mechanisms: the
+> governed-edit decision path, the outcome-based learning loop, hard-constraint
+> enforcement (`/hedwig-rules`), the repo memory layer injected into the agent
+> (`SessionStart` / `UserPromptSubmit`), the hypothesis bank with slash-command
+> confirmation (`/hedwig-learn`), and confirmed-preference application in the
+> decide gate. Threshold adaptation, NL `/rules add`, the LLM hypothesis noticer
+> (opt-in with an API key), and the richer observability panels are the
+> remaining CLI-only surfaces. See the capability table in the root
+> [`README.md`](../README.md).
 
 ## How it learns from outcomes
 

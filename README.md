@@ -120,26 +120,30 @@ interpreter that runs the hooks, Hedwig degrades cleanly to the stdlib
 heuristic rather than failing. See [`plugin/README.md`](plugin/README.md).
 
 **What runs where (current state).** The plugin and the research CLI share one
-governance core but deliver different slices of the feature set today. The
-contributions above describe the full system as realized in the **CLI**; the
-plugin currently delivers the governed-edit decision path and is growing toward
-parity:
+governance core. The contributions above describe the full system as realized in
+the **CLI**; the plugin now delivers the headline mechanisms, with a few
+surfaces that differ by platform (noted below):
 
 | Capability | CLI | Plugin (today) |
 |---|---|---|
 | Risk assessment + scorer cascade (auto-apply / surface / deny) | ✅ | ✅ |
-| Online logistic-regression classifier | ✅ | ✅ (after one-time `hedwig-setup.py`; learns from edit outcomes) |
+| Online logistic-regression classifier | ✅ | ✅ (after one-time `hedwig-setup.py`; learns from edit outcomes, not clicks) |
 | Regret loop (reversal / verification-failure → classifier correction) | ✅ | ✅ |
 | Confidence handshake (agent self-pause) | ✅ | ✅ (when the agent opts in) |
-| Memory layer ("what we've learned about this repo", retrieved guidelines, logic notes, co-change hints) | ✅ | 🔜 in progress (via `SessionStart` / `UserPromptSubmit` context injection) |
-| Hypothesis bank (pattern surfacing + confirmation) | ✅ | 🔜 in progress (confirmation via slash command) |
-| Hard-constraint enforcement + `/rules add` | ✅ | 🔜 in progress |
-| Preference application + threshold adaptation | ✅ | 🔜 in progress |
-| Full observability (`/weights`, `/prefs`, `/retrospective`, `/cochange`, HTML export) | ✅ | partial — `/hedwig-status` only |
+| Hard-constraint enforcement | ✅ | ✅ (`/hedwig-rules` to author; enforced in the decide gate) |
+| Memory layer ("what we've learned about this repo" + task-relevant guidelines) | ✅ | ✅ (injected via `SessionStart` / `UserPromptSubmit` context) |
+| Hypothesis bank (pattern surfacing + confirmation) | ✅ | ✅ (confirm via `/hedwig-learn`; rule-based generators local, LLM noticer opt-in with a key) |
+| Preference application (confirmed prefs tighten/loosen decisions) | ✅ | ✅ (cascade layer 5 in the decide gate) |
+| Threshold adaptation + session-signal inference | ✅ | 🔜 in progress |
+| `/rules add` natural-language rule classification | ✅ | 🔜 opt-in with an API key |
+| Full observability (`/weights`, `/prefs`, `/retrospective`, `/cochange`, HTML export) | ✅ | partial — `/hedwig-status` + `/hedwig-rules` + `/hedwig-learn` |
 
-The 🔜 rows are an active wiring effort, not a redesign: the logic exists in the
-shared core and is being connected to the plugin's hook and slash-command
-surfaces.
+**Two honest platform differences** (not gaps — they're structural): the plugin
+learns from edit **outcomes** (reversals, verification failures), not approve/deny
+clicks, because Claude Code owns the native permission prompt and hides the click
+from hooks. And hypothesis **confirmation** is a slash command (`/hedwig-learn`),
+not an inline y/n, because hooks are non-interactive. Same outcomes, delivered
+through the channels the platform provides.
 
 ### As the full research CLI (Bedrock-backed)
 
