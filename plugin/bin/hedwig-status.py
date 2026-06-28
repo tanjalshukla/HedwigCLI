@@ -27,8 +27,12 @@ if str(_HERE) not in sys.path:
     sys.path.insert(0, str(_HERE))
 from _hedwig_common import (  # noqa: E402
     DECISIONS_LOG,
+    DENIED_VERDICT,
+    OWL,
     data_dir,
     learned_scorer_reachable,
+    open_trust_db,
+    repo_root_key,
 )
 
 
@@ -57,12 +61,14 @@ def _load_decisions(session_id: str | None) -> list[dict]:
 def _summarize(rows: list[dict]) -> dict:
     suppressed = sum(1 for r in rows if r.get("verdict") == "suppressed")
     surfaced = sum(1 for r in rows if r.get("verdict") == "surfaced")
-    total = suppressed + surfaced
+    denied = sum(1 for r in rows if r.get("verdict") == DENIED_VERDICT)
+    total = suppressed + surfaced + denied
     rate = (suppressed / total) if total else 0.0
     return {
         "total": total,
         "suppressed": suppressed,
         "surfaced": surfaced,
+        "denied": denied,
         "suppression_rate": round(rate, 3),
     }
 
@@ -73,56 +79,112 @@ def _bar(rate: float, width: int = 20) -> str:
 
 
 def _surfaced_reasons(rows: list[dict]) -> list[str]:
-    """Most recent surfaced-edit reasons — the 'why it stopped you' lines.
-    The regret money-shot ('you reverted a similar edit') lands here."""
     out: list[str] = []
-    seen: set[str] = set()
+    seen: set[tuple[str, str]] = set()
     for r in reversed(rows):  # most recent first
         if r.get("verdict") != "surfaced":
             continue
         reason = (r.get("reason") or "").strip()
         fp = r.get("file_path") or ""
-        if not reason or fp in seen:
+        if not reason:
             continue
-        seen.add(fp)
+        key = (fp, reason)
+        if key in seen:
+            continue
+        seen.add(key)
         out.append(reason)
         if len(out) >= 4:
             break
     return out
 
 
+def _regret_count() -> int:
+    """Count regret events from regret.jsonl for this repo."""
+    repo = repo_root_key(None)
+    count = 0
+    from _hedwig_common import _iter_jsonl  # noqa: PLC0415
+    for row in _iter_jsonl("regret.jsonl"):
+        row_cwd = row.get("cwd")
+        if row_cwd and repo_root_key(row_cwd) != repo:
+            continue
+        count += 1
+    return count
+
+
+def _classifier_samples() -> int | None:
+    """Return the classifier's sample_count for this repo, or None if unavailable."""
+    if not learned_scorer_reachable():
+        return None
+    try:
+        db = open_trust_db()
+        classifier = db.load_policy_model(repo_root_key(None))
+        return classifier.sample_count if classifier is not None else None
+    except Exception:
+        return None
+
+
 def _render(summary: dict, rows: list[dict], scope: str) -> str:
     total = summary["total"]
     if total == 0:
-        return (
-            "Hedwig hasn't governed any edits yet "
-            f"({scope}). Make a few edits and run /hedwig-status again."
-        )
+        lines = [
+            OWL,
+            "",
+            "Hedwig — trust runtime",
+            "",
+            f"No edits governed yet ({scope}). Make a few edits and run /hedwig-status.",
+        ]
+        return "\n".join(lines)
 
     pct = int(round(summary["suppression_rate"] * 100))
+    denied = summary.get("denied", 0)
     lines = [
+        OWL,
+        "",
         "Hedwig — trust runtime",
         "",
         f"  Auto-applied   {summary['suppressed']:>3}   {_bar(summary['suppression_rate'])}  {pct}%",
-        f"  Surfaced       {summary['surfaced']:>3}   {' ' * 20}  for your review",
-        "",
-        f"  {summary['suppressed']} of {total} edit{'s' if total != 1 else ''} applied without a prompt {scope}; "
-        f"the {summary['surfaced']} riskier one{'s' if summary['surfaced'] != 1 else ''} surfaced for review.",
+        f"  Surfaced       {summary['surfaced']:>3}   for your review",
     ]
+    if denied:
+        lines.append(f"  Blocked        {denied:>3}   agent asked to revise")
+    lines.append("")
+    lines.append(
+        f"  {summary['suppressed']} of {total} edit{'s' if total != 1 else ''} "
+        f"auto-applied {scope}."
+    )
 
     reasons = _surfaced_reasons(rows)
     if reasons:
         lines.append("")
         lines.append("  Why it surfaced these:")
         for r in reasons:
-            lines.append(f"    • {r}")
+            lines.append(f"    · {r}")
 
-    # Nudge: if the learned classifier can't run here, every decision is
-    # heuristic-only. One command turns the learned scorer on for good.
-    if not learned_scorer_reachable():
+    regrets = _regret_count()
+    if regrets:
         lines.append("")
-        lines.append("  ⚠ Running heuristic-only — the learned classifier isn't active.")
-        lines.append("    Turn it on (one time): python3 plugin/bin/hedwig-setup.py")
+        lines.append(
+            f"  {regrets} regret event{'s' if regrets != 1 else ''} — "
+            "auto-applied edits later reverted or failing verification."
+        )
+        lines.append("  Each one tightened the next similar edit. Run /hedwig-retrospective to see them.")
+
+    samples = _classifier_samples()
+    from sc.ml_policy import MIN_SAMPLES_FOR_LEARNED  # noqa: PLC0415
+    if samples is not None:
+        if samples >= MIN_SAMPLES_FOR_LEARNED:
+            lines.append("")
+            lines.append(f"  Learned scorer active ({samples} decisions recorded).")
+        else:
+            remaining = MIN_SAMPLES_FOR_LEARNED - samples
+            lines.append("")
+            lines.append(
+                f"  Learned scorer: {samples}/{MIN_SAMPLES_FOR_LEARNED} decisions — "
+                f"{remaining} more until it takes over from the heuristic."
+            )
+    elif not learned_scorer_reachable():
+        lines.append("")
+        lines.append("  ⚠ Heuristic-only — run python3 plugin/bin/hedwig-setup.py once to enable learning.")
 
     return "\n".join(lines)
 

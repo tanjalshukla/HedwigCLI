@@ -1,8 +1,23 @@
 from __future__ import annotations
 
-# Online logistic regression policy scorer.
-# Warm-started from heuristic priors; updated via partial_fit after each
-# developer decision. Persisted per repo_root in SQLite as a pickle blob.
+"""Online logistic-regression policy scorer (the PolicyClassifier).
+
+Implements the `PolicyScorer` seam alongside `HeuristicScorer` in policy.py.
+Takes over from the heuristic once `sample_count >= MIN_SAMPLES_FOR_LEARNED`
+real developer decisions have been recorded — `select_scorer()` manages the
+handover.
+
+Design notes:
+- `SGDClassifier(loss="log_loss")` gives online `partial_fit` without batch
+  retraining; one gradient step per real decision.
+- `IsotonicRegression` calibrator refits after 20 decisions so the scorer
+  emits a well-calibrated probability (not a raw logit).
+- `_corrected_regret_ids` is persisted in the pickle so each regret event
+  corrects the classifier exactly once across the repo's lifetime.
+- The dataclass uses `# type: ignore[assignment]` for fields initialized in
+  `__post_init__` (a mypy limitation with frozen=False dataclasses); the
+  `__getstate__`/`__setstate__` pair ensures pickle round-trips correctly.
+"""
 
 import math
 import pickle

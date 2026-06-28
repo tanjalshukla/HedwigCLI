@@ -31,6 +31,7 @@ if str(_HERE) not in sys.path:
     sys.path.insert(0, str(_HERE))
 
 from _hedwig_common import (  # noqa: E402
+    OWL,
     _iter_jsonl,
     learned_scorer_reachable,
     open_trust_db,
@@ -84,6 +85,8 @@ def _cmd_weights() -> int:
 
     active = samples >= MIN_SAMPLES_FOR_LEARNED
     lines = [
+        OWL,
+        "",
         f"Hedwig — learned classifier drift ({samples} real decisions; "
         f"{'learned scorer ACTIVE' if active else f'heuristic until {MIN_SAMPLES_FOR_LEARNED}'})",
         "",
@@ -131,6 +134,8 @@ def _cmd_retrospective() -> int:
         )
         return 0
     lines = [
+        OWL,
+        "",
         f"Hedwig — retrospective: {len(events)} regret event"
         f"{'s' if len(events) != 1 else ''} (auto-applied, then corrected)",
         "",

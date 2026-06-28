@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from sc.checkin_quality import evaluate_checkin_quality
+from sc.checkin_quality import assess_checkin_quality
 from sc.schema import CheckInMessage
 
 
@@ -25,7 +25,7 @@ class CheckInQualityTests(unittest.TestCase):
             ],
             confidence=0.71,
         )
-        result = evaluate_checkin_quality(message)
+        result = assess_checkin_quality(message)
         self.assertTrue(result.valid)
 
     def test_rejects_shallow_checkin(self) -> None:
@@ -36,7 +36,7 @@ class CheckInQualityTests(unittest.TestCase):
             content="Should we do A or B?",
             options=["A"],
         )
-        result = evaluate_checkin_quality(message)
+        result = assess_checkin_quality(message)
         self.assertFalse(result.valid)
         self.assertGreaterEqual(len(result.issues), 3)
 
@@ -56,7 +56,7 @@ class CheckInQualityTests(unittest.TestCase):
             assumptions=["The current list handler should remain backward compatible."],
             confidence=0.74,
         )
-        result = evaluate_checkin_quality(message)
+        result = assess_checkin_quality(message)
         self.assertTrue(result.valid)
 
 

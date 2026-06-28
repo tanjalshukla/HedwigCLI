@@ -46,7 +46,7 @@ class CheckInQualityResult:
     issues: tuple[str, ...]
 
 
-def evaluate_checkin_quality(message: CheckInMessage) -> CheckInQualityResult:
+def assess_checkin_quality(message: CheckInMessage) -> CheckInQualityResult:
     """Validate that model-initiated check-ins are architecturally meaningful."""
     issues: list[str] = []
     reason = message.reason.strip()

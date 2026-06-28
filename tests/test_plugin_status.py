@@ -144,7 +144,7 @@ def test_status_filters_by_session(tmp_path: Path) -> None:
 def test_status_empty_is_graceful(tmp_path: Path) -> None:
     proc = _run("hedwig-status.py", data_dir=tmp_path / "nonexistent")
     assert proc.returncode == 0
-    assert "governed any edits yet" in proc.stdout
+    assert "No edits governed yet" in proc.stdout
 
 
 def test_status_dashboard_shows_surfaced_reason(tmp_path: Path) -> None:

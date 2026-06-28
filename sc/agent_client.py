@@ -12,7 +12,7 @@ from typing import Any
 
 from anthropic import AnthropicBedrock
 
-from .checkin_quality import build_checkin_repair_prompt, evaluate_checkin_quality
+from .checkin_quality import build_checkin_repair_prompt, assess_checkin_quality
 from .schema import (
     AutonomyRationale,
     CheckInMessage,
@@ -640,7 +640,7 @@ class ClaudeClient:
                 except Exception:
                     try:
                         check_in = CheckInMessage.model_validate_json(raw)
-                        quality = evaluate_checkin_quality(check_in)
+                        quality = assess_checkin_quality(check_in)
                         if quality.valid:
                             return check_in
                         if attempt == 1:
@@ -713,7 +713,7 @@ class ClaudeClient:
                     raise ValueError("Response must be a JSON object.")
                 if payload.get("type") == "check_in":
                     message = CheckInMessage.model_validate(payload)
-                    quality = evaluate_checkin_quality(message)
+                    quality = assess_checkin_quality(message)
                     if not quality.valid:
                         if attempt == 1:
                             raise ValueError(

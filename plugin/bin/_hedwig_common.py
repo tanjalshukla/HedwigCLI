@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Shared helpers for Hedwig plugin hook scripts.
 
 Kept dependency-free and tiny. Every hook script (decide, record, sentinel,
@@ -5,7 +7,8 @@ status) resolves the plugin data dir the same way and several append JSONL
 event rows — factor that here so the behavior can't drift between scripts.
 """
 
-from __future__ import annotations
+# ASCII owl — printed at the top of every user-facing command output.
+OWL = " ,___,\n (O,O)\n (   )\n-\"-\"-"
 
 import json
 import os

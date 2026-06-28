@@ -352,11 +352,10 @@ def get_ready_hypothesis(
         return None
 
     row = rows[0]
-    pref_data = {}
     try:
         pref_data = json.loads(row["preference_json"]) if row["preference_json"] else {}
     except Exception:
-        pass
+        return None
 
     candidate_type = pref_data.get("type", "preference")
 
@@ -393,6 +392,8 @@ def get_ready_hypothesis(
         ),
         proposed_preference=pref,
         driver=row["driver"],
+        evidence_for=int(row["evidence_for"]),
+        evidence_against=int(row["evidence_against"]),
     )
 
 

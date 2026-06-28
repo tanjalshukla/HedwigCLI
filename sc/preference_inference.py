@@ -437,6 +437,8 @@ class PreferenceHypothesis:
     rationale: str
     proposed_preference: Preference
     driver: str
+    evidence_for: int = 0
+    evidence_against: int = 0
 
 
 def hypothesize_from_session(

@@ -22,7 +22,11 @@ Do not change weights without updating that table.
 #   once enough real developer decisions have been observed.
 
 from dataclasses import dataclass
-from typing import Iterable, Literal, Protocol
+from typing import TYPE_CHECKING, Iterable, Literal, Protocol
+
+if TYPE_CHECKING:
+    from .features import RiskSignals
+    from .trust_db import PolicyHistory
 
 
 PolicyAction = Literal["check_in", "proceed", "proceed_flag"]
@@ -53,8 +57,8 @@ class PolicyInput:
     @classmethod
     def from_signals(
         cls,
-        history,
-        risk,
+        history: "PolicyHistory",
+        risk: "RiskSignals",
         *,
         recent_denials: int,
         files_in_action: int,
