@@ -3,11 +3,11 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Hedwig — governance layer for Claude Code</title>
-<meta name="description" content="Hedwig watches every edit Claude Code makes and decides — per file, per session — which ones need your eyes. Learns from outcomes, runs locally." />
+<title>Hedwig: governance layer for Claude Code</title>
+<meta name="description" content="Hedwig watches every edit Claude Code makes and decides, per file and per session, which ones need your eyes. Learns from outcomes, runs locally." />
 
 <meta property="og:type" content="website" />
-<meta property="og:title" content="Hedwig — governance layer for Claude Code" />
+<meta property="og:title" content="Hedwig: governance layer for Claude Code" />
 <meta property="og:description" content="Auto-applies low-risk edits. Surfaces the ones worth your review. Learns from what you revert." />
 <meta name="theme-color" content="#0a0c11" />
 
@@ -193,7 +193,7 @@
     <div class="inner">
       <span class="eyebrow">Governance layer for Claude Code</span>
       <h1>Auto-applies the safe edits. Surfaces the ones worth your review.</h1>
-      <p class="lead">Hedwig watches every edit Claude Code makes and decides — per file, per session — which ones need your eyes. Learns from what you revert.</p>
+      <p class="lead">Hedwig watches every edit Claude Code makes and decides, per file and per session, which ones need your eyes. Learns from what you revert.</p>
 
       <div class="term">
         <div class="bar">
@@ -232,7 +232,7 @@
       <ol class="steps">
         <li>
           <h3>Score the edit</h3>
-          <p>Diff size, blast radius, security sensitivity, change pattern. Deterministic — the model can't talk its way to a low score.</p>
+          <p>Diff size, blast radius, security sensitivity, change pattern. Deterministic. The model can't talk its way to a low score.</p>
         </li>
         <li>
           <h3>Apply or surface</h3>
@@ -293,7 +293,7 @@
       </div>
       <div class="cap">
         <h3>Bidirectional</h3>
-        <p>Claude can self-declare low confidence and ask to pause. Hedwig honors it — tighten only, never loosen.</p>
+        <p>Claude can self-declare low confidence and ask to pause. Hedwig honors that. Tighten only, never loosen.</p>
       </div>
       <div class="cap">
         <h3>Pattern memory</h3>
@@ -312,7 +312,7 @@
     <div class="local-inner">
       <h2>Runs on your machine.</h2>
       <p>No API key, no AWS, no Bedrock. The scorer, classifier, and trace store are local Python and SQLite. Nothing is sent anywhere.</p>
-      <p>Set <code>ANTHROPIC_API_KEY</code> to unlock semantic rule retrieval and LLM-powered pattern inference — both opt-in.</p>
+      <p>Set <code>ANTHROPIC_API_KEY</code> to unlock semantic rule retrieval and LLM-powered pattern inference. Both opt-in.</p>
     </div>
   </div>
 </div>
@@ -321,18 +321,7 @@
   <div class="wrap">
     <div class="install-wrap">
       <h2>Two commands.</h2>
-      <p class="sub">Requires Claude Code and Python 3.11+</p>
-      <div class="term">
-        <div class="bar">
-          <span class="dots"><i></i><i></i><i></i></span>
-          <span class="tab">install</span>
-          <button class="copy" data-copy="claude plugin marketplace add tanjalshukla/HedwigCLI&#10;claude plugin install hedwig@hedwig-marketplace">copy</button>
-        </div>
-        <div class="body">
-          <div class="cmd"><span class="p">$</span> claude plugin marketplace add tanjalshukla/HedwigCLI</div>
-          <div class="cmd"><span class="p">$</span> claude plugin install hedwig@hedwig-marketplace</div>
-        </div>
-      </div>
+      <p class="sub">Requires Claude Code and Python 3.11+. No API key needed.</p>
       <div class="install-cta">
         <a class="btn btn-primary" href="https://github.com/tanjalshukla/HedwigCLI">View on GitHub →</a>
         <a class="btn" href="commands.html">Docs</a>
