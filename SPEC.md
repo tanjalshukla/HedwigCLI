@@ -1,25 +1,17 @@
 # Hedwig — Specification
 
-The architecture reference. **What the system is now**, its data model, its
-weight tables, and the decisions (and non-goals) behind it.
+Architecture reference: vocabulary, cascade, policy weights, schema, design decisions, non-goals.
 
-- New here? Start with [`README.md`](README.md) (pitch + install), then read
-  [`HEDWIG_END_TO_END.md`](HEDWIG_END_TO_END.md) for a narrative walkthrough of
-  one task through the system and a file-by-file reading list.
-- Working in the code? [`CLAUDE.md`](CLAUDE.md) has the behavioral rules and the
-  load-bearing invariants.
-- This doc is the lookup: vocabulary, cascade, weights, schema, non-goals.
+- New here? Start with [`README.md`](README.md), then [`HEDWIG_END_TO_END.md`](HEDWIG_END_TO_END.md).
+- Working in the code? [`CLAUDE.md`](CLAUDE.md) has behavioral rules and load-bearing invariants.
 
-Hedwig is a **governance layer that wraps an LLM coding agent**. It does not
-generate code. For each agent-proposed action it decides whether to proceed
-autonomously or pause for review, and calibrates that decision from real
-interaction traces — not static configuration. The model is untrusted: it can
-request reads, propose plans, generate edits, and raise check-ins, but the CLI
-is the enforcement boundary for every read, write, and verification step.
+Hedwig is a **governance layer** for LLM coding agents. It does not generate code — for each
+agent-proposed file action it decides whether to proceed autonomously or pause for review,
+calibrating from real interaction traces. The model is untrusted; the CLI is the enforcement
+boundary for every read, write, and verification step.
 
-It ships in **two forms over one core** (see [Two entry points](#two-entry-points)):
-the Bedrock-backed research CLI (`hw`) and a local Claude Code plugin
-(`plugin/`).
+Ships in **two forms over one core**: the Bedrock-backed research CLI (`hw`) and a local
+Claude Code plugin (`plugin/`).
 
 ---
 
@@ -163,7 +155,7 @@ else the call is skipped and `model_risk_score` stays at 0.5 (zero contribution)
 2. `risk.is_security_sensitive`.
 3. `risk.blast_radius >= 4`.
 4. `risk.diff_size >= 80`.
-5. `risk.change_pattern in {api_change, data_model_change, config_change, dependency_update, security_change}`.
+5. `risk.change_pattern in {api_change, data_model_change, config_change, dependency_update}`.
 6. `history.effective_approvals == 0 and history.denials == 0` — cold path.
 
 There is deliberately **no cap** on reviewer calls: `should_review()` is the
@@ -481,6 +473,7 @@ For the recommended order to read these when learning the codebase, see
 | Model writes own rules | Never | N/A — hard architectural constraint |
 | Rubber-stamp threshold | <5s review duration | 5s too aggressive |
 | Preference accumulation | OR/UNION additive merge; revocation via `preferences-revoke` | Preferences go stale → add decay |
+| Deployment form | Local plugin + research CLI — trust state stays on the developer's machine, nothing leaves the repo | Team-level governance needed → service tier: cross-repo analytics, team drift ("whole team approves API changes 80% of the time"), SDK extraction. Acquisition thesis also shifts: plugin = "Omnigent acquires the learned policy module"; service = "Anthropic acquires the trust infrastructure layer." Service requires auth, data residency, multi-tenant isolation, and the privacy pitch inverts. Transition is clean — `TrustDB` is already a facade, the cascade is stateless per-decision, vendor pattern enables SDK extraction. |
 
 ---
 
@@ -503,51 +496,36 @@ Parked decisions, not oversights. Don't re-propose without strong new evidence.
 - **Further `trust_db` decomposition** — already split into five `sc/store/`
   mixins.
 
-**Mid-leverage refactors deferred (not blockers):** factor a `PostApplyPipeline`
-out of the ~1100-line `apply_stage.py` (concentrate hypothesis + regret +
-classifier-update + trace recording behind one seam); deprecate
-`AutonomyPreferences` into `Preference` (two surfaces, one bridge function);
-tighter retrieval scoping (key on touched files, not just task prompt). A longer
-research/feature backlog (reversibility as a risk dimension, async delegation
-mode, checkpoint/rewind, git-aware risk, richer interrupt taxonomy) is tracked
-separately and is not part of what the system is today.
+**Mid-leverage refactors deferred (not blockers):** deprecate `AutonomyPreferences`
+into `Preference` (two surfaces, one bridge function); tighter retrieval scoping
+(key on touched files, not just task prompt). A longer research/feature backlog
+(reversibility as a risk dimension, async delegation mode, checkpoint/rewind,
+git-aware risk, richer interrupt taxonomy) is tracked separately.
 
 ---
 
 ## Research framing
 
-**Why this matters.** Current tools calibrate autonomy through developer-authored
-static config (CLAUDE.md, permission lists). Those capture only what a developer
-can articulate in advance — but most preferences are implicit, emerging as
-correction patterns, review timing, edit distance, and phase-of-work context.
-The bottleneck isn't raw model capability; it's trust infrastructure. Hedwig
-makes that boundary explicit and measurable.
+Current coding agents calibrate autonomy through static config — capturing only
+what a developer can articulate in advance. Most preferences are implicit:
+correction patterns, review timing, edit distance, phase-of-work context. Hedwig
+makes that boundary explicit and measurable via the trace-prompt feedback loop:
+every interaction produces a trace → traces accumulate into trust scores,
+correction patterns, guidelines → those build the system prompt → the model
+reasons about when to check in → the developer responds → more traces.
 
-**The trace-prompt feedback loop** is the core mechanism: every interaction
-produces a trace → traces accumulate into trust scores, correction patterns, and
-guidelines → those build the system prompt at session start → the model reasons
-about when to check in → the developer responds → more traces. After 3+
-corrections on the same pattern, the system suggests a behavioral guideline;
-once accepted, correction overhead for that pattern drops to zero.
-
-**O1–O5 (Bui & Evangelopoulos, 2026).** Hedwig is the first system to
-meaningfully satisfy O1+O2+O3: cost-of-interruption is computed (O1), "stay
-silent" is an explicit first-class action (O2), and per-developer feedback
-updates the policy (O3). No deployed agent they audited (Cursor, Copilot, Jules,
-Claude Code Routines) did.
+**O1–O5 (Bui & Evangelopoulos, 2026).** Hedwig satisfies O1+O2+O3: cost-of-interruption
+is computed (O1), "stay silent" is an explicit first-class action (O2), per-repo
+feedback updates the policy (O3). No deployed agent audited (Cursor, Copilot,
+Jules, Claude Code Routines) did.
 
 **Related work.** Zhou et al. (CHI '26) schedule confirmations as a minimum-time
-problem and defer personalization to future work — Hedwig fills that gap with
-per-repo/per-session adaptation. CowCorpus motivates learning oversight from
-traces. Grunde-McLaughlin et al. motivate review-quality signals (Hedwig
-discounts rubber-stamps). PAHF motivates post-action personalization kept outside
-the model.
+problem and defer personalization — Hedwig fills that gap with per-repo/per-session
+adaptation. CowCorpus motivates trace-based oversight learning. Grunde-McLaughlin
+et al. motivate review-quality signals (Hedwig discounts rubber-stamps). PAHF
+motivates post-action personalization kept outside the model.
 
-**Evaluation plan.** Primary metrics: correct-trust / correct-caution /
-unnecessary-interruption / missed-check-in rates. Plus calibration (useful vs.
-wasted check-ins by initiator), learning (correction-repeat rate, trust
-trajectory, preference carryover), and quality (rubber-stamp rate, review
-duration, verification outcomes). Baselines: Always Ask, Never Ask, Static Rules,
-Heuristic (current), Future Learned. The pilot (2 tasks, 11 ops) already shows
-Hedwig catching 4/4 cautious-developer check-ins vs. 2/4 for agent+rules and 0/4
-baseline; a larger lab study is the camera-ready follow-up.
+**Evaluation.** Primary metrics: correct-trust / correct-caution /
+unnecessary-interruption / missed-check-in rates. The pilot (2 tasks, 11 ops)
+shows Hedwig catching 4/4 cautious-developer check-ins vs. 2/4 for agent+rules
+and 0/4 baseline.

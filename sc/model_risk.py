@@ -35,15 +35,13 @@ from .trust_db import PolicyHistory
 
 # Change patterns for which the reviewer adds enough signal to justify the
 # Bedrock call even on a small/familiar diff. Mirrors apply_stage's
-# _HIGH_RISK_CHANGE_TYPES, plus "security_change" defensively (not currently
-# in CHANGE_PATTERNS, but cheap to keep aligned with the gate rationale).
+# _HIGH_RISK_CHANGE_TYPES exactly.
 _REVIEWER_HIGH_RISK_PATTERNS = frozenset(
     {
         "api_change",
         "data_model_change",
         "config_change",
         "dependency_update",
-        "security_change",
     }
 )
 

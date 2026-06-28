@@ -4,11 +4,11 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Hedwig — a governance layer for Claude Code</title>
-<meta name="description" content="Hedwig sits between Claude Code and you and decides, per edit, whether to apply it or pause for your review. It calibrates that from your past sessions, locally. Nothing leaves your machine." />
+<meta name="description" content="Hedwig decides, per edit, whether Claude Code applies it or pauses for your review. It learns where to draw that line from your past sessions. Runs locally, nothing leaves your machine." />
 
 <meta property="og:type" content="website" />
 <meta property="og:title" content="Hedwig — a governance layer for Claude Code" />
-<meta property="og:description" content="Decides per edit whether to auto-apply or pause for review, and adjusts from what happened last time. Honest heuristics plus local learning. Runs on your machine." />
+<meta property="og:description" content="Decides per edit whether to auto-apply or pause for review, and adjusts from what happened last time. Heuristics plus local learning. Runs on your machine." />
 <meta name="theme-color" content="#0a0c11" />
 
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='3' fill='%230a0c11'/%3E%3Ctext x='2.5' y='12' font-family='monospace' font-size='11' fill='%2367c7d6'%3Ehw%3C/text%3E%3C/svg%3E" />
@@ -226,7 +226,7 @@
     <nav>
       <a class="navlink" href="#how">How it works</a>
       <a class="navlink" href="#different">Why it's different</a>
-      <a class="navlink" href="#privacy">Privacy</a>
+      <a class="navlink" href="commands.html">Docs</a>
       <a class="ghost" href="#install">Install</a>
     </nav>
   </div>
@@ -237,9 +237,9 @@
   <div class="wrap">
     <div class="inner">
       <span class="eyebrow">A governance layer for Claude Code</span>
-      <h1>Decides when to interrupt you, and when to stay out of the way.</h1>
-      <p class="lead">Hedwig decides, per edit, whether to apply it or pause for review —
-      calibrated from your past sessions, not rules you write up front.</p>
+      <h1>Auto-applies the safe edits. Surfaces the ones worth your review.</h1>
+      <p class="lead">Hedwig watches every edit Claude Code makes and decides — per file, per
+      session — which ones need your eyes. It adjusts from what happened last time.</p>
 
       <div class="term">
         <div class="bar">
@@ -257,15 +257,14 @@
 
       <div class="links">
         <a href="https://github.com/tanjalshukla/HedwigCLI">GitHub</a>
-        <a href="#demo">Watch the demo</a>
+        <a href="commands.html">Docs</a>
         <a href="#install">Requirements</a>
       </div>
     </div>
 
     <div class="demo" id="demo">
       <div class="video">
-        <span class="ph">{{DEMO_VIDEO}} — embed the 90s demo here once it's recorded</span>
-        90-second demo
+        demo coming soon
       </div>
     </div>
   </div>
@@ -274,8 +273,7 @@
 <!-- the one-line example -->
 <section class="example">
   <div class="wrap">
-    <p><b>Hedwig auto-applied an edit. You reverted it. Next time it pauses on edits
-    like that.</b> That feedback loop is the whole idea.</p>
+    <p><b>Hedwig auto-applied an edit. You reverted it. The next similar edit gets surfaced.</b> That's the loop.</p>
   </div>
 </section>
 
@@ -283,21 +281,21 @@
 <section id="problem">
   <div class="wrap narrow sec-head">
     <span class="eyebrow">The problem</span>
-    <h2>Permission prompts are all or nothing.</h2>
+    <h2>Approval prompts are all or nothing.</h2>
   </div>
   <div class="wrap">
     <div class="two">
       <div>
         <div class="tag">ASK ON EVERYTHING</div>
         <h3>Too many prompts</h3>
-        <p>You hand-approve every trivial edit, and after a while stop reading the prompts
-        that matter.</p>
+        <p>You approve every trivial edit on reflex and stop reading the ones that
+        actually matter.</p>
       </div>
       <div>
         <div class="tag">ASK ON NOTHING</div>
         <h3>No visibility</h3>
-        <p>You let it run wide open and find out afterward — including the
-        security-sensitive file you'd have wanted to see.</p>
+        <p>Full auto-pilot until something goes wrong — including the security-sensitive
+        file you'd have wanted to see first.</p>
       </div>
     </div>
   </div>
@@ -313,19 +311,20 @@
     <div class="layout">
       <ol class="steps">
         <li>
-          <h3>It scores the edit</h3>
-          <p>Hedwig reads a few raw signals: change size, how many files depend on this one
-          (its blast radius), whether it's security-sensitive, and whether it's new.</p>
+          <h3>Score</h3>
+          <p>Each edit gets scored on diff size, blast radius (how many files import this one),
+          security sensitivity, and change pattern. Deterministic, model-independent.</p>
         </li>
         <li>
-          <h3>It decides: apply, or pause</h3>
-          <p>Low-risk, familiar edits apply quietly. Riskier ones surface with a plain reason —
-          "touches a security-sensitive file and creates a new file, so surfacing this one."</p>
+          <h3>Decide</h3>
+          <p>Low-risk edits apply silently. Anything above the threshold surfaces with a
+          plain reason: "security-sensitive file, no prior history — surfacing this one."</p>
         </li>
         <li>
-          <h3>It adjusts from what happened</h3>
-          <p>When an auto-applied edit gets reverted or fails verification, Hedwig gets more
-          cautious about similar edits. No retraining, no synthetic data.</p>
+          <h3>Learn</h3>
+          <p>When an auto-applied edit gets reverted or fails verification, that becomes a
+          corrective signal. The next similar edit gets a lower score. No synthetic data,
+          no retraining — one gradient step per real outcome.</p>
         </li>
       </ol>
 
@@ -383,21 +382,21 @@
     <div class="feats">
       <div class="feat">
         <div class="n">01</div>
-        <h3>Learns from outcomes, not clicks</h3>
-        <p>It watches what survives and what gets undone, and recalibrates which
-        interruptions are worth your attention.</p>
+        <h3>Learns from outcomes</h3>
+        <p>Every revert and verification failure is a training signal. The classifier
+        updates once per event and generalizes to risk-similar edits across the repo.</p>
       </div>
       <div class="feat">
         <div class="n">02</div>
-        <h3>The agent can ask too</h3>
-        <p>Claude Code can flag its own uncertainty and ask to pause, and Hedwig honors it.
-        Governance runs both directions.</p>
+        <h3>Bidirectional oversight</h3>
+        <p>Claude can self-declare low confidence on a risky edit and ask to pause.
+        Hedwig honors that — oversight runs both ways, not just top-down.</p>
       </div>
       <div class="feat">
         <div class="n">03</div>
-        <h3>Reads your rules by meaning</h3>
-        <p>Guidelines are matched by meaning, not keywords — a rule about "dependency
-        injection" still surfaces when your task says "constructor arguments."</p>
+        <h3>Rules that match by meaning</h3>
+        <p>Guidelines are retrieved semantically. "Avoid direct DB mutations" matches
+        a task about raw SQL even if the words don't overlap.</p>
       </div>
     </div>
   </div>
@@ -408,29 +407,24 @@
   <div class="wrap sec-head">
     <span class="eyebrow">Runs on your machine</span>
     <h2>Nothing leaves your machine.</h2>
-    <p class="lead">Exactly what Hedwig is and isn't, so you can check it against the code.</p>
+    <p class="lead">The governance loop runs locally in Python. No cloud, no API key required.</p>
   </div>
   <div class="wrap">
     <dl class="deflist">
       <div class="row">
-        <dt>Local by default</dt>
-        <dd>All decision history stays in your plugin data directory. Nothing is sent to
-        any server.</dd>
-      </div>
-      <div class="row">
         <dt>No credentials</dt>
-        <dd>The core loop needs none. Optional LLM features are opt-in and use your own
-        API key.</dd>
+        <dd>Risk scoring, the classifier, and the trace store run with no API key. Optional
+        LLM features (semantic rule matching, pattern inference) use your own key when set.</dd>
       </div>
       <div class="row">
-        <dt>Honest mechanism</dt>
-        <dd>The scoring is heuristics plus local learning from your decisions. It isn't a
-        black box.</dd>
+        <dt>Transparent</dt>
+        <dd>Run <code>/hedwig-weights</code> at any point to see exactly which signals have
+        shifted and in which direction. The scoring is auditable, not opaque.</dd>
       </div>
       <div class="row">
-        <dt>Scoped on purpose</dt>
-        <dd>Not a coding agent, a cloud service, or a per-person profile. It governs the
-        agent that writes the code, and learns per repo and per session.</dd>
+        <dt>Per-repo, not per-person</dt>
+        <dd>Hedwig learns from this repo's history. Developer style isn't stable across
+        sessions — the repo is the right unit of personalization.</dd>
       </div>
     </dl>
   </div>
@@ -440,26 +434,27 @@
 <section id="install">
   <div class="wrap narrow sec-head" style="margin:0 auto;text-align:center">
     <span class="eyebrow">Install</span>
-    <h2>Up and running in about a minute.</h2>
+    <h2>Install in two commands.</h2>
   </div>
   <div class="req">
     <dl>
       <div class="row">
         <dt>Requires</dt>
-        <dd>Claude Code, plus Python 3.11+ (the governance core runs locally in Python).</dd>
+        <dd>Claude Code and Python 3.11+.</dd>
       </div>
       <div class="row">
-        <dt>Tier 0</dt>
-        <dd>No credentials. The full loop — risk scoring, the scorer, regret detection —
-        runs with no <code>ANTHROPIC_API_KEY</code>, no AWS, no Bedrock.</dd>
+        <dt>No key needed</dt>
+        <dd>Risk scoring, the classifier, and regret detection run with no <code>ANTHROPIC_API_KEY</code>,
+        no AWS, no Bedrock.</dd>
       </div>
       <div class="row">
-        <dt>Tier 1</dt>
-        <dd>Optional LLM features unlock when you set your own <code>ANTHROPIC_API_KEY</code>.</dd>
+        <dt>Optional</dt>
+        <dd>Set <code>ANTHROPIC_API_KEY</code> to unlock semantic rule matching and
+        LLM-powered pattern inference.</dd>
       </div>
     </dl>
     <div class="install-cta">
-      <a class="btn btn-ghost" href="https://github.com/tanjalshukla/HedwigCLI">View on GitHub</a>
+      <a class="btn btn-primary" href="https://github.com/tanjalshukla/HedwigCLI">View on GitHub →</a>
     </div>
   </div>
 </section>
@@ -475,7 +470,7 @@
     </div>
     <nav>
       <a href="https://github.com/tanjalshukla/HedwigCLI">GitHub</a>
-      <a href="#demo">Demo</a>
+      <a href="commands.html">Docs</a>
       <a href="mailto:shuklatanjal@gmail.com">Contact</a>
     </nav>
   </div>

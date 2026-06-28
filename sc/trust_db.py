@@ -457,6 +457,9 @@ class TrustDB(
                 # or when the reviewer was unavailable. Never load-bearing.
                 ("model_risk_score", "REAL"),
                 ("model_risk_rationale", "TEXT"),
+                # Stored so regret reconstruction can rebuild a correct PolicyInput
+                # without re-running assess_risk (the file may no longer exist).
+                ("is_security_sensitive", "INTEGER"),
             ]
             for column, definition in migrations:
                 self._ensure_column(

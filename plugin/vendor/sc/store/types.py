@@ -48,6 +48,9 @@ class DecisionTraceRow(TypedDict, total=False):
     pushback_type: str | None
     scorer_uncertainty: float | None
     turn_purpose: str | None
+    model_risk_score: float | None
+    model_risk_rationale: str | None
+    is_security_sensitive: int | None
     created_at: int
 
 

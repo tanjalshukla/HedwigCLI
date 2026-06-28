@@ -34,6 +34,7 @@ def _record_traces(
     check_in_initiators: dict[str, str | None] | None = None,
     study_context: StudyContext | None = None,
     model_risk_by_file: dict[str, tuple[float, str]] | None = None,
+    is_security_sensitive_by_file: dict[str, bool] | None = None,
 ) -> None:
     original_feedback_text = user_feedback_text
     for path in files:
@@ -89,6 +90,11 @@ def _record_traces(
                 # the column reads cleanly.
                 model_risk_score = float(score_val)
                 model_risk_rationale = rationale_val or None
+        is_sec = (
+            is_security_sensitive_by_file.get(path)
+            if is_security_sensitive_by_file is not None
+            else None
+        )
         trust_db.record_trace(
             repo_root=repo_root,
             session_id=session_id,
@@ -125,6 +131,7 @@ def _record_traces(
             turn_purpose=turn_purpose,
             model_risk_score=model_risk_score,
             model_risk_rationale=model_risk_rationale,
+            is_security_sensitive=is_sec,
         )
 
 

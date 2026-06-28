@@ -1,28 +1,11 @@
 from __future__ import annotations
 
-"""Apply-stage policy decisions and write/verification execution for `hw run`.
+"""Apply-stage cascade: score each touched file, prompt or auto-approve, write atomically.
 
-The apply cascade follows the same four steps as the read cascade in
-``read_stage.py`` — hard constraints → leases → PolicyScorer → preference
-override — and shares ``helpers._resolve_pre_scorer`` and
-``helpers._policy_decision_for_file`` for the first three. What this stage
-adds on top of that shared cascade and the read stage does not:
-
-* **Regret corrections** — replay regret events as negative classifier
-  signal once per trace_id (``_apply_regret_corrections``).
-* **Hypothesis pipeline** — seed/score/surface/generate
-  (``_run_hypothesis_pipeline``).
-* **Classifier online updates** — every developer decision becomes a
-  ``partial_fit`` call (``_update_classifier``).
-* **Atomic write + verification** — apply the patch, run hooks, persist
-  verification outcome (``_apply_updates_and_verify``).
-* **Stricter thresholds** and the full ``PreferenceCoordinator`` override
-  (defaults + autonomy-derived + confirmed prefs).
-
-Unifying the read and apply cascades into one parameterized module is a
-deliberate non-goal (see SPEC.md): the shared work already lives in
-``helpers``, and the differences listed above are intentional asymmetries
-between read-stage and apply-stage authority.
+Extends the shared read/apply cascade in helpers.py with apply-only steps:
+regret corrections, hypothesis pipeline, classifier online updates, and
+preference override. Intentional asymmetries vs read_stage are documented
+in SPEC.md §Deliberate non-goals.
 """
 
 import hashlib
@@ -49,10 +32,10 @@ from ..model_risk import (
     ask_model_to_vote,
     is_borderline,
     should_review,
-    _BORDERLINE_MAX_SHIFT,  # noqa: F401 — used in borderline vote nudge below
+    _BORDERLINE_MAX_SHIFT,
 )
 from ..ml_policy import PolicyClassifier, build_cold_classifier
-from ..policy import PolicyDecision
+from ..policy import PolicyDecision, _bucket
 from .helpers import (
     AutonomyHistoryContext,
     StudyContext,
@@ -103,7 +86,10 @@ from .apply_ui import (
 )
 from .hypothesis_ui import render_hypothesis_confirmation
 from .preference_coordinator import PreferenceCoordinator
+from .revise_state import stash as _stash_revise
+from .theme import PALETTE as _THEME
 from .traces import _policy_checkin_initiators, _record_traces
+from .ui import _prompt_approval
 from ..schema import IntentDeclaration
 from ..session import ClaudeSession
 from ..session_feedback import SessionFeedback
@@ -122,12 +108,10 @@ def _apply_regret_corrections(
     session_row_dicts: list[dict],
     recent_apply_denials: int,
 ) -> int:
-    """Retroactively correct the classifier for regret events in this session.
+    """Replay regret events as corrective classifier signals (count_sample=False).
 
-    A regret is an auto-approved action that the developer later denied,
-    pushed back on, or that failed verification. For each new regret event,
-    we issue classifier.update(pi, approved=False) to counteract the original
-    auto-approve signal. Returns the number of corrections applied.
+    Each regret fires exactly once, tracked in classifier._corrected_regret_ids.
+    Returns the number of corrections applied.
     """
     from ..policy import PolicyInput
     from ..regret import detect_regret_events
@@ -138,15 +122,9 @@ def _apply_regret_corrections(
 
     corrections = 0
     for event in events:
-        # Skip regrets already applied to this classifier instance. Without
-        # this guard, every call re-applies all prior regrets, producing O(N)
-        # spurious negative signals that can fully reverse real approval history.
         regret_key = event.auto_approve_trace_id
         if regret_key in classifier._corrected_regret_ids:
             continue
-
-        # Reconstruct a PolicyInput from the auto-approve trace that caused
-        # the regret. diff_size and blast_radius are stored in decision_traces.
         regret_row = next(
             (r for r in session_row_dicts if r.get("id") == event.auto_approve_trace_id),
             None,
@@ -154,9 +132,8 @@ def _apply_regret_corrections(
         if regret_row is None:
             continue
         history = trust_db.policy_history(repo_root_str, event.file_path, stage="apply")
-        regret_is_new_file, change_pattern = parse_change_type_label(
-            regret_row.get("change_type")
-        )
+        regret_is_new_file, change_pattern = parse_change_type_label(regret_row.get("change_type"))
+        raw_sec = regret_row.get("is_security_sensitive")
         pi = PolicyInput(
             prior_approvals=max(0.0, history.effective_approvals - 1),
             prior_denials=history.denials,
@@ -165,15 +142,11 @@ def _apply_regret_corrections(
             diff_size=int(regret_row.get("diff_size") or 0),
             blast_radius=int(regret_row.get("blast_radius") or 1),
             is_new_file=regret_is_new_file,
-            is_security_sensitive=False,
+            is_security_sensitive=bool(raw_sec) if raw_sec is not None else False,
             change_pattern=change_pattern,
             recent_denials=recent_apply_denials,
             files_in_action=1,
         )
-        # count_sample=False: regret replay is a corrective gradient, not a
-        # new developer decision — it must not push the classifier across the
-        # MIN_SAMPLES_FOR_LEARNED threshold or distort the learned-vs-heuristic
-        # transition.
         classifier.update(pi, approved=False, count_sample=False)
         classifier._corrected_regret_ids.add(regret_key)
         corrections += 1
@@ -198,35 +171,23 @@ def _update_classifier(
     approved: bool,
     response_time_ms: int | None = None,
 ) -> None:
-    """Online-update the classifier from the developer's decision, then persist.
+    """Update the classifier for the developer's decision.
 
-    Rubber-stamp discount: quick approvals (<5s) get half-weight. The SWE-chat
-    analysis showed rubber-stamp approvals correlate poorly with true satisfaction.
-    SGDClassifier only accepts integer labels so we approximate 0.5 weight by
-    training once as approve + once as deny — net effect is no directional push.
+    Quick approvals (<5s) get half-weight: one approve + one deny cancels out.
+    This mirrors the rubber-stamp discount in policy_history.effective_approvals.
     """
     from ..policy import PolicyInput
 
-    is_rubber_stamp = (
-        approved
-        and response_time_ms is not None
-        and response_time_ms < _RUBBER_STAMP_MS
-    )
-
+    is_rubber_stamp = approved and response_time_ms is not None and response_time_ms < _RUBBER_STAMP_MS
     for path in files:
         history = histories.get(path)
         risk = apply_risk.get(path)
         if history is None or risk is None:
             continue
         pi = PolicyInput.from_signals(
-            history,
-            risk,
-            recent_denials=recent_apply_denials,
-            files_in_action=len(files),
+            history, risk, recent_denials=recent_apply_denials, files_in_action=len(files),
         )
         if is_rubber_stamp:
-            # Rubber-stamp half-weight: one approve + one deny, net zero push.
-            # count_sample=False on the second call so this counts as 1 decision.
             classifier.update(pi, True)
             classifier.update(pi, False, count_sample=False)
         else:
@@ -677,17 +638,45 @@ def _evaluate_apply_stage(
     apply_risk: dict[str, RiskSignals] = {}
     verification_failure_rates: dict[str, float | None] = {}
 
-    def _risk_labels() -> dict[str, str | None]:
-        return {p: change_type_label(r) for p, r in apply_risk.items()}
+    def _record(
+        files: list[str],
+        user_decision: str,
+        *,
+        response_time_ms: int | None = None,
+        user_feedback_text: str | None = None,
+        check_in_initiators: dict[str, str | None] | None = None,
+        blast_radius_override: int | None = None,
+    ) -> None:
+        _record_traces(
+            trust_db=trust_db,
+            repo_root=repo_root_str,
+            session_id=run_session_id,
+            task=task,
+            stage="apply",
+            action_type="write_request",
+            files=files,
+            histories=apply_histories,
+            policies=apply_policies,
+            user_decision=user_decision,
+            response_time_ms=response_time_ms,
+            change_types={p: change_type_label(r) for p, r in apply_risk.items()},
+            diff_sizes={p: r.diff_size for p, r in apply_risk.items()},
+            blast_radius=blast_radius_override if blast_radius_override is not None else len(touched_files),
+            existing_leases=apply_leases,
+            user_feedback_text=user_feedback_text,
+            check_in_initiators=check_in_initiators,
+            study_context=study_context,
+            model_risk_by_file={p: (r.model_risk_score, r.model_risk_rationale) for p, r in apply_risk.items()},
+            is_security_sensitive_by_file={p: r.is_security_sensitive for p, r in apply_risk.items()},
+        )
 
-    def _risk_diff_sizes() -> dict[str, int | None]:
-        return {p: r.diff_size for p, r in apply_risk.items()}
-
-    def _risk_model_review() -> dict[str, tuple[float, str]]:
-        return {
-            p: (r.model_risk_score, r.model_risk_rationale)
-            for p, r in apply_risk.items()
-        }
+    def _handle_denial(feedback_text: str | None, *, intervention: bool = False) -> None:
+        is_revise = bool(feedback_text and feedback_text.startswith("[revise]"))
+        if is_revise:
+            _stash_revise(feedback_text[len("[revise]"):].strip() or "")
+            print(f"[{_THEME['attention']}]✎ narrowing scope — regenerating with your feedback.[/{_THEME['attention']}]")
+        else:
+            render_apply_denied(intervention=intervention)
     denied_apply: list[str] = []
     recent_apply_denials = trust_db.recent_denials(
         repo_root_str,
@@ -709,8 +698,6 @@ def _evaluate_apply_stage(
     if _loaded is None:
         trust_db.save_policy_model(repo_root_str, classifier)
 
-    # --- Phase 1: session context ---
-    # All session-level signals computed once, before any per-file work.
     ctx = _build_session_context(
         trust_db=trust_db,
         repo_root_str=repo_root_str,
@@ -720,8 +707,6 @@ def _evaluate_apply_stage(
         session_intensity_override=session_intensity_override,
     )
 
-    # --- Phase 2: regret corrections ---
-    # Regret detection is only meaningful over apply-stage decisions.
     _apply_regret_corrections(
         classifier=classifier,
         trust_db=trust_db,
@@ -730,8 +715,6 @@ def _evaluate_apply_stage(
         recent_apply_denials=recent_apply_denials,
     )
 
-    # --- Phase 3: hypothesis bank ---
-    # Seed, score evidence, surface if confident, kick off LLM generation.
     _run_hypothesis_pipeline(
         ctx=ctx,
         trust_db=trust_db,
@@ -753,11 +736,6 @@ def _evaluate_apply_stage(
         session_id=run_session_id,
     )
 
-    # No cap on reviewer calls: should_review() is the gate; silently skipping a
-    # security-sensitive file because of an arbitrary budget is worse than the
-    # cost of one extra call.
-
-    # Score each touched file independently, then aggregate to one approval decision.
     for path in touched_files:
         history = trust_db.policy_history(repo_root_str, path, stage="apply")
         apply_histories[path] = history
@@ -777,10 +755,6 @@ def _evaluate_apply_stage(
             is_new_file=is_new_file,
             diff_size=diff_size,
         )
-        # Adversarial-reviewer pass — augments risk with an advisory
-        # model_risk_score. Apply-stage only (read-stage doesn't use this).
-        # Failures fall back to (0.5, "") so the deterministic signals stay
-        # authoritative; never a veto, never a loosener.
         if client is not None and should_review(risk=risk, history=history):
             model_score, model_rationale = assess_risk_via_model(
                 file_path=path,
@@ -810,10 +784,6 @@ def _evaluate_apply_stage(
                 denied_apply.append(path)
             elif outcome == "check_in":
                 prompt_required = True
-            # outcome == "allow" / "lease" needs no per-file side effect at
-            # the apply stage: the decision itself is enough, and there is no
-            # symmetric "auto_apply" list (writes always rendered through
-            # render_apply_auto_approved later).
             continue
         apply_leases[path] = None
 
@@ -850,45 +820,21 @@ def _evaluate_apply_stage(
                 flag_threshold=flag_threshold,
                 classifier=classifier,
             )
-            # Borderline model vote — only when the scorer is genuinely
-            # uncertain (score within _BORDERLINE_BAND of the proceed
-            # threshold). Counts against the reviewer budget so we don't
-            # add a second call on top of an existing adversarial-reviewer
-            # call for the same file. On any Bedrock failure the vote is
-            # None and the decision is left unchanged.
-            if (
-                client is not None
-                and is_borderline(decision.score, proceed_threshold)
-            ):
-                new_content = updates.get(path, "")
-                old_content_for_vote: str
-                try:
-                    old_content_for_vote = (repo_root / path).read_text()
-                except (FileNotFoundError, OSError):
-                    old_content_for_vote = ""
+            if client is not None and is_borderline(decision.score, proceed_threshold):
                 _vote, _vote_rationale = ask_model_to_vote(
                     file_path=path,
                     diff_or_content=new_content,
-                    file_context=old_content_for_vote,
+                    file_context=old_content,
                     agent_client=client,
                 )
                 if _vote is not None:
-                    # Nudge score toward or away from the threshold by
-                    # _BORDERLINE_MAX_SHIFT, then re-bucket. The shift is
-                    # additive — deterministic signals still dominate.
-                    _nudge = -_BORDERLINE_MAX_SHIFT if _vote else _BORDERLINE_MAX_SHIFT
-                    _new_score = decision.score + _nudge
-                    from ..policy import _bucket
-                    _new_action = _bucket(_new_score, proceed_threshold, flag_threshold)
-                    _vote_reason = (
-                        f"model vote: pause — {_vote_rationale}"
-                        if _vote
-                        else f"model vote: proceed — {_vote_rationale}"
-                    )
+                    _new_score = decision.score + (-_BORDERLINE_MAX_SHIFT if _vote else _BORDERLINE_MAX_SHIFT)
                     decision = PolicyDecision(
-                        action=_new_action,
+                        action=_bucket(_new_score, proceed_threshold, flag_threshold),
                         score=_new_score,
-                        reasons=decision.reasons + (_vote_reason,),
+                        reasons=decision.reasons + (
+                            f"model vote: {'pause' if _vote else 'proceed'} — {_vote_rationale}",
+                        ),
                     )
         else:
             decision = PolicyDecision(
@@ -896,10 +842,6 @@ def _evaluate_apply_stage(
                 score=0.0,
                 reasons=("adaptive policy disabled",),
             )
-        # Per-file preference resolution: tighten or loosen the scorer's
-        # decision against built-in defaults, AutonomyPreferences-derived
-        # preferences, and session-confirmed preferences. Hard constraints
-        # never reach this point (they `continue` above with score -1000/-500).
         decision = preference_coordinator.apply_to_decision(
             decision=decision,
             file_path=path,
@@ -967,25 +909,7 @@ def _evaluate_apply_stage(
             planned_files=planned_files,
             touched_files=touched_files,
         )
-        _record_traces(
-            trust_db=trust_db,
-            repo_root=repo_root_str,
-            session_id=run_session_id,
-            task=task,
-            stage="apply",
-            action_type="write_request",
-            files=touched_files,
-            histories=apply_histories,
-            policies=apply_policies,
-            user_decision="deny",
-            response_time_ms=None,
-            change_types=_risk_labels(),
-            diff_sizes=_risk_diff_sizes(),
-            blast_radius=len(touched_files),
-            existing_leases=apply_leases,
-            study_context=study_context,
-            model_risk_by_file=_risk_model_review(),
-        )
+        _record(touched_files, "deny")
         feedback.note_decision(False, change_patterns=[change_type_label(r) for r in apply_risk.values()])
         raise typer.Exit(code=1)
 
@@ -1027,52 +951,18 @@ def _evaluate_apply_stage(
             planned_files=planned_files,
             touched_files=touched_files,
         )
-        # Record traces for auto-approved files (outcome depends on user's decision).
         if auto_files:
-            _record_traces(
-                trust_db=trust_db,
-                repo_root=repo_root_str,
-                session_id=run_session_id,
-                task=task,
-                stage="apply",
-                action_type="write_request",
-                files=auto_files,
-                histories=apply_histories,
-                policies=apply_policies,
-                user_decision="auto_approve" if approved else "deny",
-                response_time_ms=None,
-                change_types=_risk_labels(),
-                diff_sizes=_risk_diff_sizes(),
-                blast_radius=len(touched_files),
-                existing_leases=apply_leases,
-                study_context=study_context,
-                model_risk_by_file=_risk_model_review(),
-            )
-        # Record traces for check-in files with user's actual decision.
+            _record(auto_files, "auto_approve" if approved else "deny")
         prompted_decision = (
             "approve_and_remember" if approved and remembered
             else ("approve" if approved else "deny")
         )
-        _record_traces(
-            trust_db=trust_db,
-            repo_root=repo_root_str,
-            session_id=run_session_id,
-            task=task,
-            stage="apply",
-            action_type="write_request",
-            files=check_in_files,
-            histories=apply_histories,
-            policies=apply_policies,
-            user_decision=prompted_decision,
+        _record(
+            check_in_files,
+            prompted_decision,
             response_time_ms=response_time_ms,
-            change_types=_risk_labels(),
-            diff_sizes=_risk_diff_sizes(),
-            blast_radius=len(touched_files),
-            existing_leases=apply_leases,
             user_feedback_text=apply_feedback,
             check_in_initiators=_policy_checkin_initiators(check_in_files, apply_policies),
-            study_context=study_context,
-            model_risk_by_file=_risk_model_review(),
         )
         feedback.note_decision(
             approved,
@@ -1080,7 +970,6 @@ def _evaluate_apply_stage(
             response_time_ms=response_time_ms,
             feedback_text=apply_feedback,
         )
-        # Update on check-in files (explicit decision) and auto-approved files (outcome known).
         _update_classifier(
             classifier=classifier,
             trust_db=trust_db,
@@ -1092,8 +981,7 @@ def _evaluate_apply_stage(
             approved=approved,
             response_time_ms=response_time_ms,
         )
-        import threading as _threading
-        _feedback_thread = _threading.Thread(
+        _feedback_thread = threading.Thread(
             target=_apply_feedback_learning,
             kwargs=dict(
                 trust_db=trust_db,
@@ -1107,23 +995,7 @@ def _evaluate_apply_stage(
         )
         _feedback_thread.start()
         if not approved:
-            # 'v' (revise scope) returns from _prompt_approval as a deny variant
-            # with a [revise] prefix on the feedback. Stash the feedback so the
-            # REPL outer loop can re-issue the task as a narrow-scope follow-up
-            # instead of making the visitor retype it. Apply itself still exits
-            # (code 0) — the actual loop-back happens in run_repl.
-            _is_revise = bool(apply_feedback and apply_feedback.startswith("[revise]"))
-            if _is_revise:
-                from ..run.theme import PALETTE as _PAL_R
-                from .revise_state import stash as _stash_revise
-                # Strip the [revise] tag — keep only the developer's note.
-                _note = apply_feedback[len("[revise]"):].strip()
-                _stash_revise(_note or "")
-                print(
-                    f"[{_PAL_R['attention']}]✎ narrowing scope — regenerating with your feedback.[/{_PAL_R['attention']}]"
-                )
-            else:
-                render_apply_denied()
+            _handle_denial(apply_feedback)
             raise typer.Exit(code=0)
         if remembered:
             trust_db.add_leases(
@@ -1143,10 +1015,6 @@ def _evaluate_apply_stage(
         )
         return
 
-    # If any preference (default or per-file confirmed) triggered a soft
-    # check-in, render the non-blocking panel. _forced_action is the session-
-    # level default check; also gate on flagged_auto_files (which are set when
-    # a per-file SOFT_CHECKIN preference upgraded a proceed to proceed_flag).
     _any_soft_checkin = (
         (ctx.forced_action is not None and ctx.forced_action.value == "soft_checkin")
         or bool(flagged_auto_files)
@@ -1157,47 +1025,24 @@ def _evaluate_apply_stage(
             apply_policies=apply_policies,
         )
         if outcome.intervened:
-            from .ui import _prompt_approval as _full_prompt
-            approved, remembered, apply_feedback = _full_prompt(
+            approved, remembered, apply_feedback = _prompt_approval(
                 "apply", touched_files, remember, diff_already_shown=False,
                 allow_revise=allow_revise,
             )
             if not approved:
-                _is_revise = bool(apply_feedback and apply_feedback.startswith("[revise]"))
                 trust_db.record_decision(
                     repo_root_str, task, "apply",
                     approved=False, remembered=False,
                     planned_files=touched_files, touched_files=touched_files,
                 )
-                _record_traces(
-                    trust_db=trust_db,
-                    repo_root=repo_root_str,
-                    session_id=run_session_id,
-                    task=task,
-                    stage="apply",
-                    action_type="write_request",
-                    files=touched_files,
-                    histories=apply_histories,
-                    policies=apply_policies,
-                    user_decision="deny",
-                    response_time_ms=None,
-                    change_types=_risk_labels(),
-                    diff_sizes=_risk_diff_sizes(),
-                    blast_radius=max((r.blast_radius for r in apply_risk.values()), default=0),
-                    existing_leases=apply_leases,
+                _record(
+                    touched_files, "deny",
                     user_feedback_text=apply_feedback,
-                    study_context=study_context,
+                    blast_radius_override=max(
+                        (r.blast_radius for r in apply_risk.values()), default=0
+                    ),
                 )
-                if _is_revise:
-                    from ..run.theme import PALETTE as _PAL_R
-                    from .revise_state import stash as _stash_revise
-                    _note = apply_feedback[len("[revise]"):].strip()
-                    _stash_revise(_note or "")
-                    print(
-                        f"[{_PAL_R['attention']}]✎ narrowing scope — regenerating with your feedback.[/{_PAL_R['attention']}]"
-                    )
-                else:
-                    render_apply_denied(intervention=True)
+                _handle_denial(apply_feedback, intervention=True)
                 raise typer.Exit(code=0)
 
     user_decision = render_apply_auto_approved(
@@ -1215,25 +1060,7 @@ def _evaluate_apply_stage(
         planned_files=planned_files,
         touched_files=touched_files,
     )
-    _record_traces(
-        trust_db=trust_db,
-        repo_root=repo_root_str,
-        session_id=run_session_id,
-        task=task,
-        stage="apply",
-        action_type="write_request",
-        files=touched_files,
-        histories=apply_histories,
-        policies=apply_policies,
-        user_decision=user_decision,
-        response_time_ms=None,
-        change_types=_risk_labels(),
-        diff_sizes=_risk_diff_sizes(),
-        blast_radius=len(touched_files),
-        existing_leases=apply_leases,
-        study_context=study_context,
-        model_risk_by_file=_risk_model_review(),
-    )
+    _record(touched_files, user_decision)
     feedback.note_decision(True)
     _update_classifier(
         classifier=classifier,

@@ -1,22 +1,11 @@
 # Hedwig End-to-End
 
-A deep-dive reference for understanding Hedwig's architecture and design decisions. File references included so you can open the source when a question gets specific.
+Deep-dive reference with file pointers. Start with [`README.md`](README.md) for the pitch;
+come here when you need to trace execution or understand a design decision.
 
-## 1. Elevator pitch
+## 1. Five concepts to anchor everything
 
-Hedwig is a **harness** that wraps a coding agent (Claude on Bedrock).
-It does not generate code. For every agent-proposed action on a file it
-decides — autonomously and per stage — whether to proceed or pause for
-the developer. The decision is calibrated from real interaction traces:
-a deterministic risk assessor, a heuristic scorer for cold start, an
-online logistic classifier with isotonic calibration that takes over
-after ten real decisions, and a hypothesis bank that lets the developer
-confirm or reject inferred preferences before they ever affect behavior.
-Everything is local and per-repo. The taxonomy and thresholds are
-grounded in an empirical study of real coding-agent sessions
-(see §5 for methods; specific findings are cited inline below).
-
-## 2. The five-concept anchor
+## 2. Core concepts
 
 - **Action** — one agent-proposed operation on one file: `read`, `write`,
   `patch`, `verify`. Atomic unit of oversight.

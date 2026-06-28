@@ -104,6 +104,7 @@ class TraceStoreMixin:
         turn_purpose: str | None = None,
         model_risk_score: float | None = None,
         model_risk_rationale: str | None = None,
+        is_security_sensitive: bool | None = None,
     ) -> None:
         now = int(time.time())
         if review_duration_seconds is None and response_time_ms is not None:
@@ -133,8 +134,8 @@ class TraceStoreMixin:
                     model_confidence_self_report, model_assumptions_json,
                     check_in_initiator, participant_id, study_run_id, study_task_id, autonomy_mode,
                     pushback_type, scorer_uncertainty, turn_purpose,
-                    model_risk_score, model_risk_rationale, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    model_risk_score, model_risk_rationale, is_security_sensitive, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     repo_root,
@@ -174,6 +175,7 @@ class TraceStoreMixin:
                     turn_purpose,
                     model_risk_score,
                     model_risk_rationale,
+                    None if is_security_sensitive is None else (1 if is_security_sensitive else 0),
                     now,
                 ),
             )
@@ -369,7 +371,8 @@ class TraceStoreMixin:
                     user_decision, response_time_ms, review_duration_seconds, rubber_stamp,
                     edit_distance, user_feedback_text, check_in_initiator, pushback_type, turn_purpose,
                     diff_size, blast_radius, verification_passed, task,
-                    participant_id, study_run_id, study_task_id, autonomy_mode, created_at
+                    participant_id, study_run_id, study_task_id, autonomy_mode,
+                    is_security_sensitive, created_at
                 FROM decision_traces
                 WHERE repo_root = ? AND session_id = ?
                 ORDER BY created_at ASC, id ASC

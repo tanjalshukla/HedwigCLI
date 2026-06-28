@@ -1,0 +1,217 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Hedwig — Commands</title>
+<meta name="description" content="Slash commands for the Hedwig Claude Code plugin." />
+<meta name="theme-color" content="#0a0c11" />
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='3' fill='%230a0c11'/%3E%3Ctext x='2.5' y='12' font-family='monospace' font-size='11' fill='%2367c7d6'%3Ehw%3C/text%3E%3C/svg%3E" />
+<style>
+  :root{
+    --bg:#0a0c11;--bg-2:#0c0f15;--panel:#11151c;
+    --line:#1e2530;--line-soft:#171c24;
+    --ink:#e6eaf0;--ink-2:#aeb6c2;--ink-3:#737d8c;--ink-4:#525b68;
+    --accent:#67c7d6;--accent-dim:#3f8a96;--learn:#56c08a;
+    --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
+    --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,Helvetica,Arial,sans-serif;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;color:var(--ink);background:var(--bg);font-family:var(--sans);
+    font-size:16px;line-height:1.6;-webkit-font-smoothing:antialiased}
+  a{color:var(--ink);text-decoration:none}
+  h1,h2,h3{margin:0;font-weight:600}
+  p{margin:0}
+  code{font-family:var(--mono);font-size:.86em;color:var(--ink);
+    background:var(--panel);border:1px solid var(--line-soft);
+    padding:.5px 5px;border-radius:4px}
+  pre{font-family:var(--mono);font-size:.86rem;background:var(--panel);
+    border:1px solid var(--line-soft);border-radius:8px;padding:16px 18px;
+    overflow-x:auto;line-height:1.6;color:var(--ink-2);margin:0}
+  pre .p{color:var(--learn)}
+  pre .cmt{color:var(--ink-4)}
+
+  /* nav */
+  header.nav{position:sticky;top:0;z-index:20;
+    background:rgba(10,12,17,.72);backdrop-filter:saturate(160%) blur(12px);
+    border-bottom:1px solid var(--line-soft)}
+  .nav .wrap{display:flex;align-items:center;justify-content:space-between;height:60px}
+  .wrap{max-width:1080px;margin:0 auto;padding:0 28px}
+  .brand{display:flex;align-items:center;gap:11px;font-weight:600;letter-spacing:-.01em}
+  .brand .owl{font-family:var(--mono);font-size:6.5px;line-height:1.04;white-space:pre;
+    color:var(--accent);margin:0}
+  .nav nav{display:flex;gap:28px;align-items:center}
+  .nav nav a{color:var(--ink-3);font-size:.88rem;transition:color .15s}
+  .nav nav a:hover,.nav nav a.active{color:var(--ink)}
+  .nav .ghost{color:var(--ink);border:1px solid var(--line);padding:6px 14px;
+    border-radius:7px;font-size:.86rem}
+  .nav .ghost:hover{border-color:var(--accent-dim);color:var(--accent)}
+  @media(max-width:680px){.nav .navlink{display:none}}
+
+  /* layout */
+  .page{display:grid;grid-template-columns:220px 1fr;gap:64px;
+    max-width:1080px;margin:0 auto;padding:64px 28px 120px;align-items:start}
+  @media(max-width:760px){.page{grid-template-columns:1fr;gap:40px}}
+
+  /* sidebar */
+  .sidebar{position:sticky;top:84px}
+  .sidebar .eyebrow{font-family:var(--mono);font-size:.72rem;letter-spacing:.14em;
+    text-transform:uppercase;color:var(--accent-dim);margin-bottom:12px}
+  .sidebar nav{display:flex;flex-direction:column;gap:4px}
+  .sidebar nav a{color:var(--ink-3);font-size:.9rem;padding:5px 0;
+    border-left:2px solid transparent;padding-left:10px;transition:.15s}
+  .sidebar nav a:hover{color:var(--ink);border-color:var(--line)}
+  .sidebar nav a.active{color:var(--accent);border-color:var(--accent)}
+  @media(max-width:760px){.sidebar{position:static}}
+
+  /* content */
+  .content h1{font-size:clamp(1.8rem,3.5vw,2.4rem);letter-spacing:-.03em;margin-bottom:10px}
+  .content .sub{color:var(--ink-2);font-size:1.05rem;margin-bottom:56px}
+  .cmd-block{padding:40px 0;border-top:1px solid var(--line-soft)}
+  .cmd-block:first-of-type{border-top:none;padding-top:0}
+  .cmd-name{font-family:var(--mono);font-size:1.1rem;color:var(--accent);
+    font-weight:600;margin-bottom:8px}
+  .cmd-desc{color:var(--ink-2);font-size:.97rem;margin-bottom:18px;max-width:64ch}
+  .cmd-note{margin-top:14px;font-size:.9rem;color:var(--ink-3)}
+  .cmd-note code{font-size:.84em}
+  .tag{display:inline-block;font-family:var(--mono);font-size:.7rem;letter-spacing:.06em;
+    text-transform:uppercase;color:var(--ink-4);border:1px solid var(--line);
+    padding:2px 8px;border-radius:5px;margin-bottom:16px}
+
+  /* footer */
+  footer{border-top:1px solid var(--line-soft);padding:40px 0;color:var(--ink-4);font-size:.86rem}
+  footer .wrap{display:flex;flex-wrap:wrap;gap:16px;justify-content:space-between;align-items:center}
+  footer .lf{display:flex;align-items:center;gap:11px}
+  footer .owl{font-family:var(--mono);font-size:5.5px;line-height:1.04;white-space:pre;color:var(--ink-4);margin:0}
+  footer nav{display:flex;gap:22px}
+  footer a{color:var(--ink-3)}
+  footer a:hover{color:var(--ink)}
+</style>
+</head>
+<body>
+
+<header class="nav">
+  <div class="wrap">
+    <a class="brand" href="index.html"><pre class="owl"> ,___,
+ (O,O)
+ (   )
+ -"-"-</pre><span>Hedwig</span></a>
+    <nav>
+      <a class="navlink" href="index.html#how">How it works</a>
+      <a class="navlink" href="index.html#different">Why it's different</a>
+      <a class="navlink active" href="commands.html">Docs</a>
+      <a class="ghost" href="index.html#install">Install</a>
+    </nav>
+  </div>
+</header>
+
+<div class="page">
+  <aside class="sidebar">
+    <div class="eyebrow">Commands</div>
+    <nav>
+      <a href="#status">/hedwig-status</a>
+      <a href="#weights">/hedwig-weights</a>
+      <a href="#retrospective">/hedwig-retrospective</a>
+      <a href="#learn">/hedwig-learn</a>
+      <a href="#rules">/hedwig-rules</a>
+    </nav>
+  </aside>
+
+  <div class="content">
+    <h1>Commands</h1>
+    <p class="sub">Slash commands available inside any Claude Code session with Hedwig installed.</p>
+
+    <div class="cmd-block" id="status">
+      <div class="tag">observability</div>
+      <div class="cmd-name">/hedwig-status</div>
+      <p class="cmd-desc">Shows how many edits were auto-applied vs. surfaced this session, with plain-English reasons for each surfaced edit. The primary dashboard — run it after any task to see what Hedwig did and why.</p>
+      <pre><span class="cmt"># Example output</span>
+hedwig · session summary
+  suppressed  8   auto-applied silently
+  surfaced    2   paused for your review
+
+surfaced:
+  auth/tokens.py    security-sensitive file, no prior history
+  api/routes.py     3 prior denials on api_change in this repo</pre>
+      <p class="cmd-note">Scoped to the current session by default. All-time totals shown when session ID is unavailable.</p>
+    </div>
+
+    <div class="cmd-block" id="weights">
+      <div class="tag">observability</div>
+      <div class="cmd-name">/hedwig-weights</div>
+      <p class="cmd-desc">Shows how the learned classifier has drifted from its cold-start baseline — per feature, with direction. Every delta comes from real decisions in this repo, not synthetic data.</p>
+      <pre><span class="cmt"># Example output</span>
+hedwig · classifier drift (42 decisions)
+
+  feature                  prior    current   delta
+  prior_denials            0.000   -0.312    ▼ toward caution
+  prior_approvals          0.000   +0.289    ▲ toward trust
+  blast_radius             0.000   -0.221    ▼ toward caution
+  change_pattern_risk      0.000   +0.108    ▲ toward trust</pre>
+      <p class="cmd-note">Shows "classifier not active" until <code>hedwig-setup.py</code> has been run and at least 10 real decisions have accumulated.</p>
+    </div>
+
+    <div class="cmd-block" id="retrospective">
+      <div class="tag">observability</div>
+      <div class="cmd-name">/hedwig-retrospective</div>
+      <p class="cmd-desc">Lists regret events — edits Hedwig auto-applied that were later reverted by the agent or failed end-of-turn verification. Each one triggered a corrective classifier update. An empty list means nothing auto-applied had to be walked back.</p>
+      <pre><span class="cmt"># Example output</span>
+hedwig · regret events
+
+  api/routes.py   reversal   agent reverted an auto-applied edit
+  → classifier updated: api_change on this file now scores lower</pre>
+    </div>
+
+    <div class="cmd-block" id="learn">
+      <div class="tag">learning</div>
+      <div class="cmd-name">/hedwig-learn</div>
+      <p class="cmd-desc">Reviews and confirms a behavioral pattern Hedwig has noticed. Patterns accumulate evidence silently — nothing changes until you confirm. Confirmed patterns fire in the governance cascade for future edits.</p>
+      <pre><span class="cmt"># Example output</span>
+hedwig · pattern detected
+
+  "You've denied 4 of the last 5 api_change edits in this repo.
+   Suggest: always surface api_change edits for review."
+
+  confirm? [y/n]</pre>
+      <p class="cmd-note">Declined patterns stay in the bank for transparency — they're not discarded. Confirmed patterns can be reviewed and revoked via <code>/hedwig-rules</code>.</p>
+    </div>
+
+    <div class="cmd-block" id="rules">
+      <div class="tag">configuration</div>
+      <div class="cmd-name">/hedwig-rules</div>
+      <p class="cmd-desc">Views or sets hard constraints — non-negotiable path rules that override all scoring. Use <code>deny</code> to block a path entirely, <code>check_in</code> to always surface it, or <code>allow</code> to always auto-apply.</p>
+      <pre><span class="cmt"># List current constraints</span>
+<span class="p">/hedwig-rules</span>
+
+<span class="cmt"># Block all writes under config/prod/</span>
+<span class="p">/hedwig-rules</span> add deny "config/prod/**"
+
+<span class="cmt"># Always surface changes to the auth module</span>
+<span class="p">/hedwig-rules</span> add check_in "auth/**"
+
+<span class="cmt"># Remove a constraint</span>
+<span class="p">/hedwig-rules</span> remove "config/prod/**"</pre>
+      <p class="cmd-note">Hard constraints are enforced before any scoring — they override leases, the classifier, and confirmed preferences. Path patterns use shell-glob matching against repo-relative paths.</p>
+    </div>
+  </div>
+</div>
+
+<footer>
+  <div class="wrap">
+    <div class="lf">
+      <pre class="owl"> ,___,
+ (O,O)
+ (   )
+ -"-"-</pre>
+      <span>As seen at ACM CAIS and the AI Engineer's World Fair.</span>
+    </div>
+    <nav>
+      <a href="https://github.com/tanjalshukla/HedwigCLI">GitHub</a>
+      <a href="index.html">Home</a>
+      <a href="mailto:shuklatanjal@gmail.com">Contact</a>
+    </nav>
+  </div>
+</footer>
+
+</body>
+</html>

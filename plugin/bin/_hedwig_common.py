@@ -226,6 +226,7 @@ def policy_input_for_regret(db, repo_root: str, session_id: str, file_path: str)
         regret_is_new_file, change_pattern = parse_change_type_label(
             (regret_row["change_type"] if regret_row else None)
         )
+        raw_sec = regret_row.get("is_security_sensitive") if regret_row else None
         return PolicyInput(
             prior_approvals=max(0.0, history.effective_approvals - 1),
             prior_denials=history.denials,
@@ -234,7 +235,7 @@ def policy_input_for_regret(db, repo_root: str, session_id: str, file_path: str)
             diff_size=diff_size,
             blast_radius=blast_radius,
             is_new_file=regret_is_new_file,
-            is_security_sensitive=False,
+            is_security_sensitive=bool(raw_sec) if raw_sec is not None else False,
             change_pattern=change_pattern,
             recent_denials=0,
             files_in_action=1,

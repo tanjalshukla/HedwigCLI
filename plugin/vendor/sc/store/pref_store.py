@@ -34,7 +34,10 @@ class PrefStoreMixin:
             ).fetchone()
         if row is None:
             return AutonomyPreferences()
-        return AutonomyPreferences.from_json(row["preferences_json"])
+        try:
+            return AutonomyPreferences.from_json(row["preferences_json"])
+        except Exception:
+            return AutonomyPreferences()
 
     def merge_autonomy_preferences(
         self,

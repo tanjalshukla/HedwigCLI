@@ -12,9 +12,11 @@ way.
 
 Pure functions over ``decision_traces`` rows. No SQL here — callers pass in
 the rows they already have (typically from
-``trust_db.session_traces(repo_root, session_id)``). Day 3 plumbs these
-into the cascade via the protocol layer; Day 1 only exposes the
-computation and tests it.
+``trust_db.session_traces(repo_root, session_id)``).
+
+NOT YET WIRED into the approval cascade. ``compute_session_state`` is
+implemented and tested; wiring it into apply_stage / read_stage is a
+post-demo milestone (see SPEC.md §Deliberate non-goals for context).
 
 Three signals, ordered by load-bearing-ness:
 
@@ -23,8 +25,7 @@ Three signals, ordered by load-bearing-ness:
   thrashing signature.
 * ``scope_drift_score`` — Jaccard-style overlap between files touched and
   files implied by the declared intent. Rises when the agent strays from
-  what it said it was going to do. (Day 3 gets a richer embedding-based
-  variant; this is the keyword baseline.)
+  what it said it was going to do.
 * ``intra_turn_verification_failures`` — how many traces this task
   reported verification_passed=0. Direct, unambiguous "something is going
   wrong right now" signal.
@@ -145,10 +146,9 @@ def _scope_drift(
           (or no declared intent — we cannot detect drift without a reference).
     1.0 = no touched file's basename appears anywhere in the declared intent.
 
-    This is intentionally simple. A token-level baseline is the right
-    complexity for Day 1: we want a signal that's clearly weaker than what
-    the embedding-based detector (Day 4) will provide, so the upgrade
-    visibly helps. Premature optimization here would muddy that comparison.
+    Intentionally simple keyword baseline. An embedding-based variant is a
+    post-demo milestone — the current implementation is the correct starting
+    point before richer signal is validated.
     """
     if not declared_intent_text or not files_touched:
         return 0.0
