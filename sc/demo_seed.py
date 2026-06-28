@@ -565,12 +565,13 @@ def seed_demo(trust_db: TrustDB, repo_root: str) -> dict:
     """Top-level entry: load traces, pre-warm classifier, pre-seed hypothesis.
     Idempotent — bails out if the repo already has seeded state.
 
-    Deliberately does NOT activate the learned scorer or seed
-    AutonomyPreferences. The booth narrative depends on Task #1 showing
-    batched read governance and then producing a write check-in. A ready
-    classifier trained on the seeded approvals scores Task #1 near 1.0 and
-    skips that apply panel, killing the demo arc. The seeded traces still feed
-    history, co-change, observability, and the hypothesis bank.
+    Pre-warms the classifier with count_sample=True, so the learned scorer is
+    active from the first task (sample_count >= MIN_SAMPLES_FOR_LEARNED). The
+    seeded history includes auth.py denials, so the active scorer treats
+    security-sensitive files cautiously and still produces the Task #1 write
+    check-in the booth narrative depends on. The seeded traces also feed
+    history, co-change, observability, and the hypothesis bank. Does not seed
+    AutonomyPreferences.
     """
     if already_seeded(trust_db, repo_root):
         return {"already_seeded": True, "traces": 0, "updates": 0, "hypothesis_id": None}

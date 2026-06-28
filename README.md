@@ -50,18 +50,14 @@ claude plugin install hedwig@hedwig-marketplace
 
 Make an edit, then run `/hedwig-status` to see what was auto-applied vs. surfaced and why.
 
-For the learned scorer, build a dedicated interpreter once:
-
-```bash
-python3 plugin/bin/hedwig-setup.py
-```
-
-Without this the plugin runs the heuristic scorer. With it, the online classifier runs on every edit.
+For the learned scorer, build a dedicated interpreter once — run `/hedwig-setup`
+in Claude Code. Without it the plugin runs the heuristic scorer; with it, the
+online classifier runs on every edit.
 
 | Capability | Plugin |
 |---|---|
 | Risk scoring + auto-apply / surface / deny | ✅ |
-| Online logistic-regression classifier | ✅ (after `hedwig-setup.py`) |
+| Online logistic-regression classifier | ✅ (after `/hedwig-setup`) |
 | Regret loop (reversal + verification failure) | ✅ |
 | Hard constraints (`/hedwig-rules`) | ✅ |
 | Repo memory layer | ✅ |

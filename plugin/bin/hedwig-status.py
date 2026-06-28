@@ -28,10 +28,10 @@ if str(_HERE) not in sys.path:
 from _hedwig_common import (  # noqa: E402
     DECISIONS_LOG,
     DENIED_VERDICT,
-    OWL,
     data_dir,
     learned_scorer_reachable,
     open_trust_db,
+    owl_str,
     repo_root_key,
 )
 
@@ -129,7 +129,7 @@ def _render(summary: dict, rows: list[dict], scope: str) -> str:
     total = summary["total"]
     if total == 0:
         lines = [
-            OWL,
+            owl_str(),
             "",
             "Hedwig — trust runtime",
             "",
@@ -140,7 +140,7 @@ def _render(summary: dict, rows: list[dict], scope: str) -> str:
     pct = int(round(summary["suppression_rate"] * 100))
     denied = summary.get("denied", 0)
     lines = [
-        OWL,
+        owl_str(),
         "",
         "Hedwig — trust runtime",
         "",
@@ -190,7 +190,7 @@ def _render(summary: dict, rows: list[dict], scope: str) -> str:
             )
     elif not learned_scorer_reachable():
         lines.append("")
-        lines.append("  ⚠ Heuristic-only — run python3 plugin/bin/hedwig-setup.py once to enable learning.")
+        lines.append("  ⚠ Heuristic-only — run /hedwig-setup once to enable learning.")
 
     return "\n".join(lines)
 

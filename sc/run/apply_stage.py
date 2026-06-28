@@ -134,8 +134,12 @@ def _apply_regret_corrections(
         history = trust_db.policy_history(repo_root_str, event.file_path, stage="apply")
         regret_is_new_file, change_pattern = parse_change_type_label(regret_row.get("change_type"))
         raw_sec = regret_row.get("is_security_sensitive")
+        # Counteract the original auto-approve by the same weight it added to
+        # effective_approvals: a rubber-stamp (<5s) contributed only 0.5, so
+        # undoing a full 1.0 would over-subtract. Mirror trace_store's split.
+        approve_weight = 0.5 if regret_row.get("rubber_stamp") else 1.0
         pi = PolicyInput(
-            prior_approvals=max(0.0, history.effective_approvals - 1),
+            prior_approvals=max(0.0, history.effective_approvals - approve_weight),
             prior_denials=history.denials,
             avg_response_ms=history.avg_response_ms,
             avg_edit_distance=history.avg_edit_distance or 0.0,

@@ -134,25 +134,3 @@ def render_soft_checkin(
     else:
         _CONSOLE.print(f"[{PALETTE['meta']}]→ proceeding with the change[/{PALETTE['meta']}]")
     return SoftCheckinOutcome(intervened=intervened)
-
-
-def _wait_for_enter(window_seconds: float) -> bool:
-    """Return True if the developer pressed Enter within window_seconds.
-
-    Uses select() on stdin so we don't block. On non-tty environments
-    (tests, pipes), returns False immediately — the soft check-in degrades
-    gracefully to "proceed" rather than hanging.
-    """
-    if not sys.stdin.isatty():
-        return False
-
-    end_time = time.monotonic() + window_seconds
-    while True:
-        remaining = end_time - time.monotonic()
-        if remaining <= 0:
-            return False
-        ready, _, _ = select.select([sys.stdin], [], [], min(remaining, 0.1))
-        if ready:
-            # Drain the line so subsequent input isn't polluted.
-            sys.stdin.readline()
-            return True

@@ -17,7 +17,7 @@ PY := $(shell [ -x .venv/bin/python ] && echo .venv/bin/python || echo python3)
 PYTEST := PYTHONPATH=. $(PY) -m pytest
 
 .DEFAULT_GOAL := help
-.PHONY: help install test lint verify sync-vendor vendor-check demo-test clean
+.PHONY: help install test lint lint-deep coverage verify sync-vendor vendor-check demo-test clean
 
 help:
 	@grep -E '^[a-zA-Z_-]+:.*?# .*$$' $(MAKEFILE_LIST) | \
@@ -33,6 +33,16 @@ test: # full test suite
 
 lint: # ruff — undefined names (F8), unused imports (F4), syntax (F9)
 	$(PY) -m ruff check sc/ plugin/ tests/
+
+lint-deep: # wider bug+style probe (bugbear B + simplify SIM) — NOT enforced; review by hand
+	@echo "Deeper lint: B (bug patterns) + SIM (simplifiable code). These are"
+	@echo "suggestions, not gate failures. Read each before changing it."
+	$(PY) -m ruff check sc/ plugin/ tests/ --select F4,F8,F9,B,SIM --statistics || true
+
+coverage: # which code the tests actually exercise — your reading map of unguarded code
+	@$(PY) -m pip install pytest-cov -q 2>/dev/null || true
+	PYTHONPATH=. $(PY) -m pytest tests -q --cov=sc --cov=plugin/bin \
+		--cov-report=term-missing:skip-covered
 
 # The single loop. Lint first (fast fail), then the suite, then prove the
 # plugin's vendored copy of sc/ is in sync — a stale vendor ships bugs the

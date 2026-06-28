@@ -34,7 +34,7 @@ if str(_VENDOR) not in sys.path:
 if str(_HERE) not in sys.path:
     sys.path.insert(0, str(_HERE))
 
-from _hedwig_common import OWL, open_trust_db, repo_root_key  # noqa: E402
+from _hedwig_common import open_trust_db, owl_str, repo_root_key  # noqa: E402
 
 # The plugin keys repo history on cwd (same as the other hooks); the slash
 # command runs in the project dir, and the session is the current one. We
@@ -68,7 +68,7 @@ def _cmd_show() -> int:
     evidence = hyp.evidence_for + hyp.evidence_against
     evidence_line = f"  Backed by {evidence} decision{'s' if evidence != 1 else ''}.\n\n" if evidence else ""
     sys.stdout.write(
-        f"{OWL}\n\n"
+        f"{owl_str()}\n\n"
         "Hedwig noticed a pattern:\n\n"
         f"  {hyp.prompt}\n\n"
         f"  Why: {hyp.rationale}\n\n"

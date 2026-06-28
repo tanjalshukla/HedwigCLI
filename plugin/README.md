@@ -19,11 +19,7 @@ claude --plugin-dir ./plugin
 
 ## Make the learned scorer run
 
-By default, hooks run under a bare `python3` that may not have `numpy` or `scikit-learn`. The heuristic scorer always works without them, but to get the online classifier:
-
-```bash
-python3 plugin/bin/hedwig-setup.py
-```
+By default, hooks run under a bare `python3` that may not have `numpy` or `scikit-learn`. The heuristic scorer always works without them, but to get the online classifier, run `/hedwig-setup` in Claude Code (or, from a local checkout, `python3 plugin/bin/hedwig-setup.py`).
 
 This builds a small dedicated venv at `~/.hedwig/venv` and the hooks re-exec under it automatically. No shell config needed; works in any terminal.
 
@@ -47,6 +43,7 @@ Claude Code owns the native approve/deny prompt — a user's click there is invi
 - `/hedwig-retrospective` — regret events
 - `/hedwig-learn` — review and confirm a noticed behavioral pattern
 - `/hedwig-rules` — view or set hard constraints
+- `/hedwig-setup` — build the learned-scorer interpreter (once per machine)
 
 ## State
 

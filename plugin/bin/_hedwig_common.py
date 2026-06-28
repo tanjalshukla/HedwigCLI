@@ -8,17 +8,32 @@ event rows — factor that here so the behavior can't drift between scripts.
 """
 
 # ASCII owl — printed at the top of every user-facing command output.
-# Cyan ANSI color; resets after the last line.
-_C = "\033[36m"
-_R = "\033[0m"
-OWL = f"{_C} ,___,\n (O,O)\n (   )\n-\"-\"-{_R}"
-
 import json
 import os
 import subprocess
 import sys
 import time
 from pathlib import Path
+
+# Cyan ANSI color; resets after the last line. All four lines share one leading
+# space so the owl sits flush (the feet line is easy to under-indent).
+_C = "\033[36m"
+_R = "\033[0m"
+_OWL_PLAIN = " ,___,\n (O,O)\n (   )\n -\"-\"-"
+OWL = f"{_C}{_OWL_PLAIN}{_R}"
+
+
+def owl_str() -> str:
+    """The owl, colored when stdout is a real terminal, plain otherwise.
+
+    Slash commands and hooks run as captured (non-TTY) subprocesses; emitting
+    raw ``\\033[36m`` there leaks literal escape codes into the transcript
+    instead of rendering cyan. Gate on isatty() so the color only appears where
+    a terminal can interpret it. Best-effort: any error falls back to plain."""
+    try:
+        return OWL if sys.stdout.isatty() else _OWL_PLAIN
+    except Exception:
+        return _OWL_PLAIN
 
 
 def _ensure_vendor_on_path() -> None:
@@ -235,8 +250,12 @@ def policy_input_for_regret(db, repo_root: str, session_id: str, file_path: str)
         # regret_row is a sqlite3.Row (no .get()) — bracket-access like the
         # other fields above. is_security_sensitive is in session_traces' SELECT.
         raw_sec = regret_row["is_security_sensitive"] if regret_row else None
+        # Counteract the original auto-approve by the weight it added to
+        # effective_approvals: a rubber-stamp (<5s) contributed only 0.5, so
+        # undoing a full 1.0 would over-subtract (mirrors apply_stage).
+        approve_weight = 0.5 if (regret_row and regret_row["rubber_stamp"]) else 1.0
         return PolicyInput(
-            prior_approvals=max(0.0, history.effective_approvals - 1),
+            prior_approvals=max(0.0, history.effective_approvals - approve_weight),
             prior_denials=history.denials,
             avg_response_ms=history.avg_response_ms,
             avg_edit_distance=history.avg_edit_distance or 0.0,

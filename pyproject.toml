@@ -47,13 +47,19 @@ include = ["sc*"]
 target-version = "py311"
 
 [tool.ruff.lint]
+# ENFORCED gate (make lint / CI). Deliberately bug-focused, not style-focused:
 # F4xx = import errors (unused, missing, circular)
 # F8xx = undefined names, unused variables
 # F9xx = syntax-level errors ruff can detect
+# A wider bug+style probe (B = bugbear, SIM = simplify) is available via
+# `make lint-deep` — run 2026-06-28, found 0 real bugs (the 3 B023 hits are
+# false positives: callbacks over stable vars, not loop-var closures; the rest
+# are SIM style). Kept opt-in so it doesn't gate the build on style churn.
 select = ["F4", "F8", "F9"]
 
 # E501 (line too long) is intentionally excluded — the codebase has long
-# SQL strings and Rich markup that are clearer unbroken.
+# SQL strings and Rich markup that are clearer unbroken. E402 likewise: the
+# plugin bins must manipulate sys.path before importing the vendored `sc`.
 ignore = []
 
 [tool.ruff.lint.per-file-ignores]

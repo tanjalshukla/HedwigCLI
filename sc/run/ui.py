@@ -441,17 +441,6 @@ def _prompt_permanent(files: list[str]) -> bool:
     return response == "y"
 
 
-def _confirm_read_missing(missing_files: list[str]) -> bool:
-    print(f"\n[{PALETTE['attention_bold']}]Files don't exist yet[/{PALETTE['attention_bold']}]")
-    _render_file_list(missing_files)
-    response = Prompt.ask(
-        f"[{PALETTE['approve_bold']}]a[/{PALETTE['approve_bold']}] create  "
-        f"[{PALETTE['deny_bold']}]d[/{PALETTE['deny_bold']}] deny",
-        choices=["a", "d"],
-    )
-    return response == "a"
-
-
 def _confirm_create_files(missing_files: list[str]) -> bool:
     print(f"\n[{PALETTE['attention_bold']}]Patch will create new files[/{PALETTE['attention_bold']}]")
     _render_file_list(missing_files)
