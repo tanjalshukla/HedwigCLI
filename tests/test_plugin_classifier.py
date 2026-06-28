@@ -205,3 +205,30 @@ def test_policy_input_for_decision_reconstructs_from_logged_signals(tmp_path: Pa
     assert pi.blast_radius == 4
     assert pi.is_new_file is True
     assert pi.diff_size == 42
+
+
+def test_policy_input_for_regret_reads_sqlite_row(tmp_path: Path) -> None:
+    """The regret path rebuilds a PolicyInput from db.session_traces(), which
+    returns sqlite3.Row objects (no .get()). A regression guard: this helper
+    must NOT silently return None on a real Row, or the corrective regret
+    gradient never reaches the classifier (the learning loop goes dead while
+    every test that builds PolicyInput by hand still passes)."""
+    common = _load_common()
+    db = _db(common, tmp_path)
+    repo = str(tmp_path)
+    session = "sess-regret"
+
+    db.record_trace(
+        repo_root=repo, session_id=session, task="t", stage="apply",
+        action_type="write", file_path="server.py",
+        change_type="general_change:existing", diff_size=20, blast_radius=2,
+        existing_lease=False, lease_type=None, prior_approvals=0,
+        prior_denials=0, policy_action="proceed", policy_score=0.5,
+        user_decision="auto_approve", is_security_sensitive=False,
+    )
+
+    pi = common.policy_input_for_regret(db, repo, session, "server.py")
+    assert pi is not None, "regret PolicyInput went dead — classifier gradient never fires"
+    assert pi.diff_size == 20
+    assert pi.blast_radius == 2
+    assert pi.is_security_sensitive is False

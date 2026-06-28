@@ -122,10 +122,13 @@ def _cmd_retrospective() -> int:
         row_cwd = row.get("cwd")
         if row_cwd and repo_root_key(row_cwd) != repo:
             continue
-        files = row.get("files") or []
+        files = row.get("files")
+        if not isinstance(files, list):
+            continue  # malformed row: a string would iterate char-by-char
         kind = "reverted" if row.get("signal") == "reversal" else "failed verification"
         for f in files:
-            events.append((f, kind))
+            if isinstance(f, str):
+                events.append((f, kind))
     if not events:
         sys.stdout.write(
             "No regret events yet — Hedwig hasn't auto-applied an edit that was "

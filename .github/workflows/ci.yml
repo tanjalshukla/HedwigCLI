@@ -26,3 +26,23 @@ jobs:
 
       - name: Verify (lint + test + vendor-sync)
         run: make verify
+
+  # User-facing gate: a change under plugin/ must ship with a version bump in
+  # plugin/.claude-plugin/plugin.json, or installed users never receive it
+  # (their copy is pinned to a git SHA and only updates when the version rises).
+  # PR-only — needs the base branch to diff against.
+  plugin-version-bump:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Full history so we can diff against the PR base ref.
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Require a plugin version bump when plugin/ changed
+        run: python3 tooling/check_plugin_version_bump.py "origin/${{ github.base_ref }}"

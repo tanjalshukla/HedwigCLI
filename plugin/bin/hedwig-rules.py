@@ -34,7 +34,7 @@ if str(_VENDOR) not in sys.path:
 if str(_HERE) not in sys.path:
     sys.path.insert(0, str(_HERE))
 
-from _hedwig_common import open_trust_db, repo_root_key  # noqa: E402
+from _hedwig_common import OWL, open_trust_db, repo_root_key  # noqa: E402
 
 # The three policies a developer can set, mapped to the stored constraint_type
 # the cascade reads (HardConstraint.policy_for -> always_*). Short aliases on
@@ -65,11 +65,12 @@ def _cmd_list() -> int:
         return 0
     if not constraints:
         sys.stdout.write(
+            f"{OWL}\n\n"
             "No hard constraints set for this repo.\n"
             "Add one with: /hedwig-rules add deny <path-glob>\n"
         )
         return 0
-    sys.stdout.write("Hard constraints for this repo:\n")
+    sys.stdout.write(f"{OWL}\n\nHard constraints for this repo:\n")
     for c in constraints:
         write_policy = c.policy_for("write")
         sys.stdout.write(f"  {write_policy:<16} {c.path_pattern}\n")

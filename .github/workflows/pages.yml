@@ -1,53 +1,81 @@
-name: Deploy landing site to GitHub Pages
+name: Validate landing site
 
-# Publishes the static one-pager in site/ to GitHub Pages.
+# Validates the static landing site in docs/ on every push that touches it.
 #
-# This workflow is INERT until Pages is enabled for the repo:
-#   Settings → Pages → Build and deployment → Source: "GitHub Actions"
-# Until then it runs (on pushes touching site/) but the deploy step has no
-# Pages environment to publish to and is a no-op / skipped.
-#
-# Manual trigger is provided so you can publish on demand once the R5/G2
-# publish gate is signed off (see site/README.md for the open blockers:
-# {{HEADLINE_NUMBER}}, demo video, clean-machine install verification).
+# Pages is configured to serve natively from the /docs folder on main (Settings
+# → Pages → Source: "Deploy from a branch", branch main, folder /docs), so
+# GitHub rebuilds and publishes automatically — no Actions deploy step needed.
+# This workflow's job is to FAIL THE RUN if the published HTML is missing or
+# malformed, so a broken commit is caught in CI before (or right as) it goes
+# live, instead of silently shipping a broken page to visitors.
 
 on:
   push:
     branches: [main]
     paths:
-      - "site/**"
+      - "docs/**"
+      - ".github/workflows/pages.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "docs/**"
       - ".github/workflows/pages.yml"
   workflow_dispatch: {}
 
-# Least-privilege: only what Pages deployment needs.
 permissions:
   contents: read
-  pages: write
-  id-token: write
-
-# One live deploy at a time; don't cancel an in-flight publish.
-concurrency:
-  group: pages
-  cancel-in-progress: false
 
 jobs:
-  deploy:
+  validate:
     runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Configure Pages
-        uses: actions/configure-pages@v5
+      - name: Required pages exist
+        run: |
+          set -e
+          for f in docs/index.html docs/commands.html; do
+            if [ ! -s "$f" ]; then
+              echo "::error::missing or empty published page: $f"
+              exit 1
+            fi
+          done
+          echo "✓ docs/index.html and docs/commands.html present"
 
-      - name: Upload site/ as Pages artifact
-        uses: actions/upload-pages-artifact@v3
-        with:
-          path: site
+      - name: HTML is well-formed
+        run: |
+          python3 - <<'PY'
+          import sys
+          from html.parser import HTMLParser
+          from pathlib import Path
 
-      - name: Deploy to GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@v4
+          class _V(HTMLParser):
+              def error(self, message):  # py<3.5 compat noop; parser is lenient
+                  raise ValueError(message)
+
+          failed = False
+          for path in ("docs/index.html", "docs/commands.html"):
+              text = Path(path).read_text(encoding="utf-8")
+              # Basic structural sanity: a parseable doc with a closing </html>.
+              try:
+                  _V(convert_charrefs=True).feed(text)
+              except Exception as exc:  # noqa: BLE001
+                  print(f"::error::{path} failed to parse: {exc}")
+                  failed = True
+                  continue
+              if "</html>" not in text.lower():
+                  print(f"::error::{path} has no closing </html> tag")
+                  failed = True
+              else:
+                  print(f"✓ {path} parses and is structurally complete")
+          sys.exit(1 if failed else 0)
+          PY
+
+      - name: No unfilled template placeholders
+        run: |
+          if grep -rnE '\{\{[A-Z_]+\}\}' docs/*.html; then
+            echo "::error::unfilled {{PLACEHOLDER}} markers found in published HTML"
+            exit 1
+          fi
+          echo "✓ no template placeholders left in docs/"

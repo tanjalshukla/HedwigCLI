@@ -51,6 +51,8 @@ def _load_decisions(session_id: str | None) -> list[dict]:
                     row = json.loads(line)
                 except json.JSONDecodeError:
                     continue
+                if not isinstance(row, dict):
+                    continue  # skip non-object lines (a bare int/list/str/null)
                 if session_id is None or row.get("session_id") == session_id:
                     rows.append(row)
     except Exception:
@@ -170,8 +172,12 @@ def _render(summary: dict, rows: list[dict], scope: str) -> str:
         lines.append("  Each one tightened the next similar edit. Run /hedwig-retrospective to see them.")
 
     samples = _classifier_samples()
-    from sc.ml_policy import MIN_SAMPLES_FOR_LEARNED  # noqa: PLC0415
     if samples is not None:
+        # samples is non-None only when learned_scorer_reachable() is True, so
+        # numpy/sklearn import cleanly here. Importing at module top (or before
+        # this guard) would crash the whole command under the default plugin
+        # runtime, where the hooks run under a bare python without the deps.
+        from sc.ml_policy import MIN_SAMPLES_FOR_LEARNED  # noqa: PLC0415
         if samples >= MIN_SAMPLES_FOR_LEARNED:
             lines.append("")
             lines.append(f"  Learned scorer active ({samples} decisions recorded).")

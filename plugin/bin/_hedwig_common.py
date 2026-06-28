@@ -8,7 +8,10 @@ event rows — factor that here so the behavior can't drift between scripts.
 """
 
 # ASCII owl — printed at the top of every user-facing command output.
-OWL = " ,___,\n (O,O)\n (   )\n-\"-\"-"
+# Cyan ANSI color; resets after the last line.
+_C = "\033[36m"
+_R = "\033[0m"
+OWL = f"{_C} ,___,\n (O,O)\n (   )\n-\"-\"-{_R}"
 
 import json
 import os
@@ -229,7 +232,9 @@ def policy_input_for_regret(db, repo_root: str, session_id: str, file_path: str)
         regret_is_new_file, change_pattern = parse_change_type_label(
             (regret_row["change_type"] if regret_row else None)
         )
-        raw_sec = regret_row.get("is_security_sensitive") if regret_row else None
+        # regret_row is a sqlite3.Row (no .get()) — bracket-access like the
+        # other fields above. is_security_sensitive is in session_traces' SELECT.
+        raw_sec = regret_row["is_security_sensitive"] if regret_row else None
         return PolicyInput(
             prior_approvals=max(0.0, history.effective_approvals - 1),
             prior_denials=history.denials,

@@ -56,3 +56,16 @@ Everything lives in `${CLAUDE_PLUGIN_DATA}` (managed by Claude Code):
 - `decisions.jsonl` — per-edit verdict log (for `/hedwig-status`)
 - `regret.jsonl` — reversal and verification-failure events
 - `traces.jsonl` — human-readable mirror of executed-action traces
+
+## Releasing an update
+
+Installed copies are pinned to a git SHA; users only pull changes when the
+plugin version increases. So every user-facing change ships with a bump:
+
+1. Make the change (run `make sync-vendor` if you edited `sc/`).
+2. Bump `version` in `.claude-plugin/plugin.json`.
+3. `make verify` green, then push to `main`.
+
+CI enforces this: a PR that changes anything under `plugin/` without a version
+bump fails `tooling/check_plugin_version_bump.py`. Users update with
+`claude plugin update hedwig@hedwig-marketplace`.
