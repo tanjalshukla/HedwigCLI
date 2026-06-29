@@ -388,23 +388,23 @@ decision on that file.</span></pre>
 <section id="what">
   <div class="wrap">
     <span class="eyebrow">What it does</span>
-    <h2 style="margin-top:16px">Most tools make you write the rules. Hedwig adapts to how you work.</h2>
+    <h2 style="margin-top:16px">Four ideas make it work.</h2>
     <div class="caps">
       <div class="cap">
-        <h3>Learned from outcomes</h3>
-        <p>Every revert and verification failure updates the classifier. The next similar edit on any file in the repo scores lower.</p>
+        <h3>Regret correction</h3>
+        <p>Revert something Hedwig auto-applied and it takes the hint. That edit becomes a negative signal the scorer carries forward, so the next one like it stops for review.</p>
       </div>
       <div class="cap">
-        <h3>Bidirectional</h3>
-        <p>Claude can self-declare low confidence and ask to pause. Hedwig honors that. Tighten only, never loosen.</p>
+        <h3>Memory that outlives the context window</h3>
+        <p>Your rules and past corrections live on disk, not in the prompt. Hedwig pulls in only what the current task touches. The window stays clean and nothing gets forgotten between sessions.</p>
       </div>
       <div class="cap">
-        <h3>Pattern memory</h3>
-        <p>Behavioral patterns accumulate evidence silently. Hedwig surfaces one question when it's confident. You confirm or decline.</p>
+        <h3>A classifier that learns live</h3>
+        <p>A lightweight logistic-regression scorer updates one decision at a time and takes over from the built-in heuristics after ten real calls. No batch retraining, no GPU, no synthetic data.</p>
       </div>
       <div class="cap">
-        <h3>Semantic rules</h3>
-        <p>"Avoid direct DB mutations" matches a task about raw SQL. Rules are retrieved by meaning, not keyword overlap.</p>
+        <h3>Claude can ask to pause</h3>
+        <p>Claude flags its own shaky edits and asks for a second look. Hedwig listens, and can only ever add caution, never remove it.</p>
       </div>
     </div>
   </div>
@@ -414,8 +414,8 @@ decision on that file.</span></pre>
   <div class="wrap">
     <div class="local-inner">
       <h2>Memory is on disk.</h2>
-      <p>Every decision, every regret event, the classifier weights — all persisted locally in SQLite. History carries across sessions. No API key, no cloud, nothing reset on restart.</p>
-      <p>Set <code>ANTHROPIC_API_KEY</code> to unlock semantic rule retrieval and LLM-powered pattern inference. Both opt-in.</p>
+      <p>Decisions, regret events, classifier weights, your rules — all of it lives in a local file, not a context window. It survives restarts, carries across sessions, and never leaves your machine. No API key, no cloud.</p>
+      <p>Add an <code>ANTHROPIC_API_KEY</code> to turn on meaning-based rule retrieval and pattern inference. Both opt-in.</p>
     </div>
   </div>
 </div>
