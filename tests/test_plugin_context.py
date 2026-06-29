@@ -108,14 +108,36 @@ def test_user_prompt_submit_injects_relevant_guidelines(tmp_path: Path) -> None:
     assert "dependency injection" in obj["additionalContext"]
 
 
-def test_empty_db_injects_nothing(tmp_path: Path) -> None:
+def test_empty_db_injects_only_scan_invite(tmp_path: Path) -> None:
+    """An un-scanned repo with no memory injects ONLY the one-time scan invite —
+    no empty 'what we've learned' lead. The invite is the sole signal."""
     data_dir = tmp_path / "data"
     repo = str(tmp_path / "repo")
     (data_dir).mkdir(parents=True, exist_ok=True)
 
     out = _run_context("SessionStart", {"cwd": repo, "source": "startup"}, data_dir)
     assert out.returncode == 0, out.stderr
-    assert out.stdout == "", "no memory → no empty system reminder injected"
+    obj = json.loads(out.stdout)["hookSpecificOutput"]
+    ctx = obj["additionalContext"]
+    assert "hasn't been scanned yet" in ctx, "first session should invite a scan"
+    assert "what we've learned about this repo" not in ctx, "no memory → no memory lead"
+
+
+def test_scanned_repo_does_not_reinvite(tmp_path: Path) -> None:
+    """Once an agent scan has flagged any security path, the invite stops — we
+    don't nag a scanned repo every session."""
+    from sc.trust_db import TrustDB
+
+    data_dir = tmp_path / "data"
+    repo = str(tmp_path / "repo")
+    data_dir.mkdir(parents=True, exist_ok=True)
+    db = TrustDB(data_dir / "trust.db")
+    db.set_security_paths(repo, source="agent_scan", paths=["svc/signing.py"])
+
+    out = _run_context("SessionStart", {"cwd": repo, "source": "startup"}, data_dir)
+    assert out.returncode == 0, out.stderr
+    # No memory seeded and already scanned → nothing to inject.
+    assert out.stdout == "", "a scanned repo with no memory injects nothing"
 
 
 def test_missing_cwd_is_safe(tmp_path: Path) -> None:

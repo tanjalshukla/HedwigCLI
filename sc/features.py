@@ -92,9 +92,24 @@ _SECURITY_CONTENT_HINTS = (
 )
 
 
-def is_security_sensitive(file_path: str, content: str) -> bool:
+def is_security_sensitive(
+    file_path: str,
+    content: str,
+    extra_security_paths: frozenset[str] = frozenset(),
+) -> bool:
+    """Deterministic security-sensitivity check.
+
+    The keyword floor (path + content hints) is the model-independent guarantee
+    of invariant 5 and always wins. ``extra_security_paths`` is an optional set
+    of repo-relative paths an agent scan flagged as security-sensitive (e.g. a
+    crypto helper whose name trips no keyword). It only ever ADDS to the set —
+    it can never clear a keyword match — so a prompt-injected scan can at worst
+    make Hedwig more cautious, never less. Default empty = pure keyword behavior.
+    """
     lower_path = file_path.lower()
     if any(hint in lower_path for hint in _SECURITY_PATH_HINTS):
+        return True
+    if file_path in extra_security_paths:
         return True
     lower_content = content.lower()
     return any(hint in lower_content for hint in _SECURITY_CONTENT_HINTS)
@@ -150,12 +165,19 @@ def assess_risk(
     new_content: str,
     is_new_file: bool,
     diff_size: int,
+    extra_security_paths: frozenset[str] = frozenset(),
 ) -> RiskSignals:
-    """Single entry point for assessing one action's risk."""
+    """Single entry point for assessing one action's risk.
+
+    ``extra_security_paths`` (optional) augments the deterministic keyword
+    security check with repo-relative paths an agent scan flagged — additive
+    only, never clears a keyword match (see ``is_security_sensitive``). Default
+    empty keeps behavior byte-identical to the keyword-only path.
+    """
     return RiskSignals(
         change_pattern=classify_change_pattern(file_path, old_content, new_content),
         blast_radius=estimate_blast_radius(repo_root, file_path),
-        is_security_sensitive=is_security_sensitive(file_path, new_content),
+        is_security_sensitive=is_security_sensitive(file_path, new_content, extra_security_paths),
         is_new_file=is_new_file,
         diff_size=diff_size,
     )

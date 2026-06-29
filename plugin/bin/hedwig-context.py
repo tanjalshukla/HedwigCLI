@@ -89,14 +89,38 @@ def _session_start(payload: dict) -> int:
             feedback_snippets=list(feedback),
         )
     except Exception:
+        db = None
+        summary = ""
+
+    parts: list[str] = []
+    if summary:
+        parts.append(
+            "Hedwig — what we've learned about this repo so far "
+            f"(from prior sessions): {summary}"
+        )
+    # First session in this repo (no agent scan yet) → invite a one-time scan so
+    # Hedwig can flag security-sensitive files keyword matching would miss. The
+    # repo-scan skill carries the how/when; this is just the trigger.
+    if _should_invite_scan(db, repo_root):
+        parts.append(
+            "Hedwig — this repo hasn't been scanned yet. Early in your work here, "
+            "use the repo-scan skill once to flag security-sensitive files (and "
+            "note durable repo facts) so Hedwig governs edits to them correctly."
+        )
+    if not parts:
         return 0
-    if not summary:
-        return 0
-    lead = (
-        "Hedwig — what we've learned about this repo so far "
-        f"(from prior sessions): {summary}"
-    )
-    return _emit("SessionStart", lead)
+    return _emit("SessionStart", "\n\n".join(parts))
+
+
+def _should_invite_scan(db, repo_root: str) -> bool:
+    """True if no agent scan has run for this repo yet. Best-effort: any failure
+    returns False (no nudge) so a DB hiccup never adds noise to the session."""
+    if db is None:
+        return False
+    try:
+        return not db.security_paths(repo_root)
+    except Exception:
+        return False
 
 
 def _user_prompt_submit(payload: dict) -> int:

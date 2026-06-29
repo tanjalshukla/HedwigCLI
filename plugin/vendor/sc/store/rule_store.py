@@ -6,7 +6,8 @@ Methods: replace_constraints, add_constraints, list_constraints, matching_constr
 strongest_constraint, delete_constraints, replace_behavioral_guidelines,
 add_behavioral_guidelines, list_behavioral_guidelines, delete_behavioral_guidelines,
 add_logic_notes, recent_logic_notes, relevant_logic_notes, guideline_candidates,
-relevant_behavioral_guidelines, relevant_feedback_snippets, recent_feedback_snippets.
+relevant_behavioral_guidelines, relevant_feedback_snippets, recent_feedback_snippets,
+set_security_paths, security_paths.
 
 Relatedness scoring of the primary text field (note / guideline / feedback)
 goes through the Retrieval seam (sc/retrieval.py): the EmbeddingRanker
@@ -346,6 +347,56 @@ class RuleStoreMixin:
                 )
                 inserted += 1
         return inserted
+
+    def set_security_paths(
+        self,
+        repo_root: str,
+        *,
+        source: str,
+        paths: Iterable[str],
+        reasons: dict[str, str] | None = None,
+    ) -> int:
+        """Replace the agent-flagged security paths for (repo_root, source).
+
+        Each path is a repo-relative file an agent scan judged security-sensitive
+        beyond the keyword heuristic (e.g. a crypto helper with no telltale name).
+        Replace-by-source so a fresh scan supersedes the prior one rather than
+        accumulating. These AUGMENT the deterministic keyword check (additive,
+        never clear a keyword match — see features.is_security_sensitive), so the
+        invariant-5 guarantee holds: a scan can only add caution. Returns the
+        count stored.
+        """
+        reasons = reasons or {}
+        items = [p.strip() for p in dict.fromkeys(paths) if p.strip()]
+        now = int(time.time())
+        with self._connect() as conn:
+            conn.execute(
+                "DELETE FROM security_paths WHERE repo_root = ? AND source = ?",
+                (repo_root, source),
+            )
+            for path in items:
+                conn.execute(
+                    """
+                    INSERT OR IGNORE INTO security_paths (
+                        repo_root, file_path, reason, source, created_at
+                    ) VALUES (?, ?, ?, ?, ?)
+                    """,
+                    (repo_root, path, reasons.get(path), source, now),
+                )
+        return len(items)
+
+    def security_paths(self, repo_root: str) -> frozenset[str]:
+        """Repo-relative paths any agent scan flagged as security-sensitive.
+
+        Read on the decide hot path and OR-ed into the keyword check. Returns an
+        empty set when nothing was scanned (then behavior is pure keyword).
+        """
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT file_path FROM security_paths WHERE repo_root = ?",
+                (repo_root,),
+            ).fetchall()
+        return frozenset(str(row["file_path"]) for row in rows)
 
     def recent_logic_notes(self, repo_root: str, limit: int = 3) -> list:
         from ..trust_db import LogicNote

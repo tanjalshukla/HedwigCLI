@@ -349,6 +349,19 @@ class TrustDB(
             )
             conn.execute(
                 """
+                CREATE TABLE IF NOT EXISTS security_paths (
+                    id INTEGER PRIMARY KEY,
+                    repo_root TEXT NOT NULL,
+                    file_path TEXT NOT NULL,
+                    reason TEXT,
+                    source TEXT NOT NULL,
+                    created_at INTEGER NOT NULL,
+                    UNIQUE (repo_root, file_path, source)
+                )
+                """
+            )
+            conn.execute(
+                """
                 CREATE TABLE IF NOT EXISTS autonomy_preferences (
                     id INTEGER PRIMARY KEY,
                     repo_root TEXT NOT NULL UNIQUE,

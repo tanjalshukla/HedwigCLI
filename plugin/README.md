@@ -49,6 +49,7 @@ Claude Code owns the native approve/deny prompt — a user's click there is invi
 - `/hedwig-retrospective` — regret events
 - `/hedwig-learn` — review and confirm a noticed behavioral pattern
 - `/hedwig-rules` — view or set hard constraints
+- `/hedwig-scan` — flag security-sensitive files keyword matching misses (agent-reasoned)
 - `/hedwig-setup` — build the learned-scorer interpreter (once per machine)
 
 ## State

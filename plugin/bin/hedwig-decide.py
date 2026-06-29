@@ -203,6 +203,19 @@ def _open_db_safe():
         return None
 
 
+def _security_paths_safe(db, repo_root: str) -> frozenset[str]:
+    """Agent-flagged security paths for this repo, or an empty set on any failure.
+
+    Read on every decide; a miss just falls back to the deterministic keyword
+    check (pure pre-scan behavior). Never raises into the hook."""
+    if db is None:
+        return frozenset()
+    try:
+        return db.security_paths(repo_root)
+    except Exception:
+        return frozenset()
+
+
 def _history_from(db, repo_root: str, file_path: str) -> PolicyHistory:
     """This file's outcome history (per-file approvals/denials) so the scorer
     tightens or loosens on what actually happened to past edits of it.
@@ -458,15 +471,6 @@ def _main_inner() -> int:
 
     repo_root, rel, old_content, new_content, is_new_file, diff_size = inputs
 
-    risk = assess_risk(
-        repo_root=repo_root,
-        file_path=rel,
-        old_content=old_content,
-        new_content=new_content,
-        is_new_file=is_new_file,
-        diff_size=diff_size,
-    )
-
     # DB key: canonicalize through repo_root_key so constraints/preferences
     # authored by the slash commands (which key on the resolved getcwd) are
     # found here. `repo_root` stays the raw payload path for file-path math.
@@ -477,6 +481,21 @@ def _main_inner() -> int:
     # cold-start, the online log-reg PolicyClassifier takes over once it has
     # seen MIN_SAMPLES_FOR_LEARNED (10) real decisions (select_active_scorer).
     db = _open_db_safe()
+
+    # Agent-flagged security paths (from /hedwig-scan) augment the deterministic
+    # keyword check — additive only, never clears a keyword match, so invariant 5
+    # holds. Best-effort: any failure → empty set → pure keyword behavior.
+    extra_security = _security_paths_safe(db, repo_root_str)
+
+    risk = assess_risk(
+        repo_root=repo_root,
+        file_path=rel,
+        old_content=old_content,
+        new_content=new_content,
+        is_new_file=is_new_file,
+        diff_size=diff_size,
+        extra_security_paths=extra_security,
+    )
 
     # Cascade layer 1: hard constraints override everything (before the scorer).
     # A developer-set always_deny/always_allow is non-negotiable; always_check_in

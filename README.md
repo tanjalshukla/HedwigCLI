@@ -63,6 +63,7 @@ online classifier runs on every edit.
 | Regret loop (reversal + verification failure) | ✅ |
 | Hard constraints (`/hedwig-rules`) | ✅ |
 | Repo memory layer | ✅ |
+| Semantic security scan (`/hedwig-scan`) | ✅ |
 | Hypothesis bank + confirmation (`/hedwig-learn`) | ✅ |
 | Confidence handshake (agent self-pause) | ✅ |
 | Threshold adaptation + session signals | 🔜 |
@@ -89,6 +90,7 @@ hw
 /hedwig-retrospective # regret events — where it was too permissive
 /hedwig-learn         # review and confirm a noticed behavioral pattern
 /hedwig-rules         # view or set hard constraints
+/hedwig-scan          # flag security-sensitive files keyword matching misses
 ```
 
 ---
