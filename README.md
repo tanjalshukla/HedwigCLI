@@ -48,6 +48,8 @@ claude plugin marketplace add tanjalshukla/HedwigCLI
 claude plugin install hedwig@hedwig-marketplace
 ```
 
+Already installed? Pull the latest release with `claude plugin update hedwig@hedwig-marketplace`.
+
 Make an edit, then run `/hedwig-status` to see what was auto-applied vs. surfaced and why.
 
 For the learned scorer, build a dedicated interpreter once — run `/hedwig-setup`

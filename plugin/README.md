@@ -17,6 +17,12 @@ Or from a local checkout:
 claude --plugin-dir ./plugin
 ```
 
+To update an installed copy to the latest release:
+
+```bash
+claude plugin update hedwig@hedwig-marketplace
+```
+
 ## Make the learned scorer run
 
 By default, hooks run under a bare `python3` that may not have `numpy` or `scikit-learn`. The heuristic scorer always works without them, but to get the online classifier, run `/hedwig-setup` in Claude Code (or, from a local checkout, `python3 plugin/bin/hedwig-setup.py`).
