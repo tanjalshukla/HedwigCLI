@@ -564,7 +564,24 @@ def _main_inner() -> int:
         decision.action, payload.get("session_id"), rel
     )
 
-    reason = handshake_reason or _plain_reason(
+    # Deterministic security floor (invariant 5: the model is untrusted). The
+    # learned classifier can drift toward "approve everything" after enough
+    # auto-approvals and return proceed even for a security-sensitive file —
+    # auto-applying it before the _should_deny gate (which only runs on the
+    # surfaced branch) ever sees it. assess_risk flags is_security_sensitive
+    # deterministically; enforce it as a FLOOR here so no learned score can
+    # auto-apply a security-sensitive edit. Tighten-only: downgrade proceed →
+    # check_in, never the reverse. The edit then flows into the existing
+    # surfaced-branch logic, where _should_deny escalates it to deny+reason.
+    forced_reason = None
+    if action == "proceed" and risk.is_security_sensitive:
+        action = "check_in"
+        forced_reason = (
+            f"{rel.rsplit('/', 1)[-1]} is security-sensitive — Hedwig always "
+            f"surfaces these for review, regardless of what it has learned."
+        )
+
+    reason = forced_reason or handshake_reason or _plain_reason(
         verdict=action,
         rel=rel,
         risk=risk,

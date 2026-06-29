@@ -171,3 +171,60 @@ def test_prior_regret_gates_deny_on_otherwise_ordinary_file(tmp_path: Path) -> N
     assert _verdict(out) == "deny", f"a previously-regretted file should deny, got {out!r}"
     reason = json.loads(out)["hookSpecificOutput"]["permissionDecisionReason"]
     assert "reverted or failed a check" in reason
+
+
+def test_learned_scorer_cannot_autoapply_security_file(tmp_path: Path) -> None:
+    """Invariant 5: the deterministic security floor must hold even when the
+    learned classifier has been trained to 'approve everything'. A classifier
+    drifted toward proceed (as a busy booth produces) would return proceed for a
+    security-sensitive file and auto-apply it before the surfaced-branch gate
+    ever runs — so decide.py floors is_security_sensitive to a surface, which
+    then escalates to deny. Regression guard for the BUG#3 bypass."""
+    proj = tmp_path / "proj"
+    (proj / "recipe_api").mkdir(parents=True)
+    (proj / "recipe_api" / "auth.py").write_text(
+        "def check_api_key(req):\n    return req.headers.get('X-API-Key') == 's'\n"
+    )
+    data_dir = tmp_path / "data"
+
+    # Train the per-repo classifier to approve everything (12 low-risk approvals,
+    # past MIN_SAMPLES_FOR_LEARNED) and force the learned path on (HEDWIG_PYTHON
+    # = this interpreter, which has numpy/sklearn in the test env).
+    seed = subprocess.run(
+        ["python3", "-c",
+         "import sys; sys.path.insert(0, r'%s')\n"
+         "from _hedwig_common import open_trust_db\n"
+         "from sc.ml_policy import build_cold_classifier\n"
+         "from sc.policy import PolicyInput\n"
+         "db = open_trust_db()\n"
+         "clf = build_cold_classifier()\n"
+         "pi = PolicyInput(prior_approvals=5, prior_denials=0, avg_response_ms=8000,\n"
+         "  avg_edit_distance=0.1, diff_size=8, blast_radius=1, is_new_file=False,\n"
+         "  is_security_sensitive=False, change_pattern='general_change',\n"
+         "  recent_denials=0, files_in_action=1)\n"
+         "[clf.update(pi, approved=True) for _ in range(12)]\n"
+         "db.save_policy_model(r'%s', clf)\n"
+         "assert clf.ready()\n"
+         % (str(_PLUGIN_BIN), str(proj))],
+        capture_output=True, text=True, env=_env(data_dir),
+    )
+    if seed.returncode != 0:
+        import pytest
+        # No numpy/sklearn here → the learned path can't be exercised; the
+        # heuristic already floors security. Skip rather than false-pass.
+        pytest.skip(f"learned path unavailable: {seed.stderr.strip().splitlines()[-1:]}")
+
+    env = _env(data_dir)
+    env["HEDWIG_PYTHON"] = "python3"  # force re-exec onto a deps-capable interp
+    proc = subprocess.run(
+        ["python3", str(_PLUGIN_BIN / "hedwig-decide.py")],
+        input=json.dumps(_edit_payload(proj, "recipe_api/auth.py", old="'s'", new="'s2'")),
+        capture_output=True, text=True, cwd=str(proj), env=env,
+    )
+    assert proc.returncode == 0, proc.stderr
+    # The classifier wants to proceed (score ~1.0); the security floor must stop
+    # it auto-applying. Acceptable outcomes: deny (gate escalation) or a
+    # passthrough surface — NEVER "allow".
+    assert _verdict(proc.stdout) != "allow", (
+        f"learned scorer auto-applied a security-sensitive file — floor bypassed: {proc.stdout!r}"
+    )

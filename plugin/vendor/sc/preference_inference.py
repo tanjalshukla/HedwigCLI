@@ -496,7 +496,9 @@ def pushback_counts_from_rows(rows: Sequence[DecisionTraceRow]) -> dict[str, int
     """Compute pushback type counts from decision_traces rows."""
     counter: Counter[str] = Counter()
     for row in rows:
-        pbt = row.get("pushback_type")
+        # _get handles both dict (CLI/apply_stage) and sqlite3.Row (plugin
+        # hedwig-record passes db.session_traces() Rows, which have no .get()).
+        pbt = _get(row, "pushback_type")
         if pbt:
             counter[pbt] += 1
     return dict(counter)
