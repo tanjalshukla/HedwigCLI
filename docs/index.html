@@ -217,7 +217,7 @@
 <section class="hero" id="top">
   <div class="wrap">
     <div class="inner">
-      <span class="eyebrow">Governance layer for Claude Code</span>
+      <span class="eyebrow">Adaptive governance for Claude Code</span>
       <h1>Auto-applies the safe edits. Surfaces the ones worth your review.</h1>
       <p class="lead">Hedwig watches every edit Claude Code makes and decides, per file and per session, which ones need your eyes. Learns from what you revert.</p>
 
@@ -387,9 +387,10 @@ decision on that file.</span></pre>
 
 <section id="what">
   <div class="wrap">
-    <span class="eyebrow">What it does</span>
-    <h2 style="margin-top:16px">Four ideas make it work.</h2>
-    <div class="caps">
+    <span class="eyebrow">What makes it work</span>
+    <h2 style="margin-top:16px">It calibrates to how you work in this repo.</h2>
+    <p class="lead" style="margin-top:14px;max-width:60ch">No allow-lists to maintain, no thresholds to guess. Four mechanisms, all running locally.</p>
+    <div class="caps" style="margin-top:36px">
       <div class="cap">
         <h3>Regret correction</h3>
         <p>Revert something Hedwig auto-applied and it takes the hint. That edit becomes a negative signal the scorer carries forward, so the next one like it stops for review.</p>
@@ -403,8 +404,8 @@ decision on that file.</span></pre>
         <p>A lightweight logistic-regression scorer updates one decision at a time and takes over from the built-in heuristics after ten real calls. No batch retraining, no GPU, no synthetic data.</p>
       </div>
       <div class="cap">
-        <h3>Claude can ask to pause</h3>
-        <p>Claude flags its own shaky edits and asks for a second look. Hedwig listens, and can only ever add caution, never remove it.</p>
+        <h3>Trust runs both ways</h3>
+        <p>Claude can flag its own shaky edits and ask for a second look — and Hedwig honors it. The handshake is tighten-only by design: the agent can add caution, never remove it.</p>
       </div>
     </div>
   </div>
