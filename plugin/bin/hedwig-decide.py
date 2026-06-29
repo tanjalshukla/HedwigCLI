@@ -99,7 +99,11 @@ def _plain_reason(*, verdict: str, rel: str, risk, history, is_new_file: bool) -
     negative, since that's the most trust-building thing Hedwig can say.
     """
     name = rel.rsplit("/", 1)[-1]
-    surfacing = verdict == "check_in"
+    # Both check_in and proceed_flag are SURFACED (they fall through to the
+    # native prompt in _main_inner — only a bare "proceed" auto-applies). So the
+    # reason must read as a surfacing rationale for both, never "applying
+    # automatically", which would contradict the verdict /hedwig-status logs.
+    surfacing = verdict in ("check_in", "proceed_flag")
 
     # The money-shot: prior bad outcome on this file. Most compelling reason.
     if history.denials > 0 and surfacing:
@@ -123,7 +127,7 @@ def _plain_reason(*, verdict: str, rel: str, risk, history, is_new_file: bool) -
             return f"{name}: " + _join(bits) + ". Surfacing this one for your review."
         return f"{name}: outside what I've seen go well here. Surfacing for your review."
 
-    # Auto-applied (proceed / proceed_flag).
+    # Auto-applied (bare "proceed").
     if history.approvals > 0:
         return f"{name}: similar edits here have gone well. Applying automatically."
     pattern = (risk.change_pattern or "general").replace("_", " ")

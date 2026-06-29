@@ -5,11 +5,11 @@
         "hooks": [
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/bin/hedwig-sentinel.py SessionStart"
+            "command": "\"${CLAUDE_PLUGIN_ROOT}\"/bin/hedwig-sentinel.py SessionStart"
           },
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/bin/hedwig-context.py SessionStart"
+            "command": "\"${CLAUDE_PLUGIN_ROOT}\"/bin/hedwig-context.py SessionStart"
           }
         ]
       }
@@ -19,7 +19,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/bin/hedwig-context.py UserPromptSubmit"
+            "command": "\"${CLAUDE_PLUGIN_ROOT}\"/bin/hedwig-context.py UserPromptSubmit"
           }
         ]
       }
@@ -30,11 +30,11 @@
         "hooks": [
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/bin/hedwig-sentinel.py PreToolUse"
+            "command": "\"${CLAUDE_PLUGIN_ROOT}\"/bin/hedwig-sentinel.py PreToolUse"
           },
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/bin/hedwig-decide.py"
+            "command": "\"${CLAUDE_PLUGIN_ROOT}\"/bin/hedwig-decide.py"
           }
         ]
       }
@@ -45,11 +45,11 @@
         "hooks": [
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/bin/hedwig-sentinel.py PostToolUse"
+            "command": "\"${CLAUDE_PLUGIN_ROOT}\"/bin/hedwig-sentinel.py PostToolUse"
           },
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/bin/hedwig-record.py"
+            "command": "\"${CLAUDE_PLUGIN_ROOT}\"/bin/hedwig-record.py"
           }
         ]
       }
@@ -59,11 +59,11 @@
         "hooks": [
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/bin/hedwig-sentinel.py Stop"
+            "command": "\"${CLAUDE_PLUGIN_ROOT}\"/bin/hedwig-sentinel.py Stop"
           },
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/bin/hedwig-verify.py"
+            "command": "\"${CLAUDE_PLUGIN_ROOT}\"/bin/hedwig-verify.py"
           }
         ]
       }
@@ -73,7 +73,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/bin/hedwig-sentinel.py SessionEnd"
+            "command": "\"${CLAUDE_PLUGIN_ROOT}\"/bin/hedwig-sentinel.py SessionEnd"
           }
         ]
       }

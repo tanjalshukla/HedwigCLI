@@ -132,8 +132,6 @@ def _cmd_active() -> int:
     governance the developer has actually accepted (the /prefs view from the
     CLI). Read-only."""
     try:
-        import json as _json  # noqa: PLC0415
-
         from sc.repo_memory import humanize_preference  # noqa: PLC0415
 
         db = open_trust_db()
@@ -145,7 +143,7 @@ def _cmd_active() -> int:
     active = []
     for row in rows:
         try:
-            payload = _json.loads(row["preference_json"])
+            payload = json.loads(row["preference_json"])
         except Exception:
             continue
         if not payload.get("accepted"):

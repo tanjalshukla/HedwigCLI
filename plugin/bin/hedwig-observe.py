@@ -11,6 +11,12 @@ so a developer (or a booth visitor) can SEE the learning, not only trigger it:
     hedwig-observe.py retrospective  -> self-corrections: edits Hedwig auto-applied
                                         that were later reverted or failed
                                         verification (where it was too trusting)
+    hedwig-observe.py report         -> repo-activity summary (decisions governed,
+                                        constraints, guidelines, facts)
+    hedwig-observe.py memory         -> the repo memory Hedwig injects into context
+                                        (guidelines, facts, hard constraints)
+    hedwig-observe.py cochange       -> files that historically change together
+                                        in this repo (grouped by session)
 
 Plain text on stdout (a slash command's output goes to the transcript, not a
 Rich terminal). Always exits 0; local, no credentials. The weights view needs
@@ -273,8 +279,9 @@ def main(argv: list[str]) -> int:
         "Usage:\n"
         "  /hedwig-weights         (classifier drift)\n"
         "  /hedwig-retrospective   (self-corrections)\n"
-        "  hedwig-observe.py report   (repo activity summary)\n"
-        "  hedwig-observe.py memory   (stored repo memory)\n"
+        "  /hedwig-cochange        (files that change together)\n"
+        "  /hedwig-memory          (stored repo memory)\n"
+        "  hedwig-observe.py report   (repo-activity summary)\n"
     )
     return 0
 

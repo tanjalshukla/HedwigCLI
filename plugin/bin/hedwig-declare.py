@@ -70,6 +70,18 @@ def _rel_path(cwd: str, file_path: str) -> str:
 
 
 def main() -> int:
+    """Top-level guard — a skill-invoked declaration must never exit non-zero or
+    surface a traceback in the agent's turn. Any failure, including a non-UTF8/
+    binary stdin pipe that makes sys.stdin.read() raise, is swallowed to exit 0
+    (matching every other stdin-reading bin). A bad declaration just means
+    Hedwig falls back to its own risk assessment."""
+    try:
+        return _main_inner()
+    except Exception:
+        return 0
+
+
+def _main_inner() -> int:
     raw = sys.stdin.read()
     if not raw.strip():
         return 0

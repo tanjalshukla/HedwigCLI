@@ -47,9 +47,12 @@ Claude Code owns the native approve/deny prompt — a user's click there is invi
 - `/hedwig-status` — suppressed vs. surfaced this session, with reasons
 - `/hedwig-weights` — classifier drift from cold-start (▲▼ per feature)
 - `/hedwig-retrospective` — regret events
-- `/hedwig-learn` — review and confirm a noticed behavioral pattern
+- `/hedwig-learn` — review/confirm a noticed pattern; `active` lists confirmed ones
+- `/hedwig-notice` — propose standing rules from this session's traces (agent-reasoned)
 - `/hedwig-rules` — view or set hard constraints
 - `/hedwig-scan` — flag security-sensitive files keyword matching misses (agent-reasoned)
+- `/hedwig-cochange` — files that historically change together
+- `/hedwig-memory` — guidelines, facts, and constraints Hedwig has stored
 - `/hedwig-setup` — build the learned-scorer interpreter (once per machine)
 
 ## State
