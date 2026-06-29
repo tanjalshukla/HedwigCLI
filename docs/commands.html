@@ -126,7 +126,7 @@
     <div class="cmd-block" id="setup">
       <div class="tag">setup</div>
       <div class="cmd-name">Install &amp; update</div>
-      <p class="cmd-desc">Install from the marketplace, then add the learned scorer once. No API key, no cloud.</p>
+      <p class="cmd-desc">Install from the marketplace, then add the learned scorer once. All you need is Claude Code.</p>
       <pre><span class="cmt"># Install</span>
 <span class="p">$</span> claude plugin marketplace add tanjalshukla/HedwigCLI
 <span class="p">$</span> claude plugin install hedwig@hedwig-marketplace
@@ -144,13 +144,16 @@
       <div class="cmd-name">/hedwig-status</div>
       <p class="cmd-desc">Shows how many edits were auto-applied vs. surfaced this session, with plain-English reasons for each surfaced edit. The primary dashboard. Run it after any task to see what Hedwig did and why.</p>
       <pre><span class="cmt"># Example output</span>
-hedwig · session summary
-  suppressed  8   auto-applied silently
-  surfaced    2   paused for your review
+Hedwig — trust runtime
 
-surfaced:
-  auth/tokens.py    security-sensitive file, no prior history
-  api/routes.py     3 prior denials on api_change in this repo</pre>
+  Auto-applied     8   ████████████████░░░░  80%
+  Surfaced         2   for your review
+
+  8 of 10 edits auto-applied this session.
+
+  Why it surfaced these:
+    · api/routes.py: interface change, multi-file blast radius
+    · auth/tokens.py is security-sensitive, no prior history</pre>
       <p class="cmd-note">Scoped to the current session by default. All-time totals shown when session ID is unavailable.</p>
     </div>
 
@@ -159,25 +162,29 @@ surfaced:
       <div class="cmd-name">/hedwig-weights</div>
       <p class="cmd-desc">Shows how the learned classifier has drifted from its cold-start baseline, per feature, with direction. Every delta comes from real decisions in this repo, not synthetic data.</p>
       <pre><span class="cmt"># Example output</span>
-hedwig · classifier drift (42 decisions)
+Hedwig — learned classifier drift (42 real decisions; scorer ACTIVE)
 
-  feature                  prior    current   delta
-  prior_denials            0.000   -0.312    ▼ toward caution
-  prior_approvals          0.000   +0.289    ▲ toward trust
-  blast_radius             0.000   -0.221    ▼ toward caution
-  change_pattern_risk      0.000   +0.108    ▲ toward trust</pre>
+  ▼ blast radius          -8.60   (more cautious)
+  ▲ change pattern risk   +8.22   (more trusting)
+  ▲ new file              +5.07   (more trusting)
+  ▼ prior denials         -3.31   (more cautious)
+
+  ▲ toward auto-apply   ▼ toward check-in
+  all drift from real decisions, no weight hand-tuned</pre>
       <p class="cmd-note">Shows "classifier not active" until <code>/hedwig-setup</code> has been run and at least 10 real decisions have accumulated.</p>
     </div>
 
     <div class="cmd-block" id="retrospective">
       <div class="tag">observability</div>
       <div class="cmd-name">/hedwig-retrospective</div>
-      <p class="cmd-desc">Lists regret events: edits Hedwig auto-applied that were later reverted by the agent or failed end-of-turn verification. Each one triggered a corrective classifier update. An empty list means nothing auto-applied had to be walked back.</p>
+      <p class="cmd-desc">Lists self-corrections: edits Hedwig auto-applied that were later reverted by the agent or failed end-of-turn verification. Each one tightened the next similar edit and fed a corrective signal to the classifier. An empty list means nothing auto-applied had to be walked back.</p>
       <pre><span class="cmt"># Example output</span>
-hedwig · regret events
+Hedwig · 1 self-correction (auto-applied, then walked back)
 
-  api/routes.py   reversal   agent reverted an auto-applied edit
-  → classifier updated: api_change on this file now scores lower</pre>
+  • api/routes.py: reverted after auto-apply
+
+  This tightened Hedwig's next decision on that file
+  (and, via the classifier, on risk-similar edits elsewhere).</pre>
     </div>
 
     <div class="cmd-block" id="learn">
@@ -185,12 +192,16 @@ hedwig · regret events
       <div class="cmd-name">/hedwig-learn</div>
       <p class="cmd-desc">Reviews and confirms a behavioral pattern Hedwig has noticed. Patterns accumulate evidence silently; nothing changes until you confirm. Confirmed patterns fire in the governance cascade for future edits.</p>
       <pre><span class="cmt"># Example output</span>
-hedwig · pattern detected
+Hedwig noticed a pattern:
 
-  "You've denied 4 of the last 5 api_change edits in this repo.
-   Suggest: always surface api_change edits for review."
+  Always surface api_change edits in this repo for review?
 
-  confirm? [y/n]</pre>
+  Why: you reverted 4 of the last 5 auto-applied api_change edits.
+
+  Backed by 5 decisions.
+
+Confirm with  /hedwig-learn confirm
+Decline with  /hedwig-learn reject</pre>
       <p class="cmd-note">Declined patterns stay in the bank for transparency; they're not discarded. Confirmed patterns can be reviewed and revoked via <code>/hedwig-rules</code>.</p>
     </div>
 

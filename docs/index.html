@@ -258,14 +258,14 @@
 
 <div class="oneliner">
   <div class="wrap">
-    <p><b>Hedwig auto-applied an edit. You reverted it. The next similar edit gets surfaced.</b> That's the loop.</p>
+    <p><b>Trust a kind of edit and it starts flowing through. Revert one and the next like it stops for review.</b> Autonomy moves both ways.</p>
   </div>
 </div>
 
 <section id="see">
   <div class="wrap">
     <span class="eyebrow">See it work</span>
-    <h2 style="margin-top:16px">Every decision is visible. So is the learning.</h2>
+    <h2 style="margin-top:16px">Watch it decide. Watch it learn.</h2>
 
     <div class="shots">
       <div class="shot">
@@ -401,23 +401,23 @@ decision on that file.</span></pre>
   <div class="wrap">
     <span class="eyebrow">What makes it work</span>
     <h2 style="margin-top:16px">It calibrates to how you work in this repo.</h2>
-    <p class="lead" style="margin-top:14px;max-width:60ch">No allow-lists to maintain, no thresholds to guess. Four mechanisms, all running locally.</p>
+    <p class="lead" style="margin-top:14px;max-width:60ch">Claude Code's auto mode runs on rules you write up front. Hedwig learns the line from what you actually revert, and holds a security floor it won't cross no matter what it learns. Four mechanisms, all local.</p>
     <div class="caps" style="margin-top:36px">
       <div class="cap">
-        <h3>Regret correction</h3>
-        <p>Revert something Hedwig auto-applied and it takes the hint. That edit becomes a negative signal the scorer carries forward, so the next one like it stops for review.</p>
+        <h3>It learns from your reverts</h3>
+        <p>Undo something Hedwig auto-applied and it takes the hint. That revert becomes a negative signal the scorer carries forward, so the next edit like it stops for review.</p>
       </div>
       <div class="cap">
-        <h3>Memory that outlives the context window</h3>
-        <p>Your rules and past corrections live on disk, not in the prompt. Hedwig pulls in only what the current task touches. The window stays clean and nothing gets forgotten between sessions.</p>
+        <h3>It proposes rules, you approve them</h3>
+        <p>When a pattern shows up across enough of your decisions, Hedwig drafts a rule and asks. Every proposal cites the real edits behind it, and nothing changes how it behaves until you confirm.</p>
       </div>
       <div class="cap">
-        <h3>A classifier that learns live</h3>
+        <h3>A real classifier, trained live</h3>
         <p>A lightweight logistic-regression scorer updates one decision at a time and takes over from the built-in heuristics after ten real calls. No batch retraining, no GPU, no synthetic data.</p>
       </div>
       <div class="cap">
-        <h3>Trust runs both ways</h3>
-        <p>Claude can flag its own shaky edits and ask for a second look, and Hedwig honors it. The handshake is tighten-only by design: the agent can add caution, never remove it.</p>
+        <h3>Autonomy moves both ways</h3>
+        <p>Edits you keep approving earn a trust grant and start applying on their own. Edits you revert tighten back up. Claude can also flag its own shaky work and ask for review, but that handshake only ever adds caution, never removes it.</p>
       </div>
     </div>
   </div>
@@ -427,8 +427,8 @@ decision on that file.</span></pre>
   <div class="wrap">
     <div class="local-inner">
       <h2>Memory is on disk.</h2>
-      <p>Decisions, self-corrections, classifier weights, your rules. All of it lives in a local file, not a context window. It survives restarts, carries across sessions, and never leaves your machine. No API key, no cloud.</p>
-      <p>Add an <code>ANTHROPIC_API_KEY</code> to turn on meaning-based rule retrieval and pattern inference. Both opt-in.</p>
+      <p>Decisions, self-corrections, classifier weights, your rules. All of it lives in a local file, not a context window. It survives restarts and carries across sessions.</p>
+      <p>Semantic rule retrieval runs on-device with a small embedding model. Pattern inference is handled by the Claude Code session you're already in. All you need is Claude Code.</p>
     </div>
   </div>
 </div>
@@ -437,7 +437,7 @@ decision on that file.</span></pre>
   <div class="wrap">
     <div class="install-wrap">
       <h2>Two commands.</h2>
-      <p class="sub">Requires Claude Code and Python 3.11+. No API key needed.</p>
+      <p class="sub">All you need is Claude Code and Python 3.11+.</p>
       <div class="install-cta">
         <a class="btn btn-primary" href="https://github.com/tanjalshukla/HedwigCLI">View on GitHub →</a>
         <a class="btn" href="commands.html">Docs</a>
