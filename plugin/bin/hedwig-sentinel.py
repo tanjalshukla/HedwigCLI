@@ -38,6 +38,17 @@ def _data_dir() -> Path:
 
 
 def main() -> int:
+    """Top-level guard — a hook wired on every event must never exit non-zero
+    (it would surface an error on every governed action). Any failure, including
+    a non-UTF8/binary stdin pipe that makes sys.stdin.read() raise, is swallowed
+    to exit 0. Sentinel is best-effort observability."""
+    try:
+        return _main_inner()
+    except Exception:
+        return 0
+
+
+def _main_inner() -> int:
     label = sys.argv[1] if len(sys.argv) > 1 else "unknown"
     raw_payload = sys.stdin.read()
 

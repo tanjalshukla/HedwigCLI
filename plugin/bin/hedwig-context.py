@@ -133,6 +133,17 @@ def _user_prompt_submit(payload: dict) -> int:
 
 
 def main(argv: list[str]) -> int:
+    """Top-level guard — SessionStart / UserPromptSubmit hooks must never exit
+    non-zero or block the prompt. Any failure, including a non-UTF8/binary stdin
+    pipe that makes sys.stdin.read() raise, falls through to exit 0 with no
+    output. Repo-memory injection is best-effort."""
+    try:
+        return _main_inner(argv)
+    except Exception:
+        return 0
+
+
+def _main_inner(argv: list[str]) -> int:
     event = argv[0] if argv else "SessionStart"
     raw = sys.stdin.read()
     if not raw.strip():

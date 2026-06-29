@@ -245,6 +245,17 @@ def _run_verification(payload: dict) -> None:
 
 
 def main() -> int:
+    """Top-level guard — the Stop hook must never exit non-zero or it would
+    wedge the turn. Any failure, including a non-UTF8/binary stdin pipe that
+    makes sys.stdin.read() raise, is swallowed to exit 0. Verification and the
+    hypothesis nudge are best-effort."""
+    try:
+        return _main_inner()
+    except Exception:
+        return 0
+
+
+def _main_inner() -> int:
     # Re-exec under a deps-capable interpreter before reading stdin, so the
     # verification-failure regret feeds the real learned classifier at the
     # booth (update_classifier_for_regret) instead of degrading to heuristic.
