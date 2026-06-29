@@ -79,3 +79,21 @@ jobs:
             exit 1
           fi
           echo "✓ no template placeholders left in docs/"
+
+      - name: Site version matches the plugin manifest
+        run: |
+          python3 - <<'PY'
+          import json, re, sys
+          from pathlib import Path
+          manifest = json.loads(Path("plugin/.claude-plugin/plugin.json").read_text())["version"]
+          html = Path("docs/index.html").read_text()
+          m = re.search(r'data-hedwig-version[^>]*>v?([\d.]+)<', html)
+          if not m:
+              print("::error::no data-hedwig-version badge found in docs/index.html")
+              sys.exit(1)
+          shown = m.group(1)
+          if shown != manifest:
+              print(f"::error::site shows v{shown} but plugin.json is {manifest} — bump the footer badge in docs/index.html")
+              sys.exit(1)
+          print(f"✓ site version v{shown} matches the plugin manifest")
+          PY
