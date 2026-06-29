@@ -75,6 +75,20 @@ def _emit(obj: dict) -> None:
     sys.stdout.flush()
 
 
+def _emit_decision(decision: str, reason: str) -> None:
+    """Emit a PreToolUse permission decision — the plugin's protocol contract
+    with Claude Code. ``decision`` is "allow" (auto-apply / suppress the native
+    prompt) or "deny" (block with a reason fed back to the agent). Centralizes
+    the hookSpecificOutput shape so the four decision sites can't drift."""
+    _emit({
+        "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": decision,
+            "permissionDecisionReason": reason,
+        },
+    })
+
+
 def _plain_reason(*, verdict: str, rel: str, risk, history, is_new_file: bool) -> str:
     """Plain-English judgment for the developer at the decision moment.
 
@@ -514,26 +528,14 @@ def _main_inner() -> int:
                 payload, rel, "suppressed", 0.0, risk, c_reason,
                 edit_old=_c_edit_old, edit_new=_c_edit_new, scorer="constraint",
             )
-            _emit({
-                "hookSpecificOutput": {
-                    "hookEventName": "PreToolUse",
-                    "permissionDecision": "allow",
-                    "permissionDecisionReason": c_reason,
-                },
-            })
+            _emit_decision("allow", c_reason)
             return 0
         if c_action == "deny":
             _log_decision(
                 payload, rel, DENIED_VERDICT, 0.0, risk, c_reason,
                 edit_old=_c_edit_old, edit_new=_c_edit_new, scorer="constraint",
             )
-            _emit({
-                "hookSpecificOutput": {
-                    "hookEventName": "PreToolUse",
-                    "permissionDecision": "deny",
-                    "permissionDecisionReason": c_reason,
-                },
-            })
+            _emit_decision("deny", c_reason)
             return 0
         # always_check_in: surface to the native prompt, skip the scorer entirely.
         _log_decision(
@@ -626,13 +628,7 @@ def _main_inner() -> int:
             payload, rel, "suppressed", decision.score, risk, reason,
             edit_old=edit_old, edit_new=edit_new, scorer=scorer_label,
         )
-        _emit({
-            "hookSpecificOutput": {
-                "hookEventName": "PreToolUse",
-                "permissionDecision": "allow",
-                "permissionDecisionReason": reason,
-            },
-        })
+        _emit_decision("allow", reason)
         return 0
 
     # Cascade layer 5b — R6 deny+reason self-correction loop. For a surfaced
@@ -658,13 +654,7 @@ def _main_inner() -> int:
             payload, rel, DENIED_VERDICT, decision.score, risk, deny_reason,
             edit_old=edit_old, edit_new=edit_new, scorer=scorer_label,
         )
-        _emit({
-            "hookSpecificOutput": {
-                "hookEventName": "PreToolUse",
-                "permissionDecision": "deny",
-                "permissionDecisionReason": deny_reason,
-            },
-        })
+        _emit_decision("deny", deny_reason)
         return 0
 
     # Otherwise (ordinary check-in, handshake surface, or the deny cap reached)
