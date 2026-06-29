@@ -216,6 +216,31 @@ def _unexpected_change_types(
     return tuple(unexpected)
 
 
+def _apply_security_floor(decision: PolicyDecision, risk: RiskSignals) -> PolicyDecision:
+    """Deterministic security floor (invariant 5: the model is untrusted).
+
+    The learned PolicyClassifier can drift toward "approve everything" after
+    enough low-risk auto-approvals and return ``proceed`` for a
+    security-sensitive file — which would auto-apply before any surfaced-branch
+    gate runs. ``assess_risk`` flags ``is_security_sensitive`` deterministically
+    and model-independently, so enforce it as a FLOOR the scorer cannot
+    override. Tighten-only: downgrade ``proceed`` → ``check_in``, never the
+    reverse. Mirrors the plugin floor (hedwig-decide.py) so both front-ends
+    agree. A no-op for non-security files and for already-surfaced verdicts.
+    """
+    if decision.action == "proceed" and risk.is_security_sensitive:
+        return PolicyDecision(
+            action="check_in",
+            score=decision.score,
+            reasons=(
+                *decision.reasons,
+                "security floor: security-sensitive file always surfaces "
+                "for review, regardless of the learned score",
+            ),
+        )
+    return decision
+
+
 def _apply_milestone_reasons(
     *,
     declaration: IntentDeclaration,
@@ -851,6 +876,10 @@ def _evaluate_apply_stage(
             file_path=path,
             risk=risk,
         ).decision
+
+        # Deterministic security floor (invariant 5), applied after the
+        # scorer/vote/preference layers — see _apply_security_floor.
+        decision = _apply_security_floor(decision, risk)
 
         apply_policies[path] = decision
         if decision.action == "check_in":
