@@ -104,8 +104,8 @@ def _plain_reason(*, verdict: str, rel: str, risk, history, is_new_file: bool) -
     # The money-shot: prior bad outcome on this file. Most compelling reason.
     if history.denials > 0 and surfacing:
         return (
-            f"You reverted or a check failed on a recent edit to {name} — "
-            f"surfacing this one so you can take a look."
+            f"You reverted or a check failed on a recent edit to {name}. "
+            f"Surfacing this one so you can take a look."
         )
 
     bits: list[str] = []
@@ -120,14 +120,14 @@ def _plain_reason(*, verdict: str, rel: str, risk, history, is_new_file: bool) -
 
     if surfacing:
         if bits:
-            return f"{name}: " + _join(bits) + " — surfacing this one for your review."
-        return f"{name}: outside what I've seen go well here — surfacing for your review."
+            return f"{name}: " + _join(bits) + ". Surfacing this one for your review."
+        return f"{name}: outside what I've seen go well here. Surfacing for your review."
 
     # Auto-applied (proceed / proceed_flag).
     if history.approvals > 0:
-        return f"{name}: similar edits here have gone well — applying automatically."
+        return f"{name}: similar edits here have gone well. Applying automatically."
     pattern = (risk.change_pattern or "general").replace("_", " ")
-    return f"{name}: low-risk {pattern} — applying automatically."
+    return f"{name}: low-risk {pattern}. Applying automatically."
 
 
 def _join(items: list[str]) -> str:
@@ -317,8 +317,8 @@ def _apply_handshake(action: str, session_id, rel: str) -> tuple[str, str]:
     else:
         base = f"{name}: the agent flagged low confidence ({float(confidence):.0%}) on this edit"
     if agent_reason:
-        base += f' — "{agent_reason}"'
-    return "check_in", base + " — surfacing for your review."
+        base += f': "{agent_reason}"'
+    return "check_in", base + ". Surfacing for your review."
 
 
 def _should_deny(risk, history, is_new_file: bool) -> bool:
@@ -362,13 +362,13 @@ def _deny_reason(rel: str, risk, history) -> str:
     elif risk.is_security_sensitive:
         why = f"{name} is security-sensitive"
     elif risk.blast_radius > 3:
-        why = f"{name} has {risk.blast_radius} dependents — a wide blast radius"
+        why = f"{name} has {risk.blast_radius} dependents, a wide blast radius"
     else:
         why = f"{name} looks risky"
     return (
         f"Hedwig is holding this edit: {why}. Narrow the change to the smallest "
         f"safe step (one function / one concern), or explain why it's needed and "
-        f"re-propose — otherwise it will go to the developer for review."
+        f"re-propose. Otherwise it will go to the developer for review."
     )
 
 
@@ -605,7 +605,7 @@ def _main_inner() -> int:
     if action == "proceed" and risk.is_security_sensitive:
         action = "check_in"
         forced_reason = (
-            f"{rel.rsplit('/', 1)[-1]} is security-sensitive — Hedwig always "
+            f"{rel.rsplit('/', 1)[-1]} is security-sensitive. Hedwig always "
             f"surfaces these for review, regardless of what it has learned."
         )
 

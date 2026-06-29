@@ -1,0 +1,33 @@
+cff-version: 1.2.0
+message: "If you use Hedwig in your research, please cite it as below."
+title: "Hedwig: An Outcome-Calibrated Governance Layer for Coding Agents"
+abstract: >-
+  Hedwig is a local governance layer for coding agents (shipped as a Claude Code
+  plugin). For every file edit an agent proposes, it decides whether to
+  auto-apply or surface for human review, and calibrates that line per-repository
+  from outcomes — learning from reverts and verification failures rather than
+  from a configuration written once.
+type: software
+authors:
+  - family-names: Shukla
+    given-names: Tanjal
+repository-code: "https://github.com/tanjalshukla/HedwigCLI"
+url: "https://tanjalshukla.github.io/HedwigCLI/"
+license: MIT
+keywords:
+  - human-in-the-loop
+  - coding agents
+  - agent governance
+  - oversight
+  - online learning
+preferred-citation:
+  type: conference-paper
+  title: "Hedwig: An Outcome-Calibrated Governance Layer for Coding Agents"
+  authors:
+    - family-names: Shukla
+      given-names: Tanjal
+  collection-title: "Proceedings of the ACM Conference on AI and Agentic Systems (CAIS)"
+  year: 2026
+  notes: >-
+    Award-winning demonstration paper (1 of 10). Update with the final
+    page range and DOI once the proceedings are published.

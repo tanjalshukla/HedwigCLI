@@ -61,7 +61,7 @@ def _cmd_weights() -> int:
     if not learned_scorer_reachable():
         sys.stdout.write(
             "The learned classifier isn't active here, so there are no weights to "
-            "show yet — Hedwig is running the stdlib heuristic.\n"
+            "show yet. Hedwig is running the stdlib heuristic.\n"
             "Turn it on once with: /hedwig-setup\n"
         )
         return 0
@@ -87,7 +87,7 @@ def _cmd_weights() -> int:
     lines = [
         owl_str(),
         "",
-        f"Hedwig — learned classifier drift ({samples} real decisions; "
+        f"Hedwig · learned classifier drift ({samples} real decisions; "
         f"{'learned scorer ACTIVE' if active else f'heuristic until {MIN_SAMPLES_FOR_LEARNED}'})",
         "",
     ]
@@ -96,7 +96,7 @@ def _cmd_weights() -> int:
     significant = [(k, v) for k, v in ranked if abs(v) > 0.01]
     shown = significant or ranked[:3]
     if not significant:
-        lines.append("  No meaningful drift yet — the classifier is still near its")
+        lines.append("  No meaningful drift yet. The classifier is still near its")
         lines.append("  cold-start baseline. Drift appears as real decisions accumulate.")
         lines.append("")
     for name, delta in shown:
@@ -107,7 +107,7 @@ def _cmd_weights() -> int:
     lines.append("")
     lines.append(
         "  ▲ = this signal now pushes toward auto-apply; ▼ = toward a check-in. "
-        "All drift is from this repo's real decisions — no weight was hand-tuned."
+        "All drift is from this repo's real decisions. No weight was hand-tuned."
     )
     sys.stdout.write("\n".join(lines) + "\n")
     return 0
@@ -163,16 +163,118 @@ def _cmd_retrospective() -> int:
     return 0
 
 
+def _cmd_report() -> int:
+    """Repo-activity summary: how much Hedwig has governed here, and what it's
+    stored. The plugin analogue of the CLI's /observe report."""
+    repo = repo_root_key(None)
+    try:
+        db = open_trust_db()
+        total = db.trace_count(repo)
+        constraints = db.list_constraints(repo)
+        guidelines = db.list_behavioral_guidelines(repo)
+        notes = db.recent_logic_notes(repo, limit=100)
+    except Exception as exc:
+        sys.stdout.write(f"Could not read repo activity: {exc}\n")
+        return 0
+    lines = [
+        owl_str(), "",
+        "Hedwig · repo activity",
+        "",
+        f"  {total} decision{'' if total == 1 else 's'} governed in this repo",
+        f"  {len(constraints)} hard constraint{'' if len(constraints) == 1 else 's'}",
+        f"  {len(guidelines)} behavioral guideline{'' if len(guidelines) == 1 else 's'}",
+        f"  {len(notes)} repo fact{'' if len(notes) == 1 else 's'} remembered",
+        "",
+        "  /hedwig-weights for what the classifier learned · "
+        "/hedwig-retrospective for self-corrections · /hedwig-memory for the facts.",
+    ]
+    sys.stdout.write("\n".join(lines) + "\n")
+    return 0
+
+
+def _cmd_memory() -> int:
+    """Show what Hedwig has stored as repo memory — the guidelines, facts, and
+    constraints it injects into the agent's context. The plugin analogue of the
+    CLI's /context + /observe preferences."""
+    repo = repo_root_key(None)
+    try:
+        db = open_trust_db()
+        guidelines = db.list_behavioral_guidelines(repo)
+        notes = db.recent_logic_notes(repo, limit=20)
+        constraints = db.list_constraints(repo)
+    except Exception as exc:
+        sys.stdout.write(f"Could not read repo memory: {exc}\n")
+        return 0
+    lines = [owl_str(), "", "Hedwig · repo memory (injected into the agent's context)", ""]
+    g = [getattr(x, "guideline", str(x)).strip() for x in guidelines]
+    g = [x for x in g if x]
+    if g:
+        lines.append("  Guidelines:")
+        lines.extend(f"    • {x}" for x in g[:10])
+    n = [getattr(x, "note", str(x)).strip() for x in notes]
+    n = [x for x in n if x]
+    if n:
+        lines.append("  Repo facts:")
+        lines.extend(f"    • {x}" for x in n[:10])
+    if constraints:
+        lines.append("  Hard constraints:")
+        lines.extend(f"    • {c.policy_for('write')}  {c.path_pattern}" for c in constraints[:10])
+    if not (g or n or constraints):
+        lines.append("  Nothing stored yet. Hedwig builds repo memory as you work, "
+                     "or run /hedwig-scan to seed it.")
+    sys.stdout.write("\n".join(lines) + "\n")
+    return 0
+
+
+def _cmd_cochange() -> int:
+    """Files that historically change together in this repo. Grouped by session
+    (the plugin's analogue of the CLI's 'task' unit), over apply traces."""
+    repo = repo_root_key(None)
+    try:
+        from sc.cochange import cochange_graph  # noqa: PLC0415
+
+        db = open_trust_db()
+        graph = cochange_graph(db, repo, min_count=2, limit_per_file=3, group_col="session_id")
+    except Exception as exc:
+        sys.stdout.write(f"Could not compute co-change: {exc}\n")
+        return 0
+    if not graph:
+        sys.stdout.write(
+            f"{owl_str()}\n\n"
+            "No co-change pattern yet. Hedwig hasn't seen files edited together "
+            "across enough sessions in this repo.\n"
+        )
+        return 0
+    lines = [owl_str(), "", "Hedwig · files that change together in this repo", ""]
+    for src in sorted(graph)[:10]:
+        nbrs = ", ".join(f"{f} ({n})" for f, n in graph[src])
+        lines.append(f"  {src}")
+        lines.append(f"    ↔ {nbrs}")
+    lines.append("")
+    lines.append("  (n = sessions where both were edited). Hedwig uses this as a "
+                 "blast-radius signal when scoring an edit.")
+    sys.stdout.write("\n".join(lines) + "\n")
+    return 0
+
+
 def main(argv: list[str]) -> int:
     cmd = (argv[0].lower() if argv else "weights")
     if cmd == "retrospective":
         return _cmd_retrospective()
     if cmd == "weights":
         return _cmd_weights()
+    if cmd == "report":
+        return _cmd_report()
+    if cmd == "memory":
+        return _cmd_memory()
+    if cmd == "cochange":
+        return _cmd_cochange()
     sys.stdout.write(
         "Usage:\n"
         "  /hedwig-weights         (classifier drift)\n"
         "  /hedwig-retrospective   (self-corrections)\n"
+        "  hedwig-observe.py report   (repo activity summary)\n"
+        "  hedwig-observe.py memory   (stored repo memory)\n"
     )
     return 0
 

@@ -480,7 +480,10 @@ def maybe_generate_llm_hypotheses(
     if turn_count == 0 or turn_count % LLM_GENERATION_INTERVAL != 0:
         return []
 
-    traces = trust_db.session_traces(repo_root, session_id)
+    # Normalize sqlite3.Row -> dict: ingest_llm_hypotheses' logic_note branch
+    # uses t.get("file_path"), which Rows don't support. The plugin path already
+    # passes dicts; do the same here so both callers feed dicts.
+    traces = [dict(t) for t in trust_db.session_traces(repo_root, session_id)]
     if len(traces) < MIN_EVIDENCE:
         return []
     valid_trace_ids = {int(t["id"]) for t in traces}
@@ -535,9 +538,40 @@ def maybe_generate_llm_hypotheses(
     except Exception:
         return []
 
+    return ingest_llm_hypotheses(
+        trust_db=trust_db,
+        repo_root=repo_root,
+        session_id=session_id,
+        candidates_data=candidates_data,
+        traces=traces,
+        valid_trace_ids=valid_trace_ids,
+    )
+
+
+def ingest_llm_hypotheses(
+    *,
+    trust_db: TrustDB,
+    repo_root: str,
+    session_id: str,
+    candidates_data: list,
+    traces: list,
+    valid_trace_ids: set[int],
+) -> list[int]:
+    """Ingest LLM-proposed hypothesis candidates into the bank, with citation
+    validation. Shared by two callers: the CLI's Bedrock noticer
+    (maybe_generate_llm_hypotheses) and the plugin's agent-skill noticer
+    (hedwig-notice.py) — the only difference between them is HOW the JSON
+    candidates were produced (a Bedrock call vs. Claude Code reasoning in the
+    skill). The grounding rule is identical: each candidate must cite ≥1 real
+    trace ID, or it is dropped (the anti-hallucination gate). ``candidates_data``
+    is the parsed JSON array; ``valid_trace_ids`` is the set of real trace IDs
+    citations are checked against. Returns the new candidate IDs created."""
     from .preferences import (
         Condition, Lifecycle, Preference, PreferenceAction, Scope, Trigger
     )
+
+    if not isinstance(candidates_data, list):
+        return []
 
     new_ids: list[int] = []
     for item in candidates_data[:3]:

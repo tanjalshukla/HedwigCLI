@@ -73,8 +73,8 @@ def _cmd_show() -> int:
         f"  {hyp.prompt}\n\n"
         f"  Why: {hyp.rationale}\n\n"
         f"{evidence_line}"
-        "Confirm with  /hedwig-learn confirm  — it fires in the cascade going forward.\n"
-        "Decline with  /hedwig-learn reject  — it stays in the bank, nothing discarded.\n"
+        "Confirm with  /hedwig-learn confirm  to fire it in the cascade going forward.\n"
+        "Decline with  /hedwig-learn reject  to keep it in the bank, nothing discarded.\n"
     )
     return 0
 
@@ -87,7 +87,7 @@ def _resolve(confirmed: bool) -> int:
         db = open_trust_db()
         hyp = _ready(db)
         if hyp is None:
-            sys.stdout.write("Nothing is waiting for review — nothing to confirm or decline.\n")
+            sys.stdout.write("Nothing is waiting for review. Nothing to confirm or decline.\n")
             return 0
         repo = repo_root_key(None)
         if confirmed:
@@ -127,12 +127,62 @@ def _resolve(confirmed: bool) -> int:
     return 0
 
 
+def _cmd_active() -> int:
+    """List the confirmed preferences currently in effect for this repo — what
+    governance the developer has actually accepted (the /prefs view from the
+    CLI). Read-only."""
+    try:
+        import json as _json  # noqa: PLC0415
+
+        from sc.repo_memory import humanize_preference  # noqa: PLC0415
+
+        db = open_trust_db()
+        rows = db.confirmed_preferences_for_repo(repo_root_key(None))
+    except Exception as exc:
+        sys.stdout.write(f"Could not read active preferences: {exc}\n")
+        return 0
+
+    active = []
+    for row in rows:
+        try:
+            payload = _json.loads(row["preference_json"])
+        except Exception:
+            continue
+        if not payload.get("accepted"):
+            continue
+        hp = humanize_preference(payload, scope="this repo")
+        if hp is not None:
+            active.append(hp)
+
+    if not active:
+        sys.stdout.write(
+            f"{owl_str()}\n\n"
+            "No confirmed preferences yet for this repo.\n"
+            "When Hedwig surfaces a pattern (/hedwig-learn) and you confirm it, "
+            "it shows up here as active governance.\n"
+        )
+        return 0
+
+    lines = [f"{owl_str()}", "", "Hedwig · active preferences for this repo:", ""]
+    for hp in active:
+        lines.append(f"  • {hp.headline}")
+        if getattr(hp, "basis", ""):
+            lines.append(f"    {hp.basis}")
+    lines.append("")
+    lines.append("These tighten the cascade on every governed edit. Manage hard "
+                 "constraints with /hedwig-rules.")
+    sys.stdout.write("\n".join(lines) + "\n")
+    return 0
+
+
 def main(argv: list[str]) -> int:
     verb = (argv[0].lower() if argv else "show")
     if verb in ("confirm", "accept", "yes", "y"):
         return _resolve(confirmed=True)
     if verb in ("reject", "decline", "no", "n"):
         return _resolve(confirmed=False)
+    if verb in ("active", "list", "prefs", "preferences"):
+        return _cmd_active()
     return _cmd_show()
 
 

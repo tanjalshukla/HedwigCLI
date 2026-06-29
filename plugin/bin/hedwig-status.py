@@ -131,7 +131,7 @@ def _render(summary: dict, rows: list[dict], scope: str) -> str:
         lines = [
             owl_str(),
             "",
-            "Hedwig — trust runtime",
+            "Hedwig · trust runtime",
             "",
             f"No edits governed yet ({scope}). Make a few edits and run /hedwig-status.",
         ]
@@ -142,7 +142,7 @@ def _render(summary: dict, rows: list[dict], scope: str) -> str:
     lines = [
         owl_str(),
         "",
-        "Hedwig — trust runtime",
+        "Hedwig · trust runtime",
         "",
         f"  Auto-applied   {summary['suppressed']:>3}   {_bar(summary['suppression_rate'])}  {pct}%",
         f"  Surfaced       {summary['surfaced']:>3}   for your review",
@@ -185,12 +185,12 @@ def _render(summary: dict, rows: list[dict], scope: str) -> str:
             remaining = MIN_SAMPLES_FOR_LEARNED - samples
             lines.append("")
             lines.append(
-                f"  Learned scorer: {samples}/{MIN_SAMPLES_FOR_LEARNED} decisions — "
+                f"  Learned scorer: {samples}/{MIN_SAMPLES_FOR_LEARNED} decisions, "
                 f"{remaining} more until it takes over from the heuristic."
             )
     elif not learned_scorer_reachable():
         lines.append("")
-        lines.append("  ⚠ Heuristic-only — run /hedwig-setup once to enable learning.")
+        lines.append("  ⚠ Heuristic-only. Run /hedwig-setup once to enable learning.")
 
     return "\n".join(lines)
 

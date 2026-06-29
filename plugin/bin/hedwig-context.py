@@ -95,7 +95,7 @@ def _session_start(payload: dict) -> int:
     parts: list[str] = []
     if summary:
         parts.append(
-            "Hedwig — what we've learned about this repo so far "
+            "Hedwig · what we've learned about this repo so far "
             f"(from prior sessions): {summary}"
         )
     # First session in this repo (no agent scan yet) → invite a one-time scan so
@@ -103,7 +103,7 @@ def _session_start(payload: dict) -> int:
     # repo-scan skill carries the how/when; this is just the trigger.
     if _should_invite_scan(db, repo_root):
         parts.append(
-            "Hedwig — this repo hasn't been scanned yet. Early in your work here, "
+            "Hedwig · this repo hasn't been scanned yet. Early in your work here, "
             "use the repo-scan skill once to flag security-sensitive files (and "
             "note durable repo facts) so Hedwig governs edits to them correctly."
         )
@@ -153,7 +153,7 @@ def _user_prompt_submit(payload: dict) -> int:
         lines.extend(f"- {n}" for n in n_text[:3])
     if not lines:
         return 0
-    return _emit("UserPromptSubmit", "Hedwig memory — " + "\n".join(lines))
+    return _emit("UserPromptSubmit", "Hedwig memory · " + "\n".join(lines))
 
 
 def main(argv: list[str]) -> int:

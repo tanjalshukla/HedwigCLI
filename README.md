@@ -62,9 +62,10 @@ online classifier runs on every edit.
 | Online logistic-regression classifier | ✅ (after `/hedwig-setup`) |
 | Regret loop (reversal + verification failure) | ✅ |
 | Hard constraints (`/hedwig-rules`) | ✅ |
-| Repo memory layer | ✅ |
+| Repo memory layer (`/hedwig-memory`) | ✅ |
+| Co-change signal (`/hedwig-cochange`) | ✅ |
 | Semantic security scan (`/hedwig-scan`) | ✅ |
-| Hypothesis bank + confirmation (`/hedwig-learn`) | ✅ |
+| Hypothesis bank + rule-based & agent-noticed candidates (`/hedwig-learn`, `/hedwig-notice`) | ✅ |
 | Confidence handshake (agent self-pause) | ✅ |
 | Threshold adaptation + session signals | 🔜 |
 
@@ -88,9 +89,12 @@ hw
 /hedwig-status        # suppressed vs. surfaced this session, with reasons
 /hedwig-weights       # classifier drift from cold-start (▲▼ per feature)
 /hedwig-retrospective # regret events — where it was too permissive
-/hedwig-learn         # review and confirm a noticed behavioral pattern
+/hedwig-learn         # review/confirm a noticed pattern; `active` lists confirmed ones
+/hedwig-notice        # propose standing rules from this session's traces
 /hedwig-rules         # view or set hard constraints
 /hedwig-scan          # flag security-sensitive files keyword matching misses
+/hedwig-cochange      # files that historically change together
+/hedwig-memory        # guidelines, facts, and constraints Hedwig has stored
 ```
 
 ---

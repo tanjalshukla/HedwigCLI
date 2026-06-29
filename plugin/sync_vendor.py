@@ -80,6 +80,7 @@ from pathlib import Path
 # forbidden (NON_VENDORED_SC plus the closure check below enforce it).
 VENDORED_MODULES: tuple[str, ...] = (
     "__init__.py",
+    "cochange.py",
     "features.py",
     "hypothesis_bank.py",
     "ml_policy.py",
@@ -108,7 +109,6 @@ NON_VENDORED_SC = {
     "autonomy",
     "agent_client",
     "regret",
-    "cochange",
     "prompt_builder",
     "schema",
     "config",
