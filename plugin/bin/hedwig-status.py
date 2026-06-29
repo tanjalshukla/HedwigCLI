@@ -166,7 +166,7 @@ def _render(summary: dict, rows: list[dict], scope: str) -> str:
     if regrets:
         lines.append("")
         lines.append(
-            f"  {regrets} regret event{'s' if regrets != 1 else ''} — "
+            f"  {regrets} self-correction{'s' if regrets != 1 else ''}: "
             "auto-applied edits later reverted or failing verification."
         )
         lines.append("  Each one tightened the next similar edit. Run /hedwig-retrospective to see them.")

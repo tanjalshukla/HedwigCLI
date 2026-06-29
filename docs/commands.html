@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Hedwig — Commands</title>
+<title>Hedwig · Commands</title>
 <meta name="description" content="Slash commands for the Hedwig Claude Code plugin." />
 <meta name="theme-color" content="#0a0c11" />
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='3' fill='%230a0c11'/%3E%3Ctext x='2.5' y='12' font-family='monospace' font-size='11' fill='%2367c7d6'%3Ehw%3C/text%3E%3C/svg%3E" />
@@ -135,13 +135,13 @@
 
 <span class="cmt"># Pull the latest release later</span>
 <span class="p">$</span> claude plugin update hedwig@hedwig-marketplace</pre>
-      <p class="cmd-note">Installed copies are pinned to a release, so run <code>update</code> to get new versions. Without <code>/hedwig-setup</code> the plugin still runs the deterministic heuristic scorer — the update just adds the learning classifier.</p>
+      <p class="cmd-note">Installed copies are pinned to a release, so run <code>update</code> to get new versions. Without <code>/hedwig-setup</code> the plugin still runs the deterministic heuristic scorer; the update just adds the learning classifier.</p>
     </div>
 
     <div class="cmd-block" id="status">
       <div class="tag">observability</div>
       <div class="cmd-name">/hedwig-status</div>
-      <p class="cmd-desc">Shows how many edits were auto-applied vs. surfaced this session, with plain-English reasons for each surfaced edit. The primary dashboard — run it after any task to see what Hedwig did and why.</p>
+      <p class="cmd-desc">Shows how many edits were auto-applied vs. surfaced this session, with plain-English reasons for each surfaced edit. The primary dashboard. Run it after any task to see what Hedwig did and why.</p>
       <pre><span class="cmt"># Example output</span>
 hedwig · session summary
   suppressed  8   auto-applied silently
@@ -156,7 +156,7 @@ surfaced:
     <div class="cmd-block" id="weights">
       <div class="tag">observability</div>
       <div class="cmd-name">/hedwig-weights</div>
-      <p class="cmd-desc">Shows how the learned classifier has drifted from its cold-start baseline — per feature, with direction. Every delta comes from real decisions in this repo, not synthetic data.</p>
+      <p class="cmd-desc">Shows how the learned classifier has drifted from its cold-start baseline, per feature, with direction. Every delta comes from real decisions in this repo, not synthetic data.</p>
       <pre><span class="cmt"># Example output</span>
 hedwig · classifier drift (42 decisions)
 
@@ -171,7 +171,7 @@ hedwig · classifier drift (42 decisions)
     <div class="cmd-block" id="retrospective">
       <div class="tag">observability</div>
       <div class="cmd-name">/hedwig-retrospective</div>
-      <p class="cmd-desc">Lists regret events — edits Hedwig auto-applied that were later reverted by the agent or failed end-of-turn verification. Each one triggered a corrective classifier update. An empty list means nothing auto-applied had to be walked back.</p>
+      <p class="cmd-desc">Lists regret events: edits Hedwig auto-applied that were later reverted by the agent or failed end-of-turn verification. Each one triggered a corrective classifier update. An empty list means nothing auto-applied had to be walked back.</p>
       <pre><span class="cmt"># Example output</span>
 hedwig · regret events
 
@@ -182,7 +182,7 @@ hedwig · regret events
     <div class="cmd-block" id="learn">
       <div class="tag">learning</div>
       <div class="cmd-name">/hedwig-learn</div>
-      <p class="cmd-desc">Reviews and confirms a behavioral pattern Hedwig has noticed. Patterns accumulate evidence silently — nothing changes until you confirm. Confirmed patterns fire in the governance cascade for future edits.</p>
+      <p class="cmd-desc">Reviews and confirms a behavioral pattern Hedwig has noticed. Patterns accumulate evidence silently; nothing changes until you confirm. Confirmed patterns fire in the governance cascade for future edits.</p>
       <pre><span class="cmt"># Example output</span>
 hedwig · pattern detected
 
@@ -190,13 +190,13 @@ hedwig · pattern detected
    Suggest: always surface api_change edits for review."
 
   confirm? [y/n]</pre>
-      <p class="cmd-note">Declined patterns stay in the bank for transparency — they're not discarded. Confirmed patterns can be reviewed and revoked via <code>/hedwig-rules</code>.</p>
+      <p class="cmd-note">Declined patterns stay in the bank for transparency; they're not discarded. Confirmed patterns can be reviewed and revoked via <code>/hedwig-rules</code>.</p>
     </div>
 
     <div class="cmd-block" id="rules">
       <div class="tag">configuration</div>
       <div class="cmd-name">/hedwig-rules</div>
-      <p class="cmd-desc">Views or sets hard constraints — non-negotiable path rules that override all scoring. Use <code>deny</code> to block a path entirely, <code>check_in</code> to always surface it, or <code>allow</code> to always auto-apply.</p>
+      <p class="cmd-desc">Views or sets hard constraints: non-negotiable path rules that override all scoring. Use <code>deny</code> to block a path entirely, <code>check_in</code> to always surface it, or <code>allow</code> to always auto-apply.</p>
       <pre><span class="cmt"># List current constraints</span>
 <span class="p">/hedwig-rules</span>
 
@@ -208,7 +208,7 @@ hedwig · pattern detected
 
 <span class="cmt"># Remove a constraint</span>
 <span class="p">/hedwig-rules</span> remove "config/prod/**"</pre>
-      <p class="cmd-note">Hard constraints are enforced before any scoring — they override leases, the classifier, and confirmed preferences. Path patterns use shell-glob matching against repo-relative paths.</p>
+      <p class="cmd-note">Hard constraints are enforced before any scoring; they override leases, the classifier, and confirmed preferences. Path patterns use shell-glob matching against repo-relative paths.</p>
     </div>
   </div>
 </div>

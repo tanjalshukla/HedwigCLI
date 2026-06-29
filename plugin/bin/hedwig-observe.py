@@ -8,7 +8,7 @@ so a developer (or a booth visitor) can SEE the learning, not only trigger it:
                                         classifier from its cold-start baseline
                                         (which signals this repo's behavior has
                                         shifted, and in which direction)
-    hedwig-observe.py retrospective  -> regret events: edits Hedwig auto-applied
+    hedwig-observe.py retrospective  -> self-corrections: edits Hedwig auto-applied
                                         that were later reverted or failed
                                         verification (where it was too trusting)
 
@@ -131,16 +131,16 @@ def _cmd_retrospective() -> int:
                 events.append((f, kind))
     if not events:
         sys.stdout.write(
-            "No regret events yet — Hedwig hasn't auto-applied an edit that was "
+            "Nothing to walk back yet. Hedwig hasn't auto-applied an edit that was "
             "later reverted or failed verification in this repo.\n"
-            "This is the signal that Hedwig was too trusting; an empty list is good.\n"
+            "That's a good sign; nothing it trusted had to be undone.\n"
         )
         return 0
     lines = [
         owl_str(),
         "",
-        f"Hedwig — retrospective: {len(events)} regret event"
-        f"{'s' if len(events) != 1 else ''} (auto-applied, then corrected)",
+        f"Hedwig · {len(events)} self-correction"
+        f"{'s' if len(events) != 1 else ''} (auto-applied, then walked back)",
         "",
     ]
     # Most recent first; de-dupe identical (file, kind) pairs.
@@ -150,7 +150,7 @@ def _cmd_retrospective() -> int:
         if key in seen:
             continue
         seen.add(key)
-        lines.append(f"  • {f} — {kind} after auto-apply")
+        lines.append(f"  • {f}: {kind} after auto-apply")
         if len(seen) >= 10:
             break
     lines.append("")
@@ -158,6 +158,7 @@ def _cmd_retrospective() -> int:
         "  Each of these tightened Hedwig's next decision on that file (and, via "
         "the classifier, on risk-similar edits elsewhere)."
     )
+    lines.append("  This is Hedwig catching its own mistakes and learning from them.")
     sys.stdout.write("\n".join(lines) + "\n")
     return 0
 
@@ -171,7 +172,7 @@ def main(argv: list[str]) -> int:
     sys.stdout.write(
         "Usage:\n"
         "  /hedwig-weights         (classifier drift)\n"
-        "  /hedwig-retrospective   (regret events)\n"
+        "  /hedwig-retrospective   (self-corrections)\n"
     )
     return 0
 

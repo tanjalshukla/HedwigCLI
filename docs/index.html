@@ -76,9 +76,16 @@
     width:1200px;height:600px;pointer-events:none;
     background:radial-gradient(closest-side,rgba(103,199,214,.09),transparent 70%)}
   .hero .inner{position:relative;max-width:800px;margin:0 auto}
-  .hero .eyebrow{display:inline-block;margin-bottom:24px}
+  .hero .owl{font-family:var(--mono);font-size:20px;line-height:1.05;white-space:pre;
+    color:var(--accent);margin:0 0 26px;display:inline-block;
+    text-shadow:0 0 24px rgba(103,199,214,.35)}
+  .hero .eyebrow{display:block;margin-bottom:18px}
   .hero h1{margin:0 auto}
   .hero .lead{margin:22px auto 0;max-width:48ch}
+  .hero .stack{margin:22px auto 0;font-family:var(--mono);font-size:.78rem;
+    letter-spacing:.02em;color:var(--ink-3);max-width:60ch}
+  .hero .stack b{color:var(--accent);font-weight:600}
+  .hero .stack .dot{color:var(--ink-4);margin:0 9px}
   .hero .links{margin-top:20px;display:flex;gap:24px;justify-content:center;font-size:.9rem}
   .hero .links a{color:var(--ink-3);border-bottom:1px solid var(--line);transition:.15s}
   .hero .links a:hover{color:var(--accent);border-color:var(--accent-dim)}
@@ -200,10 +207,7 @@
 
 <header class="nav">
   <div class="wrap">
-    <a class="brand" href="#top"><pre class="owl"> ,___,
- (O,O)
- (   )
- -"-"-</pre><span>Hedwig</span></a>
+    <a class="brand" href="#top"><span>Hedwig</span></a>
     <nav>
       <a class="navlink" href="#how">How it works</a>
       <a class="navlink" href="#what">What it does</a>
@@ -217,9 +221,15 @@
 <section class="hero" id="top">
   <div class="wrap">
     <div class="inner">
+      <pre class="owl"> ,___,
+ (O,O)
+ (   )
+ -"-"-</pre>
       <span class="eyebrow">Adaptive governance for Claude Code</span>
       <h1>Auto-applies the safe edits. Surfaces the ones worth your review.</h1>
       <p class="lead">Hedwig watches every edit Claude Code makes and decides, per file and per session, which ones need your eyes. Learns from what you revert.</p>
+
+      <p class="stack"><b>online logistic regression</b><span class="dot">·</span><b>isotonic-calibrated</b><span class="dot">·</span><b>embedding-ranked retrieval</b><span class="dot">·</span><b>self-correcting</b><span class="dot">·</span>local SQLite, zero cloud</p>
 
       <div class="term">
         <div class="bar">
@@ -308,8 +318,8 @@ Hedwig — trust runtime
             <span class="tab">/hedwig-retrospective</span>
             <span class="meta">where it was too trusting</span>
           </div>
-<pre>3 regret events
-<span class="mut">auto-applied, then corrected</span>
+<pre>3 self-corrections
+<span class="mut">auto-applied, then walked back</span>
 
  • db/models.py
    <span class="dn">reverted</span> after auto-apply
@@ -378,7 +388,7 @@ decision on that file.</span></pre>
           <line x1="192" y1="180" x2="172" y2="180" stroke="#56c08a" stroke-width="1.6" marker-end="url(#arg)"/>
           <path d="M93,148 C93,118 93,108 93,82" fill="none" stroke="#56c08a" stroke-width="1.6" stroke-dasharray="3 3" marker-end="url(#arg)"/>
           <text x="100" y="116" class="d-note" fill="#7fcfa3">feeds back</text>
-          <text x="180" y="278" text-anchor="middle" class="d-note">runs locally — nothing is sent anywhere</text>
+          <text x="180" y="278" text-anchor="middle" class="d-note">runs locally. nothing is sent anywhere</text>
         </svg>
       </div>
     </div>
@@ -405,7 +415,7 @@ decision on that file.</span></pre>
       </div>
       <div class="cap">
         <h3>Trust runs both ways</h3>
-        <p>Claude can flag its own shaky edits and ask for a second look — and Hedwig honors it. The handshake is tighten-only by design: the agent can add caution, never remove it.</p>
+        <p>Claude can flag its own shaky edits and ask for a second look, and Hedwig honors it. The handshake is tighten-only by design: the agent can add caution, never remove it.</p>
       </div>
     </div>
   </div>
@@ -415,7 +425,7 @@ decision on that file.</span></pre>
   <div class="wrap">
     <div class="local-inner">
       <h2>Memory is on disk.</h2>
-      <p>Decisions, regret events, classifier weights, your rules — all of it lives in a local file, not a context window. It survives restarts, carries across sessions, and never leaves your machine. No API key, no cloud.</p>
+      <p>Decisions, self-corrections, classifier weights, your rules. All of it lives in a local file, not a context window. It survives restarts, carries across sessions, and never leaves your machine. No API key, no cloud.</p>
       <p>Add an <code>ANTHROPIC_API_KEY</code> to turn on meaning-based rule retrieval and pattern inference. Both opt-in.</p>
     </div>
   </div>

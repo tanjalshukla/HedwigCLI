@@ -48,7 +48,7 @@ def test_retrospective_lists_regret_events(tmp_path: Path) -> None:
 
     out = _observe(data_dir, "retrospective", cwd=repo)
     assert out.returncode == 0, out.stderr
-    assert "2 regret events" in out.stdout
+    assert "2 self-corrections" in out.stdout
     assert "src/auth.py" in out.stdout and "reverted" in out.stdout
     assert "api/routes.py" in out.stdout and "failed verification" in out.stdout
 
@@ -60,7 +60,7 @@ def test_retrospective_empty_is_friendly(tmp_path: Path) -> None:
     repo.mkdir()
     out = _observe(data_dir, "retrospective", cwd=repo)
     assert out.returncode == 0, out.stderr
-    assert "No regret events yet" in out.stdout
+    assert "Nothing to walk back yet" in out.stdout
 
 
 def test_retrospective_scopes_to_repo(tmp_path: Path) -> None:
@@ -74,7 +74,7 @@ def test_retrospective_scopes_to_repo(tmp_path: Path) -> None:
                             "files": ["x.py"], "signal": "reversal"}) + "\n")
     out = _observe(data_dir, "retrospective", cwd=repo)
     assert out.returncode == 0, out.stderr
-    assert "No regret events yet" in out.stdout
+    assert "Nothing to walk back yet" in out.stdout
 
 
 def test_weights_handles_no_classifier(tmp_path: Path) -> None:
