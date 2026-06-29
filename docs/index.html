@@ -141,6 +141,31 @@
   .cap h3{font-size:.97rem;margin-bottom:7px;color:var(--ink)}
   .cap p{font-size:.9rem;color:var(--ink-3);line-height:1.55}
 
+  /* gallery — rendered product shots */
+  .shots{margin-top:48px;display:grid;gap:24px}
+  .shot{border:1px solid var(--line);border-radius:12px;background:#070a0e;overflow:hidden;
+    box-shadow:0 24px 50px -34px rgba(0,0,0,.9),0 1px 0 rgba(255,255,255,.02) inset}
+  .shot .bar{display:flex;align-items:center;gap:12px;padding:10px 14px;
+    background:#0b0e13;border-bottom:1px solid var(--line-soft)}
+  .shot .bar .dots{display:flex;gap:7px}
+  .shot .bar .dots i{width:10px;height:10px;border-radius:50%;background:#252d39}
+  .shot .bar .tab{font-family:var(--mono);font-size:.72rem;color:var(--accent);
+    padding:3px 10px;border-radius:6px;background:rgba(103,199,214,.1)}
+  .shot .bar .meta{margin-left:auto;font-family:var(--mono);font-size:.7rem;color:var(--ink-4)}
+  .shot pre{margin:0;padding:22px 20px;font-family:var(--mono);font-size:.82rem;
+    line-height:1.7;color:var(--ink-2);white-space:pre;overflow-x:auto}
+  .shot .owl{color:var(--accent)}
+  .shot .up{color:var(--learn)}
+  .shot .dn{color:var(--accent)}
+  .shot .hi{color:var(--ink)}
+  .shot .mut{color:var(--ink-4)}
+  .shot .bar-fill{color:var(--learn)}
+  .bar-track{color:var(--line)}
+  .shot-cap{font-family:var(--mono);font-size:.74rem;color:var(--ink-4);
+    margin-top:14px;letter-spacing:.02em}
+  @media(min-width:861px){.shots-2{grid-template-columns:1fr 1fr;display:grid;gap:24px}}
+  @media(max-width:600px){.shot pre{font-size:.72rem}}
+
   /* local */
   .local-band{background:var(--panel);border-top:1px solid var(--line-soft);
     border-bottom:1px solid var(--line-soft);padding:64px 0}
@@ -182,6 +207,7 @@
     <nav>
       <a class="navlink" href="#how">How it works</a>
       <a class="navlink" href="#what">What it does</a>
+      <a class="navlink" href="#see">See it work</a>
       <a class="navlink" href="commands.html">Docs</a>
       <a class="cta" href="#install">Install</a>
     </nav>
@@ -223,6 +249,83 @@
     <p><b>Hedwig auto-applied an edit. You reverted it. The next similar edit gets surfaced.</b> That's the loop.</p>
   </div>
 </div>
+
+<section id="see">
+  <div class="wrap">
+    <span class="eyebrow">See it work</span>
+    <h2 style="margin-top:16px">Every decision is visible. So is the learning.</h2>
+
+    <div class="shots">
+      <div class="shot">
+        <div class="bar">
+          <span class="dots"><i></i><i></i><i></i></span>
+          <span class="tab">/hedwig-status</span>
+          <span class="meta">this session</span>
+        </div>
+<pre><span class="owl"> ,___,
+ (O,O)
+ (   )
+ -"-"-</span>
+
+Hedwig — trust runtime
+
+  Auto-applied   <span class="hi">10</span>   <span class="bar-fill">███████████████</span><span class="bar-track">░░░░░</span>  <span class="hi">77%</span>
+  Surfaced        <span class="hi">2</span>   for your review
+  Blocked         <span class="hi">1</span>   agent asked to revise
+
+  10 of 13 edits auto-applied this session.
+
+  Why it surfaced these:
+    · core/migrations.py: data-model change
+    · api/routes.py: interface change, multi-file blast radius</pre>
+      </div>
+
+      <div class="shots-2">
+        <div class="shot">
+          <div class="bar">
+            <span class="dots"><i></i><i></i><i></i></span>
+            <span class="tab">/hedwig-weights</span>
+            <span class="meta">60 decisions</span>
+          </div>
+<pre>learned classifier drift
+<span class="mut">— scorer ACTIVE —</span>
+
+ <span class="dn">▼</span> avg review time      <span class="dn">-12.55</span>
+ <span class="dn">▼</span> blast radius          <span class="dn">-8.60</span>
+ <span class="up">▲</span> change pattern risk   <span class="up">+8.22</span>
+ <span class="up">▲</span> new file              <span class="up">+5.07</span>
+ <span class="dn">▼</span> security sensitive    <span class="dn">-3.31</span>
+ <span class="dn">▼</span> prior denials         <span class="dn">-3.31</span>
+
+ <span class="up">▲</span> toward auto-apply
+ <span class="dn">▼</span> toward check-in
+ <span class="mut">no weight hand-tuned</span></pre>
+        </div>
+
+        <div class="shot">
+          <div class="bar">
+            <span class="dots"><i></i><i></i><i></i></span>
+            <span class="tab">/hedwig-retrospective</span>
+            <span class="meta">where it was too trusting</span>
+          </div>
+<pre>3 regret events
+<span class="mut">auto-applied, then corrected</span>
+
+ • db/models.py
+   <span class="dn">reverted</span> after auto-apply
+ • core/cache.py
+   <span class="dn">failed verification</span>
+ • api/routes.py
+   <span class="dn">reverted</span> after auto-apply
+
+<span class="mut">each one tightened the next
+decision on that file.</span></pre>
+        </div>
+      </div>
+    </div>
+    <p class="shot-cap">Real output from a seeded demo repo. Your numbers come from your own edits.</p>
+  </div>
+</section>
 
 <section id="how">
   <div class="wrap">
