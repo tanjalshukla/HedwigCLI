@@ -19,8 +19,3 @@ _FROM_INTENSITY[None] = "balanced"
 
 def _label_from_intensity(intensity: str | None) -> str:
     return _FROM_INTENSITY.get(intensity, "balanced")
-
-
-def run_toggle(current_intensity: str | None) -> str | None:
-    """No-op — widget removed. Returns current unchanged."""
-    return current_intensity

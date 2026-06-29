@@ -51,7 +51,10 @@ class Lease:
 class PolicyHistory:
     approvals: int
     denials: int
-    # rubber-stamp approvals count as 0.5x (see spec §10 approval quality weighting)
+    # rubber-stamp approvals (<5s review) count 0.5x, full approvals 1.0x —
+    # the approval-quality discount. Computed in trace_store.policy_history;
+    # documented in SPEC.md (the policy-weight table). The regret path mirrors
+    # this 0.5/1.0 split (apply_stage._apply_regret_corrections).
     effective_approvals: float
     rubber_stamp_approvals: int
     avg_response_ms: float | None

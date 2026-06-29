@@ -1,7 +1,7 @@
 {
   "name": "hedwig",
   "displayName": "Hedwig — Trust Runtime",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "description": "Governance layer for Claude Code. Auto-applies low-risk edits and surfaces the ones worth your review — learning from outcomes, not configuration.",
   "author": {
     "name": "Tanjal Shukla"

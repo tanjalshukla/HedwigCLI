@@ -184,28 +184,3 @@ def panel_title(family: MomentFamily, subtitle: str | None = None) -> str:
     return f"[{style.title_style}]{style.icon} {base}[/{style.title_style}]"
 
 
-def decision_badge(decision: str) -> str:
-    """Render a short colored badge for a developer decision. Returns Rich
-    markup; caller can print directly or embed in a panel body."""
-    mapping = {
-        "approve": ("approve_bold", "✓ approved"),
-        "approve_and_remember": ("approve_bold", "✓ approved · remembered"),
-        "deny": ("deny_bold", "✗ denied"),
-        "auto_approve": ("meta", "· auto-approved"),
-        "auto_approve_flag": ("attention", "· auto-approved · flagged"),
-        "auto_approve_lease": ("meta", "· auto-approved · lease"),
-    }
-    style_key, label = mapping.get(decision, ("meta", decision))
-    return f"[{PALETTE[style_key]}]{label}[/{PALETTE[style_key]}]"
-
-
-def provenance_badge(provenance: str) -> str:
-    """Colored badge for a preference's provenance."""
-    mapping = {
-        "user_explicit": ("approve_bold", "USER"),
-        "inferred_user_confirmed": ("learn_bold", "LEARNED"),
-        "inferred": ("info_bold", "INFERRED"),
-        "default": ("meta", "DEFAULT"),
-    }
-    style_key, label = mapping.get(provenance, ("meta", provenance.upper()))
-    return f"[{PALETTE[style_key]}]{label}[/{PALETTE[style_key]}]"

@@ -13,13 +13,15 @@ emits a hookSpecificOutput JSON object on stdout that either:
   * blocks (`permissionDecision: "deny"` with reason fed back to the
     agent) when a hard constraint matched
 
-This is the Tier-0 entry point: zero credentials required. The cascade run
+This is the Tier-0 entry point: zero credentials required. The cascade runs
 here, in order: (1) hard constraints (_constraint_decision — always_deny /
 always_check_in / always_allow override everything), (2) per-file history +
 the heuristic / learned scorer, (3) confirmed-preference application
-(apply_confirmed_preferences — cascade layer 5, tighten/loosen), (4) the
-confidence handshake (tighten-only), (5) the R6 deny gate. The repo memory
-layer (SessionStart / UserPromptSubmit) and the hypothesis bank's
+(apply_confirmed_preferences — tighten by default; one narrow auto_apply
+loosening exception), (4) the confidence handshake (tighten-only), (5a) the
+deterministic security floor (a security-sensitive proceed is forced to
+surface — invariant 5), (5b) the R6 deny gate. The repo memory layer
+(SessionStart / UserPromptSubmit) and the hypothesis bank's
 generate/surface/confirm loop live in the record / verify / learn hooks. See
 the capability table in the root README for the full CLI-vs-plugin split.
 """
@@ -550,6 +552,9 @@ def _main_inner() -> int:
         files_in_action=1,
     )
 
+    # Cascade layer 2: the scorer. The heuristic carries cold-start; the online
+    # PolicyClassifier takes over once it has MIN_SAMPLES_FOR_LEARNED real
+    # decisions (select_active_scorer).
     scorer, scorer_label = select_active_scorer(classifier)
     # Threshold scale depends on which scorer fired. The heuristic emits a raw
     # additive score (~[-3, +1]); 0.0/-1.0 keep cold-start permissive so
@@ -567,13 +572,14 @@ def _main_inner() -> int:
         flag_threshold=flag_threshold,
     )
 
-    # Cascade layer 5: developer-confirmed preferences override the scorer's
+    # Cascade layer 3: developer-confirmed preferences override the scorer's
     # decision (tighten by default; the one narrow auto_apply loosening exception
     # is enforced inside PreferenceCoordinator). A pattern the developer
     # confirmed via /hedwig-learn fires here. No-op when no preference matches.
     decision = apply_confirmed_preferences(db, repo_root_str, decision, risk, rel)
 
-    # R2 confidence handshake (tighten-only). If the agent self-declared low
+    # Cascade layer 4: R2 confidence handshake (tighten-only). If the agent
+    # self-declared low
     # confidence or explicitly requested a check-in for this file, honor it by
     # forcing a surface — even when the scorer alone would auto-apply. This can
     # ONLY downgrade proceed → surfaced; it never loosens a surfaced verdict to
@@ -583,7 +589,8 @@ def _main_inner() -> int:
         decision.action, payload.get("session_id"), rel
     )
 
-    # Deterministic security floor (invariant 5: the model is untrusted). The
+    # Cascade layer 5a — deterministic security floor (invariant 5: the model
+    # is untrusted). The
     # learned classifier can drift toward "approve everything" after enough
     # auto-approvals and return proceed even for a security-sensitive file —
     # auto-applying it before the _should_deny gate (which only runs on the
@@ -628,7 +635,8 @@ def _main_inner() -> int:
         })
         return 0
 
-    # R6 — deny+reason self-correction loop. For a surfaced edit that trips the
+    # Cascade layer 5b — R6 deny+reason self-correction loop. For a surfaced
+    # edit that trips the
     # high-risk gate, BLOCK the call with a plain-English reason so the agent
     # revises same-turn (rather than silently falling through to the native
     # prompt). Three guardrails keep this from becoming retry-fatigue:
