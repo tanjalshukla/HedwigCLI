@@ -98,7 +98,7 @@
  -"-"-</pre><span>Hedwig</span></a>
     <nav>
       <a class="navlink" href="index.html#how">How it works</a>
-      <a class="navlink" href="index.html#different">Why it's different</a>
+      <a class="navlink" href="index.html#what">What it does</a>
       <a class="navlink active" href="commands.html">Docs</a>
       <a class="ghost" href="index.html#install">Install</a>
     </nav>
@@ -109,6 +109,7 @@
   <aside class="sidebar">
     <div class="eyebrow">Commands</div>
     <nav>
+      <a href="#setup">Install &amp; update</a>
       <a href="#status">/hedwig-status</a>
       <a href="#weights">/hedwig-weights</a>
       <a href="#retrospective">/hedwig-retrospective</a>
@@ -120,6 +121,22 @@
   <div class="content">
     <h1>Commands</h1>
     <p class="sub">Slash commands available inside any Claude Code session with Hedwig installed.</p>
+
+    <div class="cmd-block" id="setup">
+      <div class="tag">setup</div>
+      <div class="cmd-name">Install &amp; update</div>
+      <p class="cmd-desc">Install from the marketplace, then add the learned scorer once. No API key, no cloud.</p>
+      <pre><span class="cmt"># Install</span>
+<span class="p">$</span> claude plugin marketplace add tanjalshukla/HedwigCLI
+<span class="p">$</span> claude plugin install hedwig@hedwig-marketplace
+
+<span class="cmt"># Turn on the online classifier (once per machine)</span>
+<span class="p">$</span> /hedwig-setup
+
+<span class="cmt"># Pull the latest release later</span>
+<span class="p">$</span> claude plugin update hedwig@hedwig-marketplace</pre>
+      <p class="cmd-note">Installed copies are pinned to a release, so run <code>update</code> to get new versions. Without <code>/hedwig-setup</code> the plugin still runs the deterministic heuristic scorer — the update just adds the learning classifier.</p>
+    </div>
 
     <div class="cmd-block" id="status">
       <div class="tag">observability</div>
