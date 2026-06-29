@@ -28,7 +28,7 @@ if str(_HERE) not in sys.path:
 from _hedwig_common import (  # noqa: E402
     DECISIONS_LOG,
     DENIED_VERDICT,
-    data_dir,
+
     learned_scorer_reachable,
     open_trust_db,
     owl_str,
@@ -37,27 +37,11 @@ from _hedwig_common import (  # noqa: E402
 
 
 def _load_decisions(session_id: str | None) -> list[dict]:
-    path = data_dir() / DECISIONS_LOG
-    if not path.exists():
-        return []
-    rows: list[dict] = []
-    try:
-        with path.open(encoding="utf-8") as fh:
-            for line in fh:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    row = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                if not isinstance(row, dict):
-                    continue  # skip non-object lines (a bare int/list/str/null)
-                if session_id is None or row.get("session_id") == session_id:
-                    rows.append(row)
-    except Exception:
-        return rows
-    return rows
+    from _hedwig_common import _iter_jsonl  # noqa: PLC0415
+    return [
+        r for r in _iter_jsonl(DECISIONS_LOG)
+        if session_id is None or r.get("session_id") == session_id
+    ]
 
 
 def _summarize(rows: list[dict]) -> dict:

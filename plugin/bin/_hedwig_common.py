@@ -491,27 +491,63 @@ LOW_CONFIDENCE_THRESHOLD = 0.5
 
 
 def _iter_jsonl(filename: str, *, reverse: bool = False):
-    """Yield parsed JSON dicts from <data_dir>/<filename>, skipping blanks and
-    bad lines. Best-effort: stops iteration on any I/O error rather than
-    raising, so callers never crash on a missing or corrupt log file."""
-    path = data_dir() / filename
-    if not path.exists():
-        return
+    """Yield parsed JSON dicts from <data_dir>/<filename> and any sibling
+    hedwig* data dirs, skipping blanks and bad lines.
+
+    Claude Code can give hooks and slash-command subprocesses different values
+    for CLAUDE_PLUGIN_DATA (hooks get the marketplace-namespaced dir, commands
+    may get the fallback 'hedwig' dir). Both share the same parent. We scan
+    every sibling whose name starts with 'hedwig' and merge results so commands
+    like /hedwig-status and /hedwig-retrospective find data written by the hooks
+    regardless of which CLAUDE_PLUGIN_DATA value each subprocess received. Rows
+    are deduplicated by (session_id, file_path, ts) so a row that appears in
+    multiple dirs is only yielded once. Best-effort: any I/O failure is skipped.
+    """
+    primary = data_dir()
+    candidates: list = [primary / filename]
     try:
-        lines = path.read_text(encoding="utf-8").splitlines()
+        seen_dirs = {primary.resolve()}
+        for sibling in primary.parent.glob("hedwig*"):
+            if sibling.is_dir() and sibling.resolve() not in seen_dirs:
+                seen_dirs.add(sibling.resolve())
+                candidates.append(sibling / filename)
     except Exception:
-        return
-    seq = reversed(lines) if reverse else lines
-    for line in seq:
-        line = line.strip()
-        if not line:
+        pass
+
+    seen_keys: set = set()
+    all_rows: list = []
+    for path in candidates:
+        if not path.exists():
             continue
         try:
-            row = json.loads(line)
-        except (json.JSONDecodeError, ValueError):
+            lines = path.read_text(encoding="utf-8").splitlines()
+        except Exception:
             continue
-        if isinstance(row, dict):
-            yield row
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                row = json.loads(line)
+            except (json.JSONDecodeError, ValueError):
+                continue
+            if not isinstance(row, dict):
+                continue
+            # Dedup by stable content hash so distinct rows with the same
+            # session/cwd (e.g. multiple regret events) are never collapsed,
+            # while a row that physically appears in multiple sibling dirs is
+            # only yielded once.
+            try:
+                key = hash(json.dumps(row, sort_keys=True, default=str))
+            except Exception:
+                key = id(row)
+            if key not in seen_keys:
+                seen_keys.add(key)
+                all_rows.append(row)
+
+    seq = reversed(all_rows) if reverse else all_rows
+    for row in seq:
+        yield row
 
 
 def latest_self_checkin(session_id, file_path):

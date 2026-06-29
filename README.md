@@ -115,7 +115,7 @@ sc/                   # governance core (shared by CLI and plugin)
 
 plugin/               # Claude Code plugin: hooks + vendored governance core
 demo_recipe_api/      # demo fixture (recipe REST API)
-tests/                # 453 tests — run with `make test`
+tests/                # 483 tests — run with `make test`
 ```
 
 ---
