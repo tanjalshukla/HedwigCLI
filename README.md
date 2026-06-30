@@ -46,9 +46,10 @@ Developer style is not stable across sessions (SWE-chat ICC = 0.249). Hedwig lea
 ```bash
 claude plugin marketplace add tanjalshukla/HedwigCLI
 claude plugin install hedwig@hedwig-marketplace
+claude plugin update hedwig@hedwig-marketplace
 ```
 
-Already installed? Pull the latest release with `claude plugin update hedwig@hedwig-marketplace`.
+The `update` step pulls the latest version — run it right after install to make sure you have current code. Already installed? Same command: `claude plugin update hedwig@hedwig-marketplace`.
 
 Make an edit, then run `/hedwig-status` to see what was auto-applied vs. surfaced and why.
 
