@@ -24,14 +24,16 @@ OWL = f"{_C}{_OWL_PLAIN}{_R}"
 
 
 def owl_str() -> str:
-    """The owl, colored when stdout is a real terminal, plain otherwise.
+    """The owl, colored when running inside Claude Code or a real terminal.
 
-    Slash commands and hooks run as captured (non-TTY) subprocesses; emitting
-    raw ``\\033[36m`` there leaks literal escape codes into the transcript
-    instead of rendering cyan. Gate on isatty() so the color only appears where
-    a terminal can interpret it. Best-effort: any error falls back to plain."""
+    CLAUDE_PLUGIN_ROOT is set by Claude Code for all plugin subprocesses —
+    hooks and slash commands alike. Claude Code renders ANSI codes in bash
+    output, so we colorize whenever we're inside it regardless of isatty().
+    Falls back to plain if neither condition holds."""
     try:
-        return OWL if sys.stdout.isatty() else _OWL_PLAIN
+        if os.environ.get("CLAUDE_PLUGIN_ROOT") or sys.stdout.isatty():
+            return OWL
+        return _OWL_PLAIN
     except Exception:
         return _OWL_PLAIN
 
