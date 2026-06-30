@@ -229,7 +229,7 @@
  -"-"-</pre>
       <span class="eyebrow">Adaptive governance for Claude Code</span>
       <h1>Auto-applies the safe edits. Surfaces the ones worth your review.</h1>
-      <p class="lead">Hedwig learns your preferences and calibrates Claude Code — deciding which edits need your eyes and which can go through on their own.</p>
+      <p class="lead">Hedwig learns your preferences and calibrates Claude Code. It decides which edits need your eyes and which can go through on their own.</p>
 
       <p class="stack"><b>online logistic regression</b><span class="dot">·</span><b>embedding-ranked retrieval</b><span class="dot">·</span><b>self-correcting</b><span class="dot">·</span>local SQLite, zero cloud</p>
 
@@ -429,7 +429,7 @@ decision on that file.</span></pre>
       <h2>Memory is on disk.</h2>
       <p>Decisions, self-corrections, classifier weights, your rules. All of it lives in a local file, not a context window. It survives restarts, carries across sessions, and is shared across agents. Every Claude Code session on the same repo reads the same governance state. A regret recorded by one agent tightens the next.</p>
       <p>Rule retrieval runs on-device. Pattern inference runs in the Claude Code session you're already in.</p>
-      <p>Token overhead is near-zero. Rules surface only when relevant — a few lines, capped. A fresh repo costs nothing until you've built up history.</p>
+      <p>Token overhead is near-zero. Rules surface only when relevant: a few lines, capped. A fresh repo costs nothing until you've built up history.</p>
     </div>
   </div>
 </div>
