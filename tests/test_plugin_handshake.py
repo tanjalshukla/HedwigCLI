@@ -98,7 +98,8 @@ def test_self_checkin_request_forces_surface(tmp_path: Path) -> None:
     )
     assert decl.returncode == 0, decl.stderr
     out = _decide(proj, data_dir, session="s1", rel="tests/test_basic.py")
-    assert out.stdout == "", f"self-checkin request should surface, got: {out.stdout!r}"
+    assert out.stdout, f"self-checkin request should surface, got: {out.stdout!r}"
+    assert json.loads(out.stdout)["hookSpecificOutput"]["permissionDecision"] == "ask"
 
 
 def test_low_confidence_forces_surface(tmp_path: Path) -> None:
@@ -107,7 +108,8 @@ def test_low_confidence_forces_surface(tmp_path: Path) -> None:
     proj = _make_proj(tmp_path)
     _declare(proj, data_dir, session="s1", rel="tests/test_basic.py", confidence=0.3)
     out = _decide(proj, data_dir, session="s1", rel="tests/test_basic.py")
-    assert out.stdout == "", "low confidence should surface the edit"
+    assert out.stdout, "low confidence should surface the edit"
+    assert json.loads(out.stdout)["hookSpecificOutput"]["permissionDecision"] == "ask"
 
 
 def test_high_confidence_does_not_loosen(tmp_path: Path) -> None:
@@ -146,7 +148,9 @@ def test_high_confidence_cannot_loosen_a_surfaced_edit(tmp_path: Path) -> None:
         data_dir,
         cwd=proj,
     )
-    assert out.stdout == "", "a confident declaration must never loosen a surfaced edit"
+    assert out.stdout, "a confident declaration must never loosen a surfaced edit"
+    # Still surfaced (ask), not loosened to allow — the invariant under test.
+    assert json.loads(out.stdout)["hookSpecificOutput"]["permissionDecision"] == "ask"
 
 
 def test_declaration_is_scoped_to_its_file(tmp_path: Path) -> None:

@@ -157,16 +157,33 @@ class PreferenceCoordinator:
                 reasons=decision.reasons + ("soft-checkin trigger matched",),
             )
 
-        # auto_apply can loosen a check_in to proceed, but only under strict
-        # conditions: the preference must have developer-confirmed provenance
-        # (user_explicit or inferred_user_confirmed — never built-in defaults),
-        # and the action must be genuinely low-risk (small diff, low blast
-        # radius, not security-sensitive, not a new file). Built-in defaults
-        # and autonomy-derived preferences never trigger this path — only
-        # preferences in matched_confirmed (developer-confirmed) count.
+        # auto_apply can loosen a check_in to proceed. Two tiers:
+        #
+        # user_explicit: the developer deliberately authored this preference —
+        # respect it fully regardless of diff size or blast radius. The Step 9
+        # security floor still catches is_security_sensitive unconditionally, so
+        # no guard is needed here for that case.
+        #
+        # inferred_user_confirmed: the developer confirmed an inferred pattern
+        # via /hedwig-learn, possibly without thinking "even on a 300-line
+        # change." Keep the conservative guards for this tier.
+        #
+        # Built-in defaults and autonomy-derived preferences never trigger this
+        # path — only preferences in matched_confirmed (developer-confirmed) count.
         if action_value == "auto_apply" and risk is not None and decision.action == "check_in":
-            developer_confirmed = any(
-                p.lifecycle.provenance in {"user_explicit", "inferred_user_confirmed"}
+            user_explicit = any(
+                p.lifecycle.provenance == "user_explicit"
+                for p in matched_confirmed
+                if p.action.value == "auto_apply"
+            )
+            if user_explicit:
+                return PolicyDecision(
+                    action="proceed",
+                    score=decision.score,
+                    reasons=decision.reasons + ("auto_apply preference: user-explicit override",),
+                )
+            inferred_confirmed = any(
+                p.lifecycle.provenance == "inferred_user_confirmed"
                 for p in matched_confirmed
                 if p.action.value == "auto_apply"
             )
@@ -176,11 +193,11 @@ class PreferenceCoordinator:
                 and not risk.is_security_sensitive
                 and not risk.is_new_file
             )
-            if developer_confirmed and low_risk:
+            if inferred_confirmed and low_risk:
                 return PolicyDecision(
                     action="proceed",
                     score=decision.score,
-                    reasons=decision.reasons + ("auto_apply preference: low-risk developer-confirmed override",),
+                    reasons=decision.reasons + ("auto_apply preference: low-risk inferred-confirmed override",),
                 )
 
         return decision

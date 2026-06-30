@@ -64,13 +64,16 @@ def _decide(proj: Path, data_dir: Path, *, session: str, rel: str, old: str, new
 def _tightened(out) -> bool:
     """True if a decide result is anything OTHER than an auto-apply — i.e. the
     file did NOT silently auto-apply. Covers both forms of tightening: a
-    passthrough surface (empty stdout) and an R6 deny (a gated high-risk or
-    previously-regretted edit is blocked with a reason). Tests that only care
-    'this no longer auto-applies' use this instead of pinning one form."""
+    surface ("ask", which forces the native prompt even under accept-edits) and
+    an R6 deny (a gated high-risk or previously-regretted edit is blocked with a
+    reason). Tests that only care 'this no longer auto-applies' use this instead
+    of pinning one form. A bare passthrough (empty stdout) is treated as
+    not-tightened — a surfaced verdict must emit "ask", so empty stdout here
+    means no governing decision fired."""
     if out.stdout == "":
-        return True  # surfaced → native prompt
+        return False  # no decision emitted → not a tightening
     decision = json.loads(out.stdout)["hookSpecificOutput"]["permissionDecision"]
-    return decision == "deny"
+    return decision in ("ask", "deny")
 
 
 def _record(proj: Path, data_dir: Path, *, session: str, rel: str, old: str = "", new: str = ""):

@@ -7,11 +7,12 @@ emits a hookSpecificOutput JSON object on stdout that either:
 
   * suppresses the native permission prompt (`permissionDecision: "allow"`)
     when the scorer says "proceed" — the action is silently auto-applied
-  * passes through (no decision, exit 0 silent) when the scorer says
-    "check_in" — Claude Code's native prompt fires and the developer
-    decides
+  * forces the permission prompt (`permissionDecision: "ask"`) when the
+    scorer says "check_in" — this overrides accept-edits mode and allow-rules,
+    so the developer is guaranteed to see and decide. (A silent passthrough
+    would NOT guarantee this: under accept-edits the native flow auto-applies.)
   * blocks (`permissionDecision: "deny"` with reason fed back to the
-    agent) when a hard constraint matched
+    agent) when a hard constraint matched or the R6 high-risk gate trips
 
 This is the Tier-0 entry point: zero credentials required. The cascade runs
 here, in order: (1) hard constraints (_constraint_decision — always_deny /
@@ -77,9 +78,15 @@ def _emit(obj: dict) -> None:
 
 def _emit_decision(decision: str, reason: str) -> None:
     """Emit a PreToolUse permission decision — the plugin's protocol contract
-    with Claude Code. ``decision`` is "allow" (auto-apply / suppress the native
-    prompt) or "deny" (block with a reason fed back to the agent). Centralizes
-    the hookSpecificOutput shape so the four decision sites can't drift."""
+    with Claude Code. ``decision`` is one of:
+      * "allow" — auto-apply / suppress the native prompt;
+      * "ask"   — FORCE the permission prompt, overriding accept-edits mode and
+                  any user allow-rule. This is how a check-in is guaranteed to
+                  reach the human: silence (no emit) only falls back to the
+                  native flow, which auto-applies under accept-edits — so a
+                  surfaced verdict MUST emit "ask", never stay silent;
+      * "deny"  — block with a reason fed back to the agent.
+    Centralizes the hookSpecificOutput shape so the decision sites can't drift."""
     _emit({
         "hookSpecificOutput": {
             "hookEventName": "PreToolUse",
@@ -206,7 +213,11 @@ def _log_decision(
 
 
 def _passthrough() -> int:
-    """Exit 0 with no output → no decision → native permission flow runs."""
+    """Exit 0 with no output → no decision → native permission flow runs.
+
+    Reserved for the cases where Hedwig genuinely has no opinion (unparseable
+    payload, non-governed tool). A *surfaced* verdict must NOT use this — it
+    emits "ask" instead, because silence auto-applies under accept-edits mode."""
     return 0
 
 
@@ -550,12 +561,15 @@ def _main_inner() -> int:
             )
             _emit_decision("deny", c_reason)
             return 0
-        # always_check_in: surface to the native prompt, skip the scorer entirely.
+        # always_check_in: force the native prompt, skip the scorer entirely.
+        # Emit "ask" (not silent passthrough) so the prompt fires even under
+        # accept-edits mode — the developer explicitly asked to review this path.
         _log_decision(
             payload, rel, "surfaced", 0.0, risk, c_reason,
             edit_old=_c_edit_old, edit_new=_c_edit_new, scorer="constraint",
         )
-        return _passthrough()
+        _emit_decision("ask", c_reason)
+        return 0
 
     history = _history_from(db, repo_root_str, rel)
     classifier = load_classifier(db, repo_root_str) if db is not None else None
@@ -671,13 +685,18 @@ def _main_inner() -> int:
         return 0
 
     # Otherwise (ordinary check-in, handshake surface, or the deny cap reached)
-    # → fall through to the native prompt. The reason rides in the decisions
-    # log and surfaces in /hedwig-status.
+    # → force the native prompt. Emit "ask", NOT a silent passthrough: silence
+    # only defers to the native permission flow, which auto-applies the edit
+    # under accept-edits mode or a matching allow-rule — silently bypassing the
+    # check-in Hedwig just decided on. "ask" overrides those and guarantees the
+    # developer sees it. The reason rides in the decisions log and surfaces in
+    # /hedwig-status.
     _log_decision(
         payload, rel, "surfaced", decision.score, risk, reason,
         edit_old=edit_old, edit_new=edit_new, scorer=scorer_label,
     )
-    return _passthrough()
+    _emit_decision("ask", reason)
+    return 0
 
 
 if __name__ == "__main__":

@@ -9,8 +9,10 @@ The aim is not to validate the scorer (existing tests do that) but to
 confirm the adapter:
   * imports without pulling Bedrock or boto (Tier-0 invariant)
   * parses a Claude Code Edit/Write/MultiEdit payload
-  * emits valid hookSpecificOutput JSON for proceed cases
-  * stays silent (passthrough) for check-in cases
+  * emits valid hookSpecificOutput JSON for proceed cases (permissionDecision
+    "allow") and check-in cases (permissionDecision "ask")
+  * stays silent (passthrough) only when it has no opinion (non-governed
+    tool, unparseable payload)
   * leaves non-governed tools untouched
 """
 
@@ -166,13 +168,17 @@ def test_low_risk_test_edit_proceeds(tmp_path: Path) -> None:
     assert "automatically" in reason
 
 
-def test_new_file_falls_through(tmp_path: Path) -> None:
-    """Brand-new files fall through to native prompt regardless of pattern.
+def test_new_file_forces_ask(tmp_path: Path) -> None:
+    """Brand-new files surface for review regardless of pattern.
 
     Locks in the design choice: the new-file penalty is intentional, the
     first time a developer adds a path Hedwig hasn't seen before, the
     developer gets to look at it. Auto-trust is earned, not granted on
     creation.
+
+    The verdict is emitted as permissionDecision: "ask" (not a silent
+    passthrough) so the prompt fires even under accept-edits mode — silence
+    would let the native flow auto-apply the new file.
     """
     target = tmp_path / "tests" / "test_new.py"
     target.parent.mkdir(parents=True)
@@ -186,12 +192,15 @@ def test_new_file_falls_through(tmp_path: Path) -> None:
     }
     rc, out = _run_decide(payload)
     assert rc == 0
-    assert out == "", f"expected silent passthrough, got: {out!r}"
+    assert out, "expected an 'ask' decision, got silent passthrough"
+    decision = json.loads(out)
+    assert decision["hookSpecificOutput"]["permissionDecision"] == "ask"
 
 
-def test_security_sensitive_file_falls_through(tmp_path: Path) -> None:
-    """Security-sensitive files must NOT auto-approve in Day 1 — they fall
-    through to the native prompt so the developer reviews."""
+def test_security_sensitive_file_forces_ask(tmp_path: Path) -> None:
+    """Security-sensitive files must NOT auto-approve in Day 1 — they surface
+    for review. Emitted as "ask" so the prompt fires even under accept-edits
+    mode (the security floor is meaningless if silence auto-applies)."""
     target = tmp_path / "auth.py"
     payload = {
         "tool_name": "Write",
@@ -203,7 +212,33 @@ def test_security_sensitive_file_falls_through(tmp_path: Path) -> None:
     }
     rc, out = _run_decide(payload)
     assert rc == 0
-    assert out == ""  # passthrough → native prompt fires
+    assert out, "expected an 'ask' decision, got silent passthrough"
+    decision = json.loads(out)
+    assert decision["hookSpecificOutput"]["permissionDecision"] == "ask"
+
+
+def test_surfaced_verdict_never_silently_passes_through(tmp_path: Path) -> None:
+    """Core safety invariant: a surfaced verdict MUST emit permissionDecision
+    "ask", never an empty passthrough. A silent passthrough defers to Claude
+    Code's native flow, which auto-applies the edit under accept-edits mode or a
+    matching allow-rule — silently bypassing the check-in Hedwig decided on.
+    "ask" overrides those and guarantees the developer sees it.
+
+    A new file is the simplest always-surfaces case (new-file penalty)."""
+    target = tmp_path / "src" / "brand_new.py"
+    target.parent.mkdir(parents=True)
+    payload = {
+        "tool_name": "Write",
+        "cwd": str(tmp_path),
+        "tool_input": {"file_path": str(target), "content": "x = 1\n"},
+    }
+    rc, out = _run_decide(payload)
+    assert rc == 0
+    assert out != "", "a surfaced verdict must emit 'ask', never a silent passthrough"
+    decision = json.loads(out)["hookSpecificOutput"]
+    assert decision["permissionDecision"] == "ask"
+    # The reason still rides along so Claude Code can label the prompt.
+    assert decision["permissionDecisionReason"]
 
 
 @pytest.mark.parametrize("tool_name", ["Edit", "MultiEdit"])

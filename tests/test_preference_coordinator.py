@@ -173,13 +173,13 @@ class PreferenceCoordinatorTests(unittest.TestCase):
         )
 
     def test_auto_apply_user_explicit_low_risk_loosens_check_in(self) -> None:
-        # user_explicit provenance + low risk -> check_in becomes proceed
+        # user_explicit provenance -> check_in becomes proceed unconditionally
         coord = _coordinator(confirmed=(self._auto_apply_confirmed_pref("user_explicit"),))
         original = PolicyDecision(action="check_in", score=0.4, reasons=("scorer",))
         result = coord.apply_to_decision(decision=original, file_path="x.py", risk=_risk())
         self.assertEqual(result.decision.action, "proceed")
         self.assertIn(
-            "auto_apply preference: low-risk developer-confirmed override",
+            "auto_apply preference: user-explicit override",
             result.decision.reasons,
         )
 
@@ -190,12 +190,12 @@ class PreferenceCoordinatorTests(unittest.TestCase):
         result = coord.apply_to_decision(decision=original, file_path="x.py", risk=_risk())
         self.assertEqual(result.decision.action, "proceed")
         self.assertIn(
-            "auto_apply preference: low-risk developer-confirmed override",
+            "auto_apply preference: low-risk inferred-confirmed override",
             result.decision.reasons,
         )
 
-    def test_auto_apply_user_explicit_large_diff_preserves_check_in(self) -> None:
-        # diff_size=25 (>= 20) -> check_in preserved
+    def test_auto_apply_user_explicit_large_diff_loosens_check_in(self) -> None:
+        # user_explicit ignores diff_size guard — large diff still becomes proceed
         coord = _coordinator(confirmed=(self._auto_apply_confirmed_pref("user_explicit"),))
         original = PolicyDecision(action="check_in", score=0.4, reasons=("scorer",))
         high_diff_risk = RiskSignals(
@@ -206,11 +206,13 @@ class PreferenceCoordinatorTests(unittest.TestCase):
             diff_size=25,
         )
         result = coord.apply_to_decision(decision=original, file_path="x.py", risk=high_diff_risk)
-        self.assertEqual(result.decision.action, "check_in")
-        self.assertEqual(result.decision.reasons, ("scorer",))
+        self.assertEqual(result.decision.action, "proceed")
+        self.assertIn("auto_apply preference: user-explicit override", result.decision.reasons)
 
-    def test_auto_apply_user_explicit_security_sensitive_preserves_check_in(self) -> None:
-        # is_security_sensitive=True -> check_in preserved
+    def test_auto_apply_user_explicit_security_sensitive_loosens_check_in(self) -> None:
+        # user_explicit ignores is_security_sensitive guard at Step 7.
+        # The Step 9 security floor enforces it independently; this test only
+        # covers the preference_coordinator layer in isolation.
         coord = _coordinator(confirmed=(self._auto_apply_confirmed_pref("user_explicit"),))
         original = PolicyDecision(action="check_in", score=0.4, reasons=("scorer",))
         sec_risk = RiskSignals(
@@ -221,6 +223,21 @@ class PreferenceCoordinatorTests(unittest.TestCase):
             diff_size=10,
         )
         result = coord.apply_to_decision(decision=original, file_path="x.py", risk=sec_risk)
+        self.assertEqual(result.decision.action, "proceed")
+        self.assertIn("auto_apply preference: user-explicit override", result.decision.reasons)
+
+    def test_auto_apply_inferred_user_confirmed_large_diff_preserves_check_in(self) -> None:
+        # inferred_user_confirmed still respects diff_size guard
+        coord = _coordinator(confirmed=(self._auto_apply_confirmed_pref("inferred_user_confirmed"),))
+        original = PolicyDecision(action="check_in", score=0.4, reasons=("scorer",))
+        high_diff_risk = RiskSignals(
+            change_pattern="modify",
+            blast_radius=1,
+            is_security_sensitive=False,
+            is_new_file=False,
+            diff_size=25,
+        )
+        result = coord.apply_to_decision(decision=original, file_path="x.py", risk=high_diff_risk)
         self.assertEqual(result.decision.action, "check_in")
         self.assertEqual(result.decision.reasons, ("scorer",))
 

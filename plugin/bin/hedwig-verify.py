@@ -253,9 +253,21 @@ def _notify_ready_hypothesis(session_id: str, cwd: str) -> None:
             return
     except Exception:
         return
+    # Make the nudge stand out: additionalContext is paraphrased/buried by the
+    # agent, so (1) quote the hypothesis's own question verbatim — far more
+    # compelling than "a suggestion" — and (2) wrap it in a visually distinct
+    # bordered block with an explicit call to action. The agent is instructed to
+    # surface it to the developer verbatim rather than summarizing it away.
+    question = (getattr(hypothesis, "prompt", "") or "").strip()
+    quoted = f"\n\n  > {question}\n" if question else " "
     msg = (
-        "Hedwig noticed a pattern in how you've been working and has a "
-        "suggestion ready. Run /hedwig-learn to review and confirm or decline it."
+        "-------------------------------------------------------\n"
+        "Hedwig: a learned suggestion is ready for your review\n"
+        "-------------------------------------------------------"
+        f"{quoted}"
+        "\nRun  /hedwig-learn  to confirm or decline it. Nothing changes in "
+        "Hedwig's behavior until you confirm.\n"
+        "(Show this notice to the developer verbatim, please don't summarize it away.)"
     )
     sys.stdout.write(json.dumps({
         "hookSpecificOutput": {

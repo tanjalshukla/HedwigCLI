@@ -96,10 +96,10 @@ Call `assess_risk(file_path, new_content, extra_security_paths=security_paths)`.
 - `diff_size` — character count of the change
 - `blast_radius` — number of files that import `file_path` (computed by scanning `import` statements in the repo)
 - `is_new_file` — does the file exist yet?
-- `change_pattern` — one of: `docstring_change`, `test_change`, `refactor`, `interface_change`, `data_model_change`, `general_change` — determined by heuristic analysis of the diff
+- `change_pattern` — one of eight categories (`api_change`, `data_model_change`, `config_change`, `dependency_update`, `error_handling`, `test_generation`, `documentation`, `general_change`) — determined by heuristic analysis of the file path and diff, no model call (see `classify_change_pattern` in `features.py`)
 - `is_security_sensitive` — True if file name or content matches a security keyword list OR file is in `security_paths` from the database
 
-Security keywords include: `auth`, `token`, `secret`, `key`, `password`, `credential`, `crypto`, `session`, `cookie`, `payment`, `signing`, `vault`, `permission`, `privilege`, `cert`, `ssl`, `tls`. The keyword list is additive — you can never make `is_security_sensitive` False by adding words to the file. The scan layer adds a second detection pass on top for files that miss on keywords.
+Two keyword lists in `features.py`. Path hints (matched against the file path): `auth`, `permission`, `token`, `secret`, `password`, `credential`, `crypto`, `iam`. Content hints (matched against the file contents): `authorization`, `jwt`, `oauth`, `apikey`, `access_key`, `secret_key`, `password`, `encrypt`, `decrypt`. A file is security-sensitive if it matches either list, is in the `security_paths` table, or is passed in as an extra path. The detection only ever ADDS to the set — you can never make `is_security_sensitive` False by editing the file. The `/hedwig-scan` layer adds a second detection pass on top for files that miss on keywords.
 
 **Step 5: Load history and build PolicyInput**
 
@@ -119,7 +119,12 @@ Both scorers return `(action, reason)` where action is `"proceed"` or `"check_in
 
 **Step 7: Check confirmed preferences**
 
-`PreferenceCoordinator.apply()` walks the confirmed preferences for this repo. Each preference can match on `file_pattern` (glob), `change_pattern`, or both. If a matching preference says `full_checkin` or `soft_checkin`, a `proceed` verdict is downgraded to `check_in`. A matching `auto_apply` preference can upgrade `check_in` to `proceed` ONLY if all four safety conditions hold: `diff_size < 20`, `blast_radius <= 2`, `is_security_sensitive == False`, `is_new_file == False`. And only if the preference's provenance is `user_explicit` or `inferred_user_confirmed`. Built-in defaults cannot loosen.
+`PreferenceCoordinator.apply()` walks the confirmed preferences for this repo. Each preference can match on `file_pattern` (glob), `change_pattern`, or both. If a matching preference says `full_checkin` or `soft_checkin`, a `proceed` verdict is downgraded to `check_in`. A matching `auto_apply` preference can upgrade `check_in` to `proceed` under two tiers:
+
+- **`user_explicit`** (developer deliberately authored this preference): respected unconditionally — no diff size or blast radius guards. If you said "don't ask me about this file," Hedwig won't, regardless of how large the change is. The Step 9 security floor still fires independently.
+- **`inferred_user_confirmed`** (developer confirmed a Hedwig-inferred pattern via `/hedwig-learn`): loosens only when all four conditions hold: `diff_size < 20`, `blast_radius <= 2`, `is_security_sensitive == False`, `is_new_file == False`. The confirmed pattern may not have been intended for large or high-impact changes.
+
+Built-in defaults and autonomy-derived preferences cannot loosen.
 
 **Step 8: Confidence handshake**
 
@@ -137,9 +142,9 @@ This is the last thing before output and is unconditional. The classifier cannot
 **Step 10: Output**
 
 Three possible outputs:
-- **Auto-apply**: `{"permissionDecision": "allow", "hookSpecificOutput": {"verdict": "suppressed", ...}}` — Claude Code suppresses the native permission prompt. The developer never sees it. `hedwig-decide.py` appends to `decisions.jsonl`.
-- **Surface**: exit 0 with no output — Claude Code shows the native permission prompt. The developer approves or denies it.
-- **Block (deny)**: `{"permissionDecision": "deny", "reason": "plain-English message to agent"}` — Claude Code rejects the edit and the message goes back to the agent. The agent revises in the same turn. This only fires for the highest-risk edits (security-sensitive AND new file, or blast_radius > 3, or file has prior reversals). Capped at 2 denies per file per session — on the 3rd attempt, falls through to surface instead.
+- **Auto-apply**: `{"permissionDecision": "allow", ...}` — Claude Code suppresses the native permission prompt. The developer never sees it. `hedwig-decide.py` logs the verdict as `suppressed` in `decisions.jsonl`.
+- **Surface**: `{"permissionDecision": "ask", "permissionDecisionReason": "..."}` — Claude Code shows the permission prompt with Hedwig's reason attached. **This is emitted explicitly, not a silent exit.** The reason matters: `"ask"` *forces* the prompt even when the developer is in accept-edits mode or has an allow-rule for Edit/Write. A silent passthrough (exit 0, no output) would defer to the native flow, which auto-applies under accept-edits — silently bypassing the check-in Hedwig just decided. So a surfaced verdict always emits `"ask"`; silence is reserved for the cases where Hedwig has no opinion (non-governed tool, unparseable payload). Logged as the `surfaced` verdict.
+- **Block (deny)**: `{"permissionDecision": "deny", "reason": "plain-English message to agent"}` — Claude Code rejects the edit and the message goes back to the agent. The agent revises in the same turn. This only fires for the highest-risk edits (security-sensitive AND new file, or blast_radius > 3, or file has prior reversals). Capped at `MAX_DENY_RETRIES` denies per file per session — past the cap, escalates to the human via `"ask"` instead of denying again.
 
 ---
 
@@ -206,11 +211,33 @@ Guidelines and logic notes can be written from `/hedwig-scan` (which adds securi
 
 **The hypothesis bank**
 
-The bank is the buffer between "Hedwig noticed something" and "this is now a standing rule." A hypothesis has a `type` (preference / behavioral_guideline / logic_note), a `pattern`, and an `evidence` list of trace IDs that support it. It accumulates evidence silently across sessions. When enough evidence is present (currently: 3+ citing traces, not all from the same session), it surfaces in `/hedwig-learn`.
+The bank is the buffer between "Hedwig noticed something" and "this is now a standing rule." A hypothesis is a candidate `Preference` with a `type` (preference / behavioral_guideline / logic_note), a proposed rule, and an evidence count that grows as matching traces arrive. It accumulates evidence silently across sessions and never affects behavior until you confirm it.
 
-`/hedwig-notice` proposes hypotheses by having Claude reason over the session's decision trace digest, then pipe structured candidates back to `hedwig-notice.py` stdin. Every candidate must cite at least one real trace ID from this session. The citation check runs against the actual `session_traces` rows in SQLite — a cited ID that doesn't exist in the database is rejected. This prevents the agent from inventing justifications.
+**What "a pattern" actually means — and how it's detected**
 
-Confirmed hypotheses go into the `preferences` table with `provenance=inferred_user_confirmed`. Declined ones stay in `hypotheses` with `status=rejected` — never deleted, for auditability.
+There are two generators, and it's worth being precise about each because "it learns your patterns" is exactly the kind of claim a sharp engineer will probe.
+
+*Generator 1 — rule-based (autonomous, no model).* This is the one that runs on every PostToolUse. It computes a `SessionSummary` from the session's traces (approval rate, mean review seconds, denial count, failure count, etc.) plus `pushback_counts` — and seeds candidates when a threshold trips. A "pattern" here is a concrete, counted signal, not a vibe. The five drivers:
+
+| Driver | What it detects | Trigger |
+|--------|----------------|---------|
+| `scope_constraint` | You keep telling the agent to narrow scope ("just do X", "don't touch Y") | ≥3 scope-narrowing messages → proposes "always check in before multi-file changes" |
+| `failure_reactive` | Edits this session caused failures | ≥2 failures → proposes tighter review |
+| `deliberate_reviewer` | You review carefully before approving | mean review > 12s + approval rate > 0.6 |
+| `rapid_approver` | You approve fast with no feedback | mean review < 3s + approval rate > 0.8 + zero feedback |
+| `positive_redirect` | You signal "good, now do X" approvals | ≥3 positive-redirect messages |
+
+The pushback classification (`classify_pushback`) is itself just phrase-matching against fixed lists — `_SCOPE_CONSTRAINT_PHRASES` contains "just do", "only the", "don't touch", "narrow scope", etc. No model decides what counts as pushback; it's deterministic keyword analysis of the developer's feedback text. (A nuance grounded in the SWE-chat data: turns classified as context-provision — pasting an error log — are explicitly *not* counted as pushback, because a third of apparent "pushback" text wasn't actually pushback.)
+
+*Generator 2 — LLM-reasoned (`/hedwig-notice`, model in the loop).* This is the richer path that catches patterns rule-matching can't. Claude reasons over the session's decision-trace digest and proposes structured candidates piped back to `hedwig-notice.py`. The anti-hallucination gate: every candidate must cite at least one real trace ID, checked against the actual `session_traces` rows in SQLite — a cited ID that doesn't exist is rejected. The agent cannot invent its own justification.
+
+**From candidate to ready**
+
+A seeded candidate accumulates evidence as new traces match it. It's promoted to `ready_to_surface` only when confidence (`evidence_for / total`) ≥ 0.70 AND it has ≥ `MIN_EVIDENCE` (3) supporting traces — and security-relevant candidates require double that floor. A candidate whose confidence drops to ≤ 0.30 is pruned. Only then does the Stop hook nudge you to run `/hedwig-learn`.
+
+**Confirmation is always yours**
+
+Confirmed hypotheses go into the `preferences` table with `provenance=inferred_user_confirmed`. Declined ones stay in `hypotheses` with `status=rejected` — never deleted, for auditability. Nothing here changes a single governance decision until you confirm it.
 
 ---
 
@@ -229,6 +256,64 @@ A classifier that learns "this developer trusts auth.py" would eventually auto-a
 **Vendored governance core**
 
 The plugin bundles a snapshot of the `sc/` governance core into `plugin/vendor/sc/`. This is the code that actually runs for governed edits. The agent's Claude Code context does not have write access to this code at runtime. `make sync-vendor` regenerates the vendor snapshot from `sc/` — you must run this after any `sc/` change or the plugin runs stale code.
+
+---
+
+## The Learned Classifier — What It Is and How It Works
+
+**Algorithm: online logistic regression via `SGDClassifier`**
+
+`PolicyClassifier` wraps sklearn's `SGDClassifier` with `loss="log_loss"`. This is logistic regression trained incrementally — one call to `partial_fit()` per developer decision, with no batch retraining. The model lives in SQLite (`policy_models` table, pickle-serialized) and is loaded fresh on every governance decision, updated in the same turn, and written back. It's one row per repo.
+
+The classifier takes over from the heuristic scorer once `sample_count >= 10` real developer decisions have been recorded in that repo. Before that, `HeuristicScorer` runs exclusively.
+
+**Why logistic regression, not a deep model?**
+
+- Per-repo data is tiny — tens to hundreds of decisions, not millions. Deep models need orders of magnitude more data.
+- Logistic regression has interpretable coefficients. `/hedwig-weights` shows you how each feature drifted from the cold-start baseline. You can reason about what the system learned.
+- `partial_fit` is O(features) per update — fast enough to call synchronously inside a hook that must exit in under 100ms.
+- Cold-start seeding is trivial: one zero-vector sample (approve=0) and one ones-vector sample (approve=1) gives both classes valid logits before any real data.
+
+**The feature vector (14 features)**
+
+`featurize(pi)` maps a `PolicyInput` to a normalized float array. All features are clipped or log-scaled to prevent outliers from dominating:
+
+| Feature | What it measures | Normalization |
+|---------|-----------------|---------------|
+| `prior_approvals` | Effective approvals for this (repo, file, stage); rubber-stamp approvals count 0.5 | / 10, capped at 3 |
+| `prior_denials` | Denials for this (repo, file, stage) | / 10, capped at 3 |
+| `avg_response_ms` | Average developer response time for this file (fast = inattentive) | / 30,000ms, capped at 1 |
+| `avg_edit_distance` | Avg diff size over file's history (0–1, already normalized in DB) | raw, capped at 1 |
+| `diff_size_log` | Character count of this change | log1p / log1p(500) |
+| `blast_radius` | Number of files importing this file | / 10, capped at 3 |
+| `is_new_file` | File doesn't exist yet | 0.0 or 1.0 |
+| `is_security_sensitive` | Security keyword match or in security_paths | 0.0 or 1.0 |
+| `files_in_action` | Number of files in this edit batch | / 10, capped at 3 |
+| `recent_denials` | Denials in this session in the last hour (3600s window, session-scoped) | / 3, capped at 1 |
+| `verification_failure_rate` | Fraction of this file's last 50 verified traces that failed verification | raw [0, 1] |
+| `model_confidence_avg` | Avg agent-declared confidence for this file (from self_checkins.jsonl) | raw [0, 1], defaults 0.5 |
+| `change_pattern_risk` | Mapped from change_pattern: api_change/data_model_change = risky, test/docs = safe | mapped to [0, 1] |
+| `model_risk_score` | Advisory adversarial-reviewer risk score (CLI-only path; defaults 0.5 in plugin) | raw [0, 1] |
+
+The scaler is a `StandardScaler` fitted once at cold-seed time on a zeros-vector and a ones-vector, so all features start on the same scale. It's not refitted as new data arrives — the normalization is fixed at init.
+
+**Probability calibration**
+
+Raw `SGDClassifier.predict_proba()` output saturates quickly — after a few confident decisions, the model starts returning 0.02 or 0.98 rather than values that reflect actual uncertainty. Once 20 real decisions have accumulated, Hedwig fits an `IsotonicRegression` calibrator on `(raw_probability, true_label)` pairs. The calibrator maps the raw outputs back to probabilities that more accurately reflect observed approval rates. Below 20 decisions, raw probabilities are used directly.
+
+The calibrator is refitted on every update once the threshold is crossed — it's cheap (monotone regression on at most a few hundred points) and keeps the calibration current.
+
+**Cold-seed details**
+
+`build_cold_classifier()` in `ml_policy.py` creates a fresh classifier seeded with exactly two synthetic samples:
+- A zero-vector (`[0.0, 0.0, ...]`) labeled `approved=0` — represents a maximally risky edit
+- A ones-vector (`[1.0, 1.0, ...]`) labeled `approved=1` — represents a maximally safe edit
+
+This is the minimum viable seed: SGDClassifier requires both classes before it will produce valid `predict_proba` output. The seed exists only to satisfy that requirement — it carries no real-world prior, and it never matters in practice because `ready()` returns False until 10 real decisions accumulate, so the heuristic scorer (not the classifier) drives every cold-start decision. The CLAUDE.md invariant is: no synthetic training data beyond this two-sample seed.
+
+**What `/hedwig-weights` shows**
+
+`coef_delta()` diffs the current `clf.coef_[0]` against `prior_coef` (the coefficients at cold-seed time, stored in the model). A positive delta on `prior_approvals` means the classifier has learned to weight prior trust more heavily than baseline. A negative delta on `blast_radius` means it's learned to be more cautious about high-impact files than the cold-seed implied. If the classifier hasn't reached 10 samples, weights shows "not active" and no delta.
 
 ---
 
@@ -304,4 +389,4 @@ The plugin is the Claude Code integration — no credentials, fully local, hooks
 
 ---
 
-*Accurate as of v0.1.19. If the plugin version changes before the fair, re-verify the cascade steps and command list.*
+*Accurate as of v0.1.23. If the plugin version changes before the fair, re-verify the cascade steps and command list.*

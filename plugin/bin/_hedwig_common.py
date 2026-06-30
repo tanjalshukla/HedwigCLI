@@ -378,8 +378,9 @@ def apply_confirmed_preferences(db, repo_root: str, decision, risk, file_path: s
     session context, so session_summary is empty and task_intent/turn_purpose are
     neutral — confirmed file/risk-scoped preferences still match. The safety
     invariant lives entirely in PreferenceCoordinator._apply_forced_action
-    (tighten by default; auto_apply loosens only for developer-confirmed,
-    genuinely-low-risk actions) — we reuse it verbatim so the plugin can't drift
+    (tighten by default; auto_apply loosens a check_in only for developer-
+    confirmed preferences — user_explicit unconditionally, inferred_user_confirmed
+    only when genuinely low-risk) — we reuse it verbatim so the plugin can't drift
     from the documented rule. Best-effort: never raises into the hook.
     """
     try:

@@ -84,16 +84,18 @@ def test_security_sensitive_edit_is_denied_with_reason(tmp_path: Path) -> None:
     assert "re-propose" in reason or "narrow" in reason.lower()
 
 
-def test_ordinary_new_file_passes_through_not_denied(tmp_path: Path) -> None:
+def test_ordinary_new_file_surfaces_not_denied(tmp_path: Path) -> None:
     """A brand-new non-risky file surfaces (new-file penalty) but must NOT be
-    denied — first-sight files go to the human; deny is for revisable risk."""
+    denied — first-sight files go to the human; deny is for revisable risk.
+    Surfacing is emitted as "ask" (forces the prompt even under accept-edits),
+    never "deny"."""
     proj = tmp_path / "proj"
     (proj / "src").mkdir(parents=True)
     _, out = _decide(
         _write_payload(proj, "src/new_module.py", content="def f():\n    return 1\n"),
         tmp_path / "data", proj,
     )
-    assert out == "", f"expected passthrough (no deny) for an ordinary new file, got {out!r}"
+    assert _verdict(out) == "ask", f"expected 'ask' (surface, not deny) for an ordinary new file, got {out!r}"
 
 
 def test_low_risk_edit_still_auto_approves(tmp_path: Path) -> None:
@@ -131,11 +133,13 @@ def test_deny_is_retry_capped_then_escalates(tmp_path: Path) -> None:
         assert _verdict(out) == "deny", f"attempt {i} should deny, got {out!r}"
 
     # ...the next one escalates to the human instead of denying again.
+    # Escalation is "ask" (forces the prompt even under accept-edits), not a
+    # silent passthrough that would auto-apply this repeatedly-risky edit.
     _, out = _decide(
         _edit_payload(proj, "auth.py", old="'vX'", new="'vY'"),
         data_dir, proj,
     )
-    assert out == "", f"after the cap, must escalate to human (passthrough), got {out!r}"
+    assert _verdict(out) == "ask", f"after the cap, must escalate to human via 'ask', got {out!r}"
 
 
 def test_prior_regret_gates_deny_on_otherwise_ordinary_file(tmp_path: Path) -> None:

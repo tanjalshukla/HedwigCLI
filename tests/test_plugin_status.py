@@ -83,8 +83,9 @@ def test_surfaced_decision_is_logged(tmp_path: Path) -> None:
     }
     proc = _run("hedwig-decide.py", payload=payload, data_dir=data_dir, cwd=proj)
     assert proc.returncode == 0, proc.stderr
-    # Security-sensitive → surfaced, and no stdout (silent passthrough).
-    assert proc.stdout == ""
+    # Security-sensitive → surfaced, emitted as "ask" (forces the prompt even
+    # under accept-edits mode); logged as the "surfaced" verdict.
+    assert json.loads(proc.stdout)["hookSpecificOutput"]["permissionDecision"] == "ask"
 
     rows = [json.loads(line) for line in (data_dir / "decisions.jsonl").read_text().splitlines() if line.strip()]
     assert rows[0]["verdict"] == "surfaced"
