@@ -212,7 +212,7 @@ class TraceStoreMixin:
                 approvals += 1
                 is_rubber = bool(row["rubber_stamp"] == 1)
                 if is_rubber:
-                    effective_approvals += 0.5
+                    effective_approvals += 0.5  # half-weight: one approve + one deny = net zero in training
                     rubber_stamp_approvals += 1
                 else:
                     effective_approvals += 1.0

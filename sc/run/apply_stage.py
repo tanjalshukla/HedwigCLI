@@ -192,6 +192,8 @@ def _update_classifier(
             history, risk, recent_denials=recent_apply_denials, files_in_action=len(files),
         )
         if is_rubber_stamp:
+            # Two-update pattern: one approve + one uncounted deny = net 0.5
+            # weight, matching the 0.5x rubber-stamp discount in effective_approvals.
             classifier.update(pi, True)
             classifier.update(pi, False, count_sample=False)
         else:
