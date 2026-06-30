@@ -1,0 +1,292 @@
+# Hedwig — Technical Deep Dive
+
+*Everything you need to speak competently about the system without reading code. How things flow, where data goes, what fires when.*
+
+---
+
+## The Core Problem
+
+Coding agents have a calibration problem. Auto-approve everything and the agent applies edits you'd have caught — touches auth code, rewrites 300 lines, creates files that break something downstream. Manual review and you're clicking approve on every trivial line edit, going on autopilot and not actually reading.
+
+Hedwig is a governance layer that sits between Claude Code and your files. For every edit the agent proposes, Hedwig decides whether to apply it automatically or pause for your review. The decision is based on a five-layer cascade, and the cascade adjusts based on what actually happened in this repo. The short version: **Claude Code without Hedwig is a choice between two bad settings. With Hedwig, it calibrates.**
+
+---
+
+## How Hooks Work (The Plumbing)
+
+Before anything else, understand how the plugin physically runs.
+
+Claude Code has a hooks system. When specific events happen — a session starts, a tool fires, a session ends — Claude Code runs shell commands and passes event data to them as JSON on stdin. Hedwig registers six hooks:
+
+- **SessionStart** — runs `hedwig-context.py` to inject repo memory into the agent's context
+- **UserPromptSubmit** — runs `hedwig-context.py` again if relevant context changed
+- **PreToolUse (Edit/Write/MultiEdit)** — runs `hedwig-decide.py` to make the governance decision
+- **PostToolUse (Edit/Write/MultiEdit)** — runs `hedwig-record.py` to detect reversals/regret
+- **Stop** — runs `hedwig-verify.py` to check if anything just applied needs review
+- **SessionEnd** — runs bookkeeping
+
+Every hook script receives a JSON payload on stdin. The payload always includes `session_id`, `cwd`, `tool_name`, and `tool_input`. The hooks write their results to stdout as JSON — Claude Code reads that to decide whether to proceed or block.
+
+Claude Code sets two critical environment variables for every hook subprocess:
+- `CLAUDE_PLUGIN_ROOT` — the path to the installed plugin version (e.g. `~/.claude/plugins/cache/hedwig-marketplace/hedwig/0.1.19`)
+- `CLAUDE_PLUGIN_DATA` — where the plugin stores persistent data (e.g. `~/.claude/plugins/data/hedwig-hedwig-marketplace`)
+
+Slash commands also run as subprocesses but `CLAUDE_PLUGIN_DATA` may differ between hooks and commands (a Claude Code platform quirk). The sibling-dir scan in `_iter_jsonl` handles this — it always scans all `hedwig*/` directories under `~/.claude/plugins/data/` regardless of which specific path the env var points to.
+
+---
+
+## Where Data Lives
+
+Everything persistent goes into two places: **JSONL files** for event logs and **SQLite** for structured state.
+
+### JSONL Files (append-only event logs)
+
+These live in `CLAUDE_PLUGIN_DATA/`:
+
+- `decisions.jsonl` — one row per governed edit. Contains: `session_id`, `cwd`, `file_path`, `verdict` (suppressed/surfaced/denied), `score`, `reason`, `diff_size`, `blast_radius`, `change_pattern`, `is_security_sensitive`, `scorer` (heuristic/learned), `ts`. This is what `/hedwig-status` reads.
+- `regret.jsonl` — one row per detected reversal. Written by `hedwig-record.py` when it sees a PostToolUse that undoes a previous auto-applied edit. Contains the original trace reference, the cwd, and a `regret_key` that prevents the same regret from being replayed twice.
+- `sentinel.jsonl` — diagnostic heartbeat. Every hook writes a row with its event name and env snapshot (including `CLAUDE_PLUGIN_ROOT`, `CLAUDE_PLUGIN_DATA`). Used for debugging; not consumed by any feature.
+- `self_checkins.jsonl` — written by `hedwig-declare.py` when the agent declares low confidence. One row per declaration with `session_id`, `file_path`, and `confidence`. `hedwig-decide.py` reads the most recent row for a given (session, file) before deciding.
+
+### SQLite (`trust.db`)
+
+Opened via `open_trust_db()`. Tables that matter:
+
+- **`decision_traces`** — the primary learning substrate. Every auto-applied edit gets a row here after the fact, recording the `PolicyInput` feature vector plus whether it was later reversed. This is what the classifier trains on.
+- **`policy_history`** — aggregated stats per (repo, file): `effective_approvals`, `denials`, `avg_response_ms`, `avg_edit_distance`. The `effective_approvals` field is fractional — rubber-stamp approvals (under 5 seconds) count as 0.5. This is read by the classifier as prior-approval features.
+- **`policy_models`** — the serialized `PolicyClassifier` for each repo. Loaded at decision time, updated after each outcome, written back. Pickle-serialized sklearn model + metadata (`sample_count`, `_corrected_regret_ids`).
+- **`preferences`** — confirmed behavioral patterns. Each row has a `preference_type`, `file_pattern`, `change_pattern`, and `provenance` (user_explicit / inferred_user_confirmed / default). Used by `PreferenceCoordinator` at step 5 of the cascade.
+- **`hypotheses`** — pending (unconfirmed) candidates. Evidence accumulates here. Once confidence is high enough, one surfaces to `/hedwig-learn` for confirmation.
+- **`rules`** — hard constraints (`always_deny`, `always_check_in`, `always_allow`) keyed by glob pattern and repo root.
+- **`leases`** — temporary auto-apply trust grants from prior approve+remember decisions (CLI only).
+- **`security_paths`** — files explicitly flagged as security-sensitive by `/hedwig-scan`. Contains `file_path`, `reason`, `source` (user/scan/default).
+- **`guidelines`** — free-text behavioral guidelines for this repo.
+- **`logic_notes`** — factual statements about the repo (stored with embeddings for retrieval).
+
+---
+
+## The Decision Cascade — Exact Order
+
+`hedwig-decide.py` runs on every PreToolUse for Edit/Write/MultiEdit. Here is every step in order.
+
+**Step 0: Re-exec to capable interpreter**
+
+Before reading stdin, `ensure_learned_interpreter()` checks whether the current Python has `numpy` and `scikit-learn`. If not, it looks for `~/.hedwig/venv/bin/python` (built by `/hedwig-setup`). If found and verified capable, it `os.execv()`s — replaces the current process with the capable interpreter. The new process re-runs the same script. The stdin pipe is inherited, so the payload isn't lost. If no capable interpreter exists, it continues with the heuristic-only path. A sentinel env var (`HEDWIG_REEXEC=1`) prevents infinite loops.
+
+**Step 1: Parse the payload**
+
+Read JSON from stdin. Extract `tool_name`, `cwd`, `session_id`, `tool_input` (which contains `file_path` plus the edit content). If parsing fails for any reason, output `{"continue": true}` and exit — a parse failure must never block an edit.
+
+**Step 2: Filter tool type**
+
+Only govern `Edit`, `Write`, `MultiEdit`. Anything else: `{"continue": true}` and exit. No friction on reads, shell commands, or other tools.
+
+**Step 3: Hard constraints**
+
+Call `db.hard_rules(repo_root)`. Walk the list and check each rule's glob pattern against `file_path`. Three outcomes:
+- `always_deny` → emit `{"permissionDecision": "deny", "reason": "..."}` and exit
+- `always_check_in` → emit nothing (surface to developer) and exit  
+- `always_allow` → emit `{"permissionDecision": "allow"}` and exit
+
+If no rule matches, continue.
+
+**Step 4: Deterministic risk assessment**
+
+Call `assess_risk(file_path, new_content, extra_security_paths=security_paths)`. This is pure Python — no model call, no network. It returns a `RiskSignals` object with:
+- `diff_size` — character count of the change
+- `blast_radius` — number of files that import `file_path` (computed by scanning `import` statements in the repo)
+- `is_new_file` — does the file exist yet?
+- `change_pattern` — one of: `docstring_change`, `test_change`, `refactor`, `interface_change`, `data_model_change`, `general_change` — determined by heuristic analysis of the diff
+- `is_security_sensitive` — True if file name or content matches a security keyword list OR file is in `security_paths` from the database
+
+Security keywords include: `auth`, `token`, `secret`, `key`, `password`, `credential`, `crypto`, `session`, `cookie`, `payment`, `signing`, `vault`, `permission`, `privilege`, `cert`, `ssl`, `tls`. The keyword list is additive — you can never make `is_security_sensitive` False by adding words to the file. The scan layer adds a second detection pass on top for files that miss on keywords.
+
+**Step 5: Load history and build PolicyInput**
+
+Read `db.policy_history(repo_root, file_path)` — the aggregated approval/denial stats for this file. Combine with the risk signals into a `PolicyInput` named tuple. This is the feature vector the scorer sees.
+
+**Step 6: Select and run scorer**
+
+`select_scorer(classifier)` decides which scorer runs:
+- If `classifier.ready()` is True (sample_count ≥ 10) → use the `PolicyClassifier` (online logistic regression)
+- Otherwise → use `HeuristicScorer`
+
+The heuristic scorer is a weighted sum of the risk features with hand-tuned weights from the CAIS paper. It returns a score in roughly [-2, 2]; positive → auto-apply, negative → surface.
+
+The learned classifier runs `sklearn.linear_model.SGDClassifier.predict_proba()` and returns a probability. Threshold is 0.5 — above that, auto-apply; below, surface.
+
+Both scorers return `(action, reason)` where action is `"proceed"` or `"check_in"`.
+
+**Step 7: Check confirmed preferences**
+
+`PreferenceCoordinator.apply()` walks the confirmed preferences for this repo. Each preference can match on `file_pattern` (glob), `change_pattern`, or both. If a matching preference says `full_checkin` or `soft_checkin`, a `proceed` verdict is downgraded to `check_in`. A matching `auto_apply` preference can upgrade `check_in` to `proceed` ONLY if all four safety conditions hold: `diff_size < 20`, `blast_radius <= 2`, `is_security_sensitive == False`, `is_new_file == False`. And only if the preference's provenance is `user_explicit` or `inferred_user_confirmed`. Built-in defaults cannot loosen.
+
+**Step 8: Confidence handshake**
+
+Call `latest_self_checkin(session_id, file_path)` — reads `self_checkins.jsonl` for the most recent declaration from this session for this file. If the agent declared confidence ≤ 0.5, force `action = "check_in"`. Tighten-only.
+
+**Step 9: Security floor**
+
+```python
+if action == "proceed" and risk.is_security_sensitive:
+    action = "check_in"
+```
+
+This is the last thing before output and is unconditional. The classifier cannot override it. The developer cannot turn it off except with an explicit `always_allow` hard constraint.
+
+**Step 10: Output**
+
+Three possible outputs:
+- **Auto-apply**: `{"permissionDecision": "allow", "hookSpecificOutput": {"verdict": "suppressed", ...}}` — Claude Code suppresses the native permission prompt. The developer never sees it. `hedwig-decide.py` appends to `decisions.jsonl`.
+- **Surface**: exit 0 with no output — Claude Code shows the native permission prompt. The developer approves or denies it.
+- **Block (deny)**: `{"permissionDecision": "deny", "reason": "plain-English message to agent"}` — Claude Code rejects the edit and the message goes back to the agent. The agent revises in the same turn. This only fires for the highest-risk edits (security-sensitive AND new file, or blast_radius > 3, or file has prior reversals). Capped at 2 denies per file per session — on the 3rd attempt, falls through to surface instead.
+
+---
+
+## The Learning Loop — Exact Mechanics
+
+**What counts as a regret event**
+
+After every edit applies, `hedwig-record.py` runs as a PostToolUse hook. It reads `decisions.jsonl` (via the sibling-aware `_iter_jsonl`) to find the most recent `suppressed` decision for this `(session_id, file_path)`. If the current PostToolUse is writing content that substantially reverses that edit (same file, content significantly diverged from what was applied), it's a reversal. `hedwig-verify.py` also runs at session Stop and checks whether any auto-applied edit's file has since been restored to a pre-edit state.
+
+Both detection mechanisms write to `regret.jsonl` with a stable `regret_key` — a hash of `(session_id, file_path, original_ts)`. The `_corrected_regret_ids` set in the classifier ensures each regret fires exactly one negative gradient update, even across restarts.
+
+**The classifier update cycle**
+
+On a positive outcome (edit applied, no reversal):
+1. `hedwig-record.py` calls `classifier.update(pi, approved=True, count_sample=True)`
+2. `sample_count` increments by 1
+3. If `sample_count` crosses 10, `ready()` returns True and future decisions use the classifier instead of the heuristic
+4. Classifier is pickled and written back to `policy_models` in SQLite
+
+On a regret:
+1. `hedwig-record.py` reconstructs the `PolicyInput` for the original edit using its stored feature values
+2. It decrements `effective_approvals` by the original approval weight (0.5 if rubber stamp, 1.0 if full)
+3. Calls `classifier.update(pi, approved=False, count_sample=False)` — count_sample=False because a regret is a correction, not a new decision
+4. Adds `regret_key` to `_corrected_regret_ids`
+5. Writes classifier back to SQLite
+
+**Rubber stamps**
+
+If an edit is approved in under 5 seconds average response time (stored per-file in `policy_history`), `hedwig-record.py` marks it as `rubber_stamp=True` in the trace. The classifier update weights this at 0.5 instead of 1.0. If a rubber-stamped edit then gets reverted, only 0.5 units of approval need to be unwound — the correction uses a 0.5 decrement to `effective_approvals`.
+
+---
+
+## The Memory System — How Data Moves
+
+**Session start injection**
+
+When a Claude Code session starts, `hedwig-context.py` runs as a SessionStart hook. It:
+1. Reads `db.guidelines(repo_root)` — all stored guidelines for this repo
+2. Computes embedding similarity between the current session context (project dir name, recent file names from the CLAUDE_PROJECT_DIR) and each guideline using `fastembed`
+3. Selects the top-k most relevant guidelines by cosine similarity
+4. Formats them into a short text block
+5. Outputs `{"additionalContext": "..."}` — Claude Code injects this into the agent's system prompt before the session begins
+
+The total injected context is capped at 4000 characters. A fresh repo with no guidelines costs nothing.
+
+**Writing to memory**
+
+Guidelines and logic notes can be written from `/hedwig-scan` (which adds security facts), or manually via the CLI's `/hedwig-memory` commands. In the plugin, agent-proposed notes come through `/hedwig-notice`, which routes them through the hypothesis bank before anything lands in the database.
+
+**The hypothesis bank**
+
+The bank is the buffer between "Hedwig noticed something" and "this is now a standing rule." A hypothesis has a `type` (preference / behavioral_guideline / logic_note), a `pattern`, and an `evidence` list of trace IDs that support it. It accumulates evidence silently across sessions. When enough evidence is present (currently: 3+ citing traces, not all from the same session), it surfaces in `/hedwig-learn`.
+
+`/hedwig-notice` proposes hypotheses by having Claude reason over the session's decision trace digest, then pipe structured candidates back to `hedwig-notice.py` stdin. Every candidate must cite at least one real trace ID from this session. The citation check runs against the actual `session_traces` rows in SQLite — a cited ID that doesn't exist in the database is rejected. This prevents the agent from inventing justifications.
+
+Confirmed hypotheses go into the `preferences` table with `provenance=inferred_user_confirmed`. Declined ones stay in `hypotheses` with `status=rejected` — never deleted, for auditability.
+
+---
+
+## Security — The Full Threat Model
+
+**Why risk assessment is model-independent**
+
+`assess_risk()` in `sc/features.py` is pure Python that reads file contents and import graphs. It does not call any model. A compromised agent — whether from prompt injection or a bad dependency — cannot influence what this function returns. It sees the actual bytes being written, not the agent's description of them.
+
+The agent's output is validated against a schema (`schema.py`) before the CLI acts on anything. On the plugin side, the hook runs in a separate subprocess and its output is parsed — the agent cannot push raw Python into the governance layer.
+
+**Why the security floor is an `if` not a weight**
+
+A classifier that learns "this developer trusts auth.py" would eventually auto-apply edits there. That's the threat. The floor is placed after the scorer precisely to prevent this — even a 0.99 classifier confidence is overridden by a single conditional check. The only escape hatch is an explicit `always_allow` hard constraint, which requires a deliberate developer action.
+
+**Vendored governance core**
+
+The plugin bundles a snapshot of the `sc/` governance core into `plugin/vendor/sc/`. This is the code that actually runs for governed edits. The agent's Claude Code context does not have write access to this code at runtime. `make sync-vendor` regenerates the vendor snapshot from `sc/` — you must run this after any `sc/` change or the plugin runs stale code.
+
+---
+
+## What Each Command Actually Does
+
+**`/hedwig-status`**
+Reads `decisions.jsonl` across all sibling data dirs. Counts rows by verdict. Computes suppression rate. Extracts the `reason` field from surfaced rows for the "why it surfaced these" list. No database access — pure JSONL.
+
+**`/hedwig-weights`**
+Loads the `PolicyClassifier` from `policy_models` in SQLite. Extracts `coef_` from the SGDClassifier. Diffs it against the cold-start baseline coefficients. Formats as per-feature ▲/▼ drift. Shows "not active" if `sample_count < 10` or classifier isn't loaded.
+
+**`/hedwig-retrospective`**
+Reads `regret.jsonl`. Groups by file path. Joins against `decisions.jsonl` to get the original reason for each auto-applied edit that later got walked back.
+
+**`/hedwig-rules`**
+`list` → reads `db.hard_rules(repo_root)`, formats. `add` → `db.add_rule(...)`. `remove` → `db.remove_rule(...)`. These take effect immediately — the next `hedwig-decide.py` invocation will find the new rule in the database.
+
+**`/hedwig-learn`**
+Bare → reads the highest-confidence unconfirmed hypothesis from `hypotheses` table. `confirm` → moves it to `preferences` with `provenance=inferred_user_confirmed`. `reject` → marks `status=rejected`. `active` → reads all rows from `preferences` where `provenance != "default"`.
+
+**`/hedwig-notice`**
+Two paths. `traces` subcommand → reads `db.session_traces(repo_root, session_id)`, formats as a numbered digest with `[id]` prefixes (these IDs are what the agent must cite). stdin path → parses the agent's proposed candidates from JSON, validates each citation against real trace IDs, calls `ingest_llm_hypotheses()` to add valid candidates to the `hypotheses` table.
+
+**`/hedwig-scan`**
+Reads a JSON payload from stdin (produced by Claude reasoning over the file tree). Extracts proposed security paths and facts. Normalizes paths (strips `./` prefixes). Calls `db.set_security_paths(repo_root, source="scan", paths=[...], reasons={...})`. This is replace-by-source — a new scan replaces the previous scan's results but not paths added by other sources (e.g. user-explicit).
+
+**`/hedwig-memory`**
+`guidelines` → `db.guidelines(repo_root)`. `notes` → `db.logic_notes(repo_root)`. `security` → `db.security_paths(repo_root)`. Read-only display, no modification.
+
+**`/hedwig-cochange`**
+Reads all decision traces from `decisions.jsonl`. Groups file paths by `session_id`. Counts how often pairs of files appear in the same session. Ranks pairs by co-occurrence frequency. Displays top pairs. Note: the plugin uses `session_id` as the grouping unit (the CLI uses task string, but the plugin doesn't have a task concept — the whole session is one unit of work).
+
+**`/hedwig-setup`**
+Creates `~/.hedwig/venv/` using the current Python. `pip install numpy scikit-learn fastembed` into it. The hooks' `ensure_learned_interpreter()` will find this venv on the next invocation and re-exec into it, enabling the online classifier. Run once per machine. Re-running it after a machine migration or Python upgrade is safe.
+
+---
+
+## The Vendor Sync
+
+`sc/` is the governance core. `plugin/vendor/sc/` is a bundled copy. When you edit anything in `sc/`, the plugin runs the old code until you run `make sync-vendor`. The CI (`make verify`) runs a diff check and fails if they're out of sync. This is the most common source of "I changed the code but nothing changed" bugs.
+
+The sync script (`plugin/sync_vendor.py`) copies a specific list of modules. Not everything in `sc/` is vendored — only what the plugin hooks actually import. `NON_VENDORED_SC` lists the exclusions.
+
+---
+
+## Likely Questions
+
+**"How is this different from just setting rules in CLAUDE.md?"**
+CLAUDE.md is static — you write the rules before you know what you need. Hedwig builds them from outcomes. You don't author the policy; you confirm it after the system has accumulated enough evidence. The other difference: CLAUDE.md can't block an edit with a reason the agent can act on in the same turn, triggering a self-correction without a human in the loop.
+
+**"Does it slow down Claude Code?"**
+The cascade runs in 10-20ms from local SQLite with no network calls. There's no perceptible delay. The only setup cost is `/hedwig-setup`, which is once per machine.
+
+**"What happens if Hedwig gets it wrong?"**
+Auto-applies something it shouldn't: if you revert it, that's a regret event — one negative gradient update to the classifier. The system self-corrects. For security-sensitive files, the floor means "worst case is it surfaced something you didn't need to see" — never "applied something dangerous silently."
+
+Surfaces something it shouldn't: one false-positive click. The decision registers as a positive training sample. The classifier learns.
+
+**"Can it be tricked by a prompt injection?"**
+No. Risk assessment is deterministic Python that reads actual file contents and import graphs. The agent never runs the scorer. The scorer runs in a separate subprocess from a vendored copy. A prompt-injected agent can claim something is safe; `features.py` doesn't listen to claims.
+
+**"How long until it starts learning?"**
+10 decisions. With active use, roughly one session. The heuristic covers cold start — deliberately permissive for low-risk edits so you see the value before any learning happens.
+
+**"Does it work across multiple Claude sessions?"**
+Yes. Everything is in SQLite per-repo. The classifier, confirmed preferences, hard constraints, security paths, co-change history, decision log all persist. The same governance state is shared across all Claude Code sessions on the same repo, including parallel agents. A regret recorded by one agent tightens the next one's decisions on that file.
+
+**"Is my code sent anywhere?"**
+Nothing leaves the machine. Governance runs from vendored Python. The database is local SQLite. `fastembed` runs locally. No cloud dependencies at runtime.
+
+**"What's the difference between the plugin and the research CLI?"**
+The plugin is the Claude Code integration — no credentials, fully local, hooks-based. What's at the fair is the plugin. The research CLI (`hw`) is a Bedrock-backed REPL that calls a hosted Claude model and runs a richer read/plan/apply/verify cascade. The CLI sees approve/deny clicks directly (its own UI). The plugin can't — Claude Code owns the native prompt — so it learns from outcomes instead. Same learning loop, different signal source.
+
+---
+
+*Accurate as of v0.1.19. If the plugin version changes before the fair, re-verify the cascade steps and command list.*
