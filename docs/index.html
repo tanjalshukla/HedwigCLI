@@ -401,23 +401,23 @@ decision on that file.</span></pre>
   <div class="wrap">
     <span class="eyebrow">What makes it work</span>
     <h2 style="margin-top:16px">It calibrates to how you work in this repo.</h2>
-    <p class="lead" style="margin-top:14px;max-width:60ch">Claude Code's auto mode runs on rules you write up front. Hedwig learns the line from what you actually revert, and holds a security floor it won't cross no matter what it learns. Four mechanisms, all local.</p>
+    <p class="lead" style="margin-top:14px;max-width:60ch">Claude Code's auto mode runs on rules you write up front. Hedwig learns the line from what you actually revert, and holds a security floor it won't cross no matter what it learns. Grounded in a study of 128 developers — developer style varies more within a person than between people, so Hedwig calibrates per repo, not per developer.</p>
     <div class="caps" style="margin-top:36px">
       <div class="cap">
         <h3>It learns from your reverts</h3>
         <p>Undo something Hedwig auto-applied and it takes the hint. That revert becomes a negative signal the scorer carries forward, so the next edit like it stops for review.</p>
       </div>
       <div class="cap">
-        <h3>It proposes rules, you approve them</h3>
-        <p>When a pattern shows up across enough of your decisions, Hedwig drafts a rule and asks. Every proposal cites the real edits behind it, and nothing changes how it behaves until you confirm.</p>
+        <h3>It tells the agent exactly why</h3>
+        <p>When Hedwig holds an edit, it sends the agent a plain-English reason and asks it to narrow the scope. The agent self-corrects same-turn. No human needed — and the floor it held stays held regardless of what the agent argues.</p>
       </div>
       <div class="cap">
         <h3>A real classifier, trained live</h3>
         <p>A lightweight logistic-regression scorer updates one decision at a time and takes over from the built-in heuristics after ten real calls. No batch retraining, no GPU, no synthetic data.</p>
       </div>
       <div class="cap">
-        <h3>Autonomy moves both ways</h3>
-        <p>Edits you keep approving earn a trust grant and start applying on their own. Edits you revert tighten back up. Claude can also flag its own shaky work and ask for review, but that handshake only ever adds caution, never removes it.</p>
+        <h3>It scans for what keywords miss</h3>
+        <p>Run <code>/hedwig-scan</code> once and Hedwig reasons over your file tree to flag security-sensitive files that don't have telltale names. Every proposal cites the real edits behind it. Nothing changes until you confirm.</p>
       </div>
     </div>
   </div>
