@@ -107,18 +107,33 @@ def _session_start(payload: dict) -> int:
             "use the repo-scan skill once to flag security-sensitive files (and "
             "note durable repo facts) so Hedwig governs edits to them correctly."
         )
+    if _should_invite_setup():
+        parts.append(
+            "Hedwig · the online classifier isn't active yet. Run /hedwig-setup "
+            "once to enable it — it builds a small local venv and the learned "
+            "scorer starts improving from your decisions automatically."
+        )
     if not parts:
         return 0
     return _emit("SessionStart", "\n\n".join(parts))
 
 
 def _should_invite_scan(db, repo_root: str) -> bool:
-    """True if no agent scan has run for this repo yet. Best-effort: any failure
-    returns False (no nudge) so a DB hiccup never adds noise to the session."""
+    """True if no agent scan has run for this repo yet."""
     if db is None:
         return False
     try:
         return not db.security_paths(repo_root)
+    except Exception:
+        return False
+
+
+def _should_invite_setup() -> bool:
+    """True if the learned-scorer venv doesn't exist yet. Best-effort: any
+    failure returns False so a missing venv check never blocks the session."""
+    try:
+        from _hedwig_common import learned_scorer_reachable  # noqa: PLC0415
+        return not learned_scorer_reachable()
     except Exception:
         return False
 
