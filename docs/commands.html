@@ -212,7 +212,7 @@ Decline with  /hedwig-learn reject</pre>
     <div class="cmd-block" id="notice">
       <div class="tag">learning</div>
       <div class="cmd-name">/hedwig-notice</div>
-      <p class="cmd-desc">Asks Claude to review this session's decisions and propose standing rules based on what it observed. Proposed rules are candidates only — nothing changes until you confirm them via <code>/hedwig-learn</code>.</p>
+      <p class="cmd-desc">Asks Claude to review this session's decisions and propose standing rules based on what it observed. Proposed rules are candidates only; nothing changes until you confirm them via <code>/hedwig-learn</code>.</p>
       <pre><span class="cmt"># Propose rules from this session's traces</span>
 <span class="p">/hedwig-notice</span>
 
@@ -242,7 +242,7 @@ Decline with  /hedwig-learn reject</pre>
     <div class="cmd-block" id="scan">
       <div class="tag">security</div>
       <div class="cmd-name">/hedwig-scan</div>
-      <p class="cmd-desc">Asks Claude to scan the repo for security-sensitive files that keyword matching alone would miss — config loaders, secret parsers, token handlers — and add them to Hedwig's security floor. Run once per repo.</p>
+      <p class="cmd-desc">Asks Claude to scan the repo for security-sensitive files that keyword matching alone would miss (config loaders, secret parsers, token handlers) and add them to Hedwig's security floor. Run once per repo.</p>
       <pre><span class="cmt"># Scan and add findings to the security floor</span>
 <span class="p">/hedwig-scan</span></pre>
       <p class="cmd-note">Files added here are treated like <code>auth.py</code>: always surfaced for review, regardless of what the classifier learns. Nothing changes until you confirm the scan's proposals.</p>

@@ -198,6 +198,9 @@ def _record_inferred_denials(session_id: str, repo_root: str) -> None:
                     "signal": "inferred_denial",
                 },
             )
+            # Build PolicyInput BEFORE record_trace so history reflects the
+            # state at decision time — same ordering fix as hedwig-record.py.
+            pi = policy_input_for_decision(db, repo_root, fp, row)
             db.record_trace(
                 repo_root=repo_root,
                 session_id=session_id,
@@ -218,8 +221,6 @@ def _record_inferred_denials(session_id: str, repo_root: str) -> None:
                 user_feedback_text="inferred: surfaced edit never executed",
                 is_security_sensitive=bool(row.get("is_security_sensitive")),
             )
-            # Negative classifier update — counts as a real sample.
-            pi = policy_input_for_decision(db, repo_root, fp, row)
             if pi is not None:
                 update_classifier_for_decision(db, repo_root, pi, approved=False)
     except Exception:

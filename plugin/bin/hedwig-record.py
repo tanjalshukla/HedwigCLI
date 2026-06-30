@@ -138,6 +138,9 @@ def _record_reversal_regret(repo_root: str, session_id: str, rel: str, change_pa
     )
     try:
         db = open_trust_db()
+        # Build PolicyInput BEFORE record_trace so history reflects the state
+        # at decision time — same ordering fix as the positive-sample path.
+        pi = policy_input_for_regret(db, repo_root, session_id, rel)
         db.record_trace(
             repo_root=repo_root,
             session_id=session_id,
@@ -154,12 +157,10 @@ def _record_reversal_regret(repo_root: str, session_id: str, rel: str, change_pa
             prior_denials=0,
             policy_action="check_in",
             policy_score=0.0,
-            user_decision="deny",  # negative outcome: agent reverted the auto-applied edit
+            user_decision="deny",
             user_feedback_text="agent reverted an auto-applied edit",
             verification_passed=False,
         )
-        # Corrective classifier gradient — keyed so it fires exactly once.
-        pi = policy_input_for_regret(db, repo_root, session_id, rel)
         update_classifier_for_regret(db, repo_root, pi, regret_key=f"reversal:{session_id}:{rel}")
     except Exception:
         pass
@@ -341,6 +342,13 @@ def _main_inner() -> int:
 
     try:
         db = open_trust_db()
+        # Build PolicyInput BEFORE record_trace so prior_approvals/denials in
+        # policy_history reflect the state at decision time, not after we write
+        # this new trace. Writing the trace first would inflate prior_approvals
+        # by one for every positive sample, biasing the classifier.
+        pi = None
+        if verdict_row and verdict_row.get("blast_radius") is not None:
+            pi = policy_input_for_decision(db, repo_root, rel, verdict_row)
         db.record_trace(
             repo_root=repo_root,
             session_id=session_id,
@@ -362,14 +370,7 @@ def _main_inner() -> int:
             rubber_stamp=rubber_stamp,
             is_security_sensitive=is_security_sensitive,
         )
-        # Positive learning sample. For surfaced+approved edits the developer
-        # actively reviewed — this is the signal the CLI gets from the
-        # approve/deny click and the plugin previously missed entirely. We now
-        # recover it by correlating surfaced decisions with PostToolUse execution.
-        # Rubber-stamp approvals are down-weighted (count_sample=True but the
-        # effective_approvals increment is 0.5 inside PolicyClassifier.update).
-        if verdict_row and verdict_row.get("blast_radius") is not None:
-            pi = policy_input_for_decision(db, repo_root, rel, verdict_row)
+        if pi is not None:
             update_classifier_for_decision(
                 db, repo_root, pi, approved=True, rubber_stamp=rubber_stamp
             )
