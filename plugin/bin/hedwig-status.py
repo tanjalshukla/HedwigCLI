@@ -216,7 +216,7 @@ def main(argv: list[str]) -> int:
     i = 0
     while i < len(argv):
         if argv[i] == "--session" and i + 1 < len(argv):
-            session_id = argv[i + 1]
+            session_id = argv[i + 1] or None  # treat empty string as "show all"
             i += 2
         elif argv[i] == "--json":
             as_json = True
