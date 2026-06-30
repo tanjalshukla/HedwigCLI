@@ -330,7 +330,9 @@ def policy_input_for_decision(db, repo_root: str, file_path: str, decision_row: 
         return None
 
 
-def update_classifier_for_decision(db, repo_root: str, pi, *, approved: bool) -> None:
+def update_classifier_for_decision(
+    db, repo_root: str, pi, *, approved: bool, rubber_stamp: bool = False
+) -> None:
     """Replay an executed developer decision as one positive/negative sample.
 
     This is the plugin analogue of apply_stage._update_classifier and the ONLY
@@ -340,6 +342,13 @@ def update_classifier_for_decision(db, repo_root: str, pi, *, approved: bool) ->
     recorder when a governed edit actually executed: a suppressed (auto-applied)
     or surfaced-then-approved edit is positive history. count_sample defaults to
     True so each executed decision advances toward MIN_SAMPLES_FOR_LEARNED.
+
+    rubber_stamp: when True, replicates apply_stage's two-call pattern —
+    one approve + one deny (count_sample=False) — yielding a net ~0 gradient
+    so a hasty click doesn't shift the classifier. Without this, a rubber-stamp
+    approval would count as a full +1 signal, which is what apply_stage
+    explicitly prevents.
+
     Best-effort: never raises into the hook.
     """
     if pi is None:
@@ -349,6 +358,10 @@ def update_classifier_for_decision(db, repo_root: str, pi, *, approved: bool) ->
         if classifier is None:
             return
         classifier.update(pi, approved=approved)
+        if rubber_stamp and approved:
+            # Second call cancels most of the gradient: net effective weight ~0.5.
+            # Mirrors apply_stage._update_classifier's rubber-stamp handling.
+            classifier.update(pi, approved=False, count_sample=False)
         db.save_policy_model(repo_root, classifier)
     except Exception:
         pass

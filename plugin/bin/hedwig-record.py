@@ -370,7 +370,9 @@ def _main_inner() -> int:
         # effective_approvals increment is 0.5 inside PolicyClassifier.update).
         if verdict_row and verdict_row.get("blast_radius") is not None:
             pi = policy_input_for_decision(db, repo_root, rel, verdict_row)
-            update_classifier_for_decision(db, repo_root, pi, approved=True)
+            update_classifier_for_decision(
+                db, repo_root, pi, approved=True, rubber_stamp=rubber_stamp
+            )
         _run_hypothesis_evidence(db, repo_root, session_id)
     except Exception:
         pass

@@ -184,7 +184,20 @@ def _record_inferred_denials(session_id: str, repo_root: str) -> None:
             fp = row.get("file_path") or ""
             if not fp:
                 continue
-            # Record as a denial trace.
+            # Write a sentinel to traces.jsonl FIRST so that if Stop fires
+            # again in this session (multiple turns), _infer_developer_denials
+            # sees this file in the `executed` set and skips it. Without this,
+            # the same denial would be re-recorded on every subsequent Stop.
+            append_jsonl(
+                "traces.jsonl",
+                {
+                    "session_id": session_id,
+                    "cwd": repo_root,
+                    "file_path": fp,
+                    "user_decision": "deny",
+                    "signal": "inferred_denial",
+                },
+            )
             db.record_trace(
                 repo_root=repo_root,
                 session_id=session_id,
