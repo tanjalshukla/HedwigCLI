@@ -409,7 +409,7 @@ decision on that file.</span></pre>
       </div>
       <div class="cap">
         <h3>It tells the agent exactly why</h3>
-        <p>When Hedwig holds an edit, it sends the agent a plain-English reason and asks it to narrow the scope. The agent self-corrects same-turn. No human needed — and the floor it held stays held regardless of what the agent argues.</p>
+        <p>When Hedwig holds an edit, it sends the agent a plain-English reason and asks it to narrow the scope. The agent self-corrects same-turn. No human needed. The floor it held stays held regardless of what the agent argues.</p>
       </div>
       <div class="cap">
         <h3>A real classifier, trained live</h3>
@@ -429,7 +429,7 @@ decision on that file.</span></pre>
       <h2>Memory is on disk.</h2>
       <p>Decisions, self-corrections, classifier weights, your rules. All of it lives in a local file, not a context window. It survives restarts, carries across sessions, and is shared across agents. Every Claude Code session on the same repo reads the same governance state. A regret recorded by one agent tightens the next.</p>
       <p>Semantic rule retrieval runs on-device with a small embedding model. Pattern inference is handled by the Claude Code session you're already in. All you need is Claude Code.</p>
-      <p>Token overhead is near-zero. The governance hooks add nothing to your context window. Memory is injected only when it's relevant to the current prompt — a few lines, keyword-matched, capped. A fresh repo costs nothing until you build memory.</p>
+      <p>Token overhead is near-zero. The governance hooks add nothing to your context window. Memory is injected only when it's relevant to the current prompt: a few lines, keyword-matched, capped. A fresh repo costs nothing until you build memory.</p>
     </div>
   </div>
 </div>
