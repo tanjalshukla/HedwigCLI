@@ -115,7 +115,11 @@
       <a href="#weights">/hedwig-weights</a>
       <a href="#retrospective">/hedwig-retrospective</a>
       <a href="#learn">/hedwig-learn</a>
+      <a href="#notice">/hedwig-notice</a>
       <a href="#rules">/hedwig-rules</a>
+      <a href="#scan">/hedwig-scan</a>
+      <a href="#memory">/hedwig-memory</a>
+      <a href="#cochange">/hedwig-cochange</a>
     </nav>
   </aside>
 
@@ -154,7 +158,7 @@ Hedwig · trust runtime
   Why it surfaced these:
     · api/routes.py: interface change, multi-file blast radius
     · auth/tokens.py is security-sensitive, no prior history</pre>
-      <p class="cmd-note">Scoped to the current session by default. All-time totals shown when session ID is unavailable.</p>
+      <p class="cmd-note">Shows all-time totals across every session in this repo.</p>
     </div>
 
     <div class="cmd-block" id="weights">
@@ -205,6 +209,18 @@ Decline with  /hedwig-learn reject</pre>
       <p class="cmd-note">Declined patterns stay in the bank for transparency; they're not discarded. Confirmed patterns can be reviewed and revoked via <code>/hedwig-rules</code>.</p>
     </div>
 
+    <div class="cmd-block" id="notice">
+      <div class="tag">learning</div>
+      <div class="cmd-name">/hedwig-notice</div>
+      <p class="cmd-desc">Asks Claude to review this session's decisions and propose standing rules based on what it observed. Proposed rules are candidates only — nothing changes until you confirm them via <code>/hedwig-learn</code>.</p>
+      <pre><span class="cmt"># Propose rules from this session's traces</span>
+<span class="p">/hedwig-notice</span>
+
+<span class="cmt"># See the raw trace digest first</span>
+<span class="p">/hedwig-notice</span> traces</pre>
+      <p class="cmd-note">Every proposed rule cites the real trace IDs behind it. Uncited proposals are rejected automatically.</p>
+    </div>
+
     <div class="cmd-block" id="rules">
       <div class="tag">configuration</div>
       <div class="cmd-name">/hedwig-rules</div>
@@ -221,6 +237,38 @@ Decline with  /hedwig-learn reject</pre>
 <span class="cmt"># Remove a constraint</span>
 <span class="p">/hedwig-rules</span> remove "config/prod/**"</pre>
       <p class="cmd-note">Hard constraints are enforced before any scoring; they override leases, the classifier, and confirmed preferences. Path patterns use shell-glob matching against repo-relative paths.</p>
+    </div>
+
+    <div class="cmd-block" id="scan">
+      <div class="tag">security</div>
+      <div class="cmd-name">/hedwig-scan</div>
+      <p class="cmd-desc">Asks Claude to scan the repo for security-sensitive files that keyword matching alone would miss — config loaders, secret parsers, token handlers — and add them to Hedwig's security floor. Run once per repo.</p>
+      <pre><span class="cmt"># Scan and add findings to the security floor</span>
+<span class="p">/hedwig-scan</span></pre>
+      <p class="cmd-note">Files added here are treated like <code>auth.py</code>: always surfaced for review, regardless of what the classifier learns. Nothing changes until you confirm the scan's proposals.</p>
+    </div>
+
+    <div class="cmd-block" id="memory">
+      <div class="tag">memory</div>
+      <div class="cmd-name">/hedwig-memory</div>
+      <p class="cmd-desc">Shows what Hedwig has stored about this repo: style guidelines, logic notes, and security facts. This is the memory layer that surfaces into the agent's context before each task.</p>
+      <pre><span class="cmt"># View stored guidelines</span>
+<span class="p">/hedwig-memory</span> guidelines
+
+<span class="cmt"># View logic notes</span>
+<span class="p">/hedwig-memory</span> notes
+
+<span class="cmt"># View security facts</span>
+<span class="p">/hedwig-memory</span> security</pre>
+    </div>
+
+    <div class="cmd-block" id="cochange">
+      <div class="tag">observability</div>
+      <div class="cmd-name">/hedwig-cochange</div>
+      <p class="cmd-desc">Shows which files tend to change together in this repo, based on past sessions. Useful for understanding blast radius and catching edits that touch only half of a coupled pair.</p>
+      <pre><span class="cmt"># Show co-change pairs</span>
+<span class="p">/hedwig-cochange</span></pre>
+      <p class="cmd-note">Computed from session history in this repo. More sessions = better signal.</p>
     </div>
   </div>
 </div>
