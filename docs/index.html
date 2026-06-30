@@ -4,11 +4,11 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Hedwig: governance layer for Claude Code</title>
-<meta name="description" content="Hedwig watches every edit Claude Code makes and decides, per file and per session, which ones need your eyes. Learns from outcomes, runs locally." />
+<meta name="description" content="Hedwig learns your preferences and watches every edit Claude Code makes to decide which diffs need your eyes." />
 
 <meta property="og:type" content="website" />
 <meta property="og:title" content="Hedwig: governance layer for Claude Code" />
-<meta property="og:description" content="Auto-applies low-risk edits. Surfaces the ones worth your review. Learns from what you revert." />
+<meta property="og:description" content="Auto-applies low-risk edits and surfaces the ones worth your review. Learns from what you revert." />
 <meta name="theme-color" content="#0a0c11" />
 
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='3' fill='%230a0c11'/%3E%3Ctext x='2.5' y='12' font-family='monospace' font-size='11' fill='%2367c7d6'%3Ehw%3C/text%3E%3C/svg%3E" />
@@ -265,7 +265,7 @@
 <section id="see">
   <div class="wrap">
     <span class="eyebrow">See it work</span>
-    <h2 style="margin-top:16px">Watch it decide. Watch it learn.</h2>
+    <h2 style="margin-top:16px">Watch Hedwig learn and decide.</h2>
 
     <div class="shots">
       <div class="shot">
@@ -347,7 +347,7 @@ decision on that file.</span></pre>
       <ol class="steps">
         <li>
           <h3>Score the edit</h3>
-          <p>Diff size, blast radius, security sensitivity, change pattern. Deterministic. The model can't talk its way to a low score.</p>
+          <p>Diff size, blast radius, security sensitivity, change pattern. Deterministic, the model can't talk its way to a low score.</p>
         </li>
         <li>
           <h3>Apply or surface</h3>
@@ -355,7 +355,7 @@ decision on that file.</span></pre>
         </li>
         <li>
           <h3>Learn from outcomes</h3>
-          <p>A reverted edit or a failed verification is a training signal. One gradient step, no retraining.</p>
+          <p>A reverted edit or a failed verification is a training signal.</p>
         </li>
       </ol>
 
@@ -409,15 +409,15 @@ decision on that file.</span></pre>
       </div>
       <div class="cap">
         <h3>It tells the agent exactly why</h3>
-        <p>When Hedwig holds an edit, it sends the agent a plain-English reason and asks it to narrow the scope. The agent self-corrects same-turn. No human needed. The floor it held stays held regardless of what the agent argues.</p>
+        <p>When Hedwig holds an edit, it sends the agent a plain-English reason and asks it to narrow the scope. The agent self-corrects same-turn. No human needed, and the floor it held stays held regardless of what the agent argues.</p>
       </div>
       <div class="cap">
         <h3>A real classifier, trained live</h3>
-        <p>A lightweight logistic-regression scorer updates one decision at a time and takes over from the built-in heuristics after ten real calls. No batch retraining, no GPU.</p>
+        <p>A lightweight logistic-regression scorer updates one decision at a time and takes over from the built-in heuristics after ten real calls.</p>
       </div>
       <div class="cap">
         <h3>It scans for what keywords miss</h3>
-        <p>Run <code>/hedwig-scan</code> once and Hedwig reasons over your file tree to flag security-sensitive files that don't have telltale names. Every proposal cites the real edits behind it. Nothing changes until you confirm.</p>
+        <p>Run <code>/hedwig-scan</code> once and Hedwig flags security-sensitive files that don't have obvious names. Nothing changes until you confirm.</p>
       </div>
     </div>
   </div>
@@ -428,8 +428,8 @@ decision on that file.</span></pre>
     <div class="local-inner">
       <h2>Memory is on disk.</h2>
       <p>Decisions, self-corrections, classifier weights, your rules. All of it lives in a local file, not a context window. It survives restarts, carries across sessions, and is shared across agents. Every Claude Code session on the same repo reads the same governance state. A regret recorded by one agent tightens the next.</p>
-      <p>Semantic rule retrieval runs on-device with a small embedding model. Pattern inference is handled by the Claude Code session you're already in. All you need is Claude Code.</p>
-      <p>Token overhead is near-zero. The governance hooks add nothing to your context window. Memory is injected only when it's relevant to the current prompt: a few lines, keyword-matched, capped. A fresh repo costs nothing until you build memory.</p>
+      <p>Rule retrieval runs on-device. Pattern inference runs in the Claude Code session you're already in.</p>
+      <p>Token overhead is near-zero. Rules surface only when relevant — a few lines, capped. A fresh repo costs nothing until you've built up history.</p>
     </div>
   </div>
 </div>
