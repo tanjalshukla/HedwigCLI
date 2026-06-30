@@ -55,21 +55,50 @@ def _last_verdict(session_id: str | None, file_path: str | None) -> dict | None:
     return None
 
 
-def _is_reversal(session_id: str | None, file_path: str | None, cur_old: str, cur_new: str) -> bool:
+def _is_reversal(
+    session_id: str | None,
+    file_path: str | None,
+    cur_old: str,
+    cur_new: str,
+    structured_patch: list | None = None,
+) -> bool:
     """True if this Edit undoes a prior auto-applied edit on the same file.
 
-    The verification-independent negative signal (R1): Hedwig auto-applied an
-    edit A→B on this file; the agent now edits B→A, putting it back. That
-    reversal is a regret with NO dependency on a configured verify command —
-    the most demoable outcome signal ("I auto-approved, the agent undid it, I
-    got warier"). We require an exact inverse against a *suppressed* prior
-    edit so a routine follow-up edit isn't mistaken for a revert. Empty
-    strings never count (a no-op pair can't be a meaningful reversal).
+    Two detection strategies, most robust first:
+
+    1. Structured-patch analysis (when PostToolUse provides structuredPatch):
+       A patch that removes more lines than it adds on a file Hedwig suppressed
+       this session is likely a partial or full reversal. This catches reversals
+       that don't exactly invert the old/new strings (e.g. partial undos, merged
+       changes). We use this as the primary signal when available.
+
+    2. Exact-inverse fallback (original detection): the prior edit was
+       old→new; this edit is new→old. Precise but brittle — misses partial undos.
+
+    Both require a prior *suppressed* verdict on this (session, file). Empty
+    strings and empty patches never count as reversals.
     """
     if not (cur_old or cur_new):
         return False
-    # Use _iter_jsonl (sibling-dir-aware) so reversal detection works even when
-    # the hook and the recorder receive different CLAUDE_PLUGIN_DATA values.
+
+    # Strategy 1: structured patch — net-deletion on a file we auto-applied.
+    if structured_patch and isinstance(structured_patch, list):
+        for hunk in structured_patch:
+            if not isinstance(hunk, dict):
+                continue
+            lines = hunk.get("lines") or []
+            removed = sum(1 for l in lines if isinstance(l, str) and l.startswith("-"))
+            added = sum(1 for l in lines if isinstance(l, str) and l.startswith("+"))
+            if removed > added:
+                # Net deletion on this file. Check if Hedwig suppressed it recently.
+                for row in _iter_jsonl(DECISIONS_LOG, reverse=True):
+                    if row.get("session_id") == session_id and row.get("file_path") == file_path:
+                        if row.get("verdict") == "suppressed":
+                            return True
+                        break  # most recent verdict was not suppressed — not a reversal
+                break
+
+    # Strategy 2: exact string inverse.
     for row in _iter_jsonl(DECISIONS_LOG, reverse=True):
         if row.get("session_id") != session_id or row.get("file_path") != file_path:
             continue
@@ -79,8 +108,6 @@ def _is_reversal(session_id: str | None, file_path: str | None, cur_old: str, cu
         prior_new = row.get("edit_new") or ""
         if not (prior_old or prior_new):
             continue
-        # Exact inverse: the prior auto-applied edit was prior_old -> prior_new,
-        # and this edit is prior_new -> prior_old.
         if cur_old == prior_new and cur_new == prior_old:
             return True
     return False
@@ -237,29 +264,46 @@ def _main_inner() -> int:
     if not isinstance(abs_file, str) or not abs_file:
         return 0
 
+    import time as _time  # noqa: PLC0415
+
     session_id = payload.get("session_id") or ""
     cwd = payload.get("cwd") or ""
     rel = _rel_path(cwd, abs_file)
-    # DB key, canonicalized so it matches what the slash commands and decide
-    # hook derive (cwd stays raw for the _rel_path math above).
     repo_root = repo_root_key(cwd)
 
-    # decide.py logs the verdict keyed by the repo-relative path, so correlate
-    # on `rel` (not the absolute path) — otherwise every lookup misses and
-    # auto-applied actions get mis-tagged as plain user approvals.
+    # Structured patch from tool_response (PostToolUse only).
+    tool_response = payload.get("tool_response") or {}
+    structured_patch = tool_response.get("structuredPatch") if isinstance(tool_response, dict) else None
+
     verdict_row = _last_verdict(session_id, rel)
     suppressed = bool(verdict_row and verdict_row.get("verdict") == "suppressed")
+    surfaced = bool(verdict_row and verdict_row.get("verdict") == "surfaced")
     change_pattern = (verdict_row or {}).get("change_pattern")
 
+    # Response time: time between Hedwig's PreToolUse decision and this PostToolUse.
+    # Only meaningful for surfaced edits (the developer had to actively approve);
+    # for suppressed edits it's just tool execution latency.
+    response_time_ms: int | None = None
+    if verdict_row and verdict_row.get("pre_tool_ts"):
+        try:
+            elapsed_ms = int((_time.time() - float(verdict_row["pre_tool_ts"])) * 1000)
+            if 0 < elapsed_ms < 600_000:  # sanity: 0–10 min
+                response_time_ms = elapsed_ms
+        except Exception:
+            pass
+
+    # Rubber stamp: surfaced edit approved in under 5 seconds — developer didn't
+    # really review it. Weight this approval at 0.5 in the classifier.
+    rubber_stamp = False
+    if surfaced and response_time_ms is not None:
+        rubber_stamp = response_time_ms < 5_000
+
     # R1: verification-independent regret. If this Edit undoes a prior
-    # auto-applied edit on the same file, the agent reverted Hedwig's action —
-    # record it as a negative outcome so the next decide tightens, and stop.
-    # A reversal is NOT a fresh positive edit, so we do not also record an
-    # approve/auto_approve trace for it.
+    # auto-applied edit on the same file, record it as negative and stop.
     if tool_name == "Edit":
         cur_old = tool_input.get("old_string") or ""
         cur_new = tool_input.get("new_string") or ""
-        if _is_reversal(session_id, rel, cur_old, cur_new):
+        if _is_reversal(session_id, rel, cur_old, cur_new, structured_patch):
             append_jsonl(
                 "traces.jsonl",
                 {
@@ -273,13 +317,14 @@ def _main_inner() -> int:
             )
             _record_reversal_regret(repo_root, session_id, rel, change_pattern)
             return 0
-    # Suppressed → Hedwig auto-applied it. Surfaced+executed → user approved at
-    # the native prompt. Both are positive outcome history; the tag preserves
-    # attribution for /hedwig-status and later analysis.
+
+    # Suppressed → Hedwig auto-applied. Surfaced+executed → developer approved
+    # at the native prompt. Both are positive outcome history.
     user_decision = "auto_approve" if suppressed else "approve"
     score = (verdict_row or {}).get("score", 0.0)
+    effort_level = (verdict_row or {}).get("effort_level") or ""
+    is_security_sensitive = bool((verdict_row or {}).get("is_security_sensitive"))
 
-    # Keep the JSONL trace too (cheap, human-readable, survives DB issues).
     append_jsonl(
         "traces.jsonl",
         {
@@ -288,6 +333,9 @@ def _main_inner() -> int:
             "tool_name": tool_name,
             "file_path": rel,
             "user_decision": user_decision,
+            "response_time_ms": response_time_ms,
+            "rubber_stamp": rubber_stamp,
+            "effort_level": effort_level,
         },
     )
 
@@ -296,13 +344,13 @@ def _main_inner() -> int:
         db.record_trace(
             repo_root=repo_root,
             session_id=session_id,
-            task=repo_root,  # plugin has no task string; key history per repo
+            task=repo_root,
             stage="apply",
             action_type="file_update",
             file_path=rel,
             change_type=change_pattern,
-            diff_size=None,
-            blast_radius=None,
+            diff_size=int((verdict_row or {}).get("diff_size") or 0) or None,
+            blast_radius=int((verdict_row or {}).get("blast_radius") or 0) or None,
             existing_lease=False,
             lease_type=None,
             prior_approvals=0,
@@ -310,25 +358,21 @@ def _main_inner() -> int:
             policy_action="proceed" if suppressed else "check_in",
             policy_score=float(score) if score is not None else 0.0,
             user_decision=user_decision,
+            response_time_ms=response_time_ms,
+            rubber_stamp=rubber_stamp,
+            is_security_sensitive=is_security_sensitive,
         )
-        # Positive learning sample. An executed governed edit — auto-applied or
-        # approved at the native prompt — is positive outcome history, so replay
-        # it as classifier.update(approved=True). This is the ONLY place
-        # sample_count grows on the plugin path; without it the online scorer
-        # never reaches ready() and the learned scorer never takes over. The
-        # PolicyInput is rebuilt from the RiskSignals decide.py logged, so we
-        # learn on the exact features that decision was scored on. Skipped when
-        # decide left no risk signals (e.g. cold log row from before this fix).
+        # Positive learning sample. For surfaced+approved edits the developer
+        # actively reviewed — this is the signal the CLI gets from the
+        # approve/deny click and the plugin previously missed entirely. We now
+        # recover it by correlating surfaced decisions with PostToolUse execution.
+        # Rubber-stamp approvals are down-weighted (count_sample=True but the
+        # effective_approvals increment is 0.5 inside PolicyClassifier.update).
         if verdict_row and verdict_row.get("blast_radius") is not None:
             pi = policy_input_for_decision(db, repo_root, rel, verdict_row)
             update_classifier_for_decision(db, repo_root, pi, approved=True)
-        # Hypothesis bank: seed rule-based candidates from this session's traces
-        # and accumulate evidence on the latest one. Pure-local (no Bedrock) —
-        # the LLM noticer is a separate opt-in path. Candidates never affect
-        # behavior until the developer confirms one via /hedwig-learn.
         _run_hypothesis_evidence(db, repo_root, session_id)
     except Exception:
-        # DB write is best-effort; the JSONL trace above is the fallback.
         pass
 
     return 0

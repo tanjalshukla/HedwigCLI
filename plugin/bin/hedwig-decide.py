@@ -189,6 +189,15 @@ def _log_decision(
         "diff_size": risk.diff_size,
         "reason": reason,
         "scorer": scorer,
+        # Timestamp so the PostToolUse recorder can compute developer response
+        # time (time between PreToolUse surface and the edit actually executing).
+        "pre_tool_ts": __import__("time").time(),
+        # Effort level from the payload — session-level signal for preference
+        # matching and hypothesis accumulation.
+        "effort_level": (payload.get("effort") or {}).get("level") or "",
+        # tool_use_id so the PostToolUse recorder can correlate this exact
+        # decision with the corresponding PostToolUse event.
+        "tool_use_id": payload.get("tool_use_id") or "",
     }
     if edit_old or edit_new:
         row["edit_old"] = edit_old

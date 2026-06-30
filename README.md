@@ -69,7 +69,7 @@ online classifier runs on every edit.
 | Confidence handshake (agent self-pause) | ✅ |
 | Threshold adaptation + session signals | 🔜 |
 
-The plugin learns from edit **outcomes** — reversals and verification failures — not approve/deny clicks (Claude Code owns the native prompt and doesn't expose it to hooks). Same learning loop, different signal source.
+The plugin recovers approve/deny signal through outcome inference: when a surfaced edit executes (PostToolUse fires), the developer approved it — the plugin feeds that as a positive classifier sample with measured response time. At session end, surfaced edits with no corresponding PostToolUse are inferred denials — negative samples. Reversals and verification failures complete the picture. This recovers the bulk of the CLI's per-decision learning signal without access to the native permission prompt.
 
 ### Research CLI (Bedrock-backed)
 

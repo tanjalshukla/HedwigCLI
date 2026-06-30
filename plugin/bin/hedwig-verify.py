@@ -40,13 +40,16 @@ _HERE = Path(__file__).resolve().parent
 if str(_HERE) not in sys.path:
     sys.path.insert(0, str(_HERE))
 from _hedwig_common import (  # noqa: E402
+    DECISIONS_LOG,
     _iter_jsonl,
     append_jsonl,
     data_dir,
     ensure_learned_interpreter,
     open_trust_db,
+    policy_input_for_decision,
     policy_input_for_regret,
     repo_root_key,
+    update_classifier_for_decision,
     update_classifier_for_regret,
 )
 
@@ -124,6 +127,90 @@ def _auto_applied_files(session_id: str, cwd: str) -> list[str]:
         ):
             seen.append(row["file_path"])
     return seen
+
+
+def _infer_developer_denials(session_id: str, repo_root: str) -> list[dict]:
+    """Recover approve/deny signal from surfaced edits.
+
+    The CLI sees approve/deny clicks directly. The plugin can't — Claude Code
+    owns the native prompt. But we can infer denials at session end:
+
+    - surfaced edit in decisions.jsonl → developer saw the native prompt
+    - corresponding entry in traces.jsonl (user_decision=approve) → approved
+    - no traces.jsonl entry for that file → the edit never executed → denied
+
+    This recovers the bulk of the CLI's per-decision learning signal from
+    outcome evidence alone. Returns a list of decision rows for files that
+    were surfaced but never executed (inferred denials).
+    """
+    # Files that executed (positive trace exists).
+    executed: set[str] = set()
+    for row in _iter_jsonl("traces.jsonl"):
+        if row.get("session_id") == session_id and row.get("file_path"):
+            executed.add(row["file_path"])
+
+    # Surfaced decisions with no execution = inferred denial.
+    denied: list[dict] = []
+    seen: set[str] = set()
+    for row in _iter_jsonl(DECISIONS_LOG, reverse=True):
+        if row.get("session_id") != session_id:
+            continue
+        fp = row.get("file_path") or ""
+        if not fp or fp in seen:
+            continue
+        seen.add(fp)
+        if row.get("verdict") == "surfaced" and fp not in executed:
+            denied.append(row)
+    return denied
+
+
+def _record_inferred_denials(session_id: str, repo_root: str) -> None:
+    """Record inferred developer denials as negative learning signals.
+
+    Surfaced edits the developer chose not to apply are negative outcome
+    history — the developer saw the change and said no. Feed each one as a
+    negative classifier update (count_sample=True so it counts toward the
+    learned-scorer threshold — developer denials are real decisions, not
+    corrections like regrets).
+
+    Best-effort: never raises into the hook.
+    """
+    denied_rows = _infer_developer_denials(session_id, repo_root)
+    if not denied_rows:
+        return
+    try:
+        db = open_trust_db()
+        for row in denied_rows:
+            fp = row.get("file_path") or ""
+            if not fp:
+                continue
+            # Record as a denial trace.
+            db.record_trace(
+                repo_root=repo_root,
+                session_id=session_id,
+                task=repo_root,
+                stage="apply",
+                action_type="file_update",
+                file_path=fp,
+                change_type=row.get("change_pattern"),
+                diff_size=int(row.get("diff_size") or 0) or None,
+                blast_radius=int(row.get("blast_radius") or 0) or None,
+                existing_lease=False,
+                lease_type=None,
+                prior_approvals=0,
+                prior_denials=0,
+                policy_action="check_in",
+                policy_score=float(row.get("score") or 0.0),
+                user_decision="deny",
+                user_feedback_text="inferred: surfaced edit never executed",
+                is_security_sensitive=bool(row.get("is_security_sensitive")),
+            )
+            # Negative classifier update — counts as a real sample.
+            pi = policy_input_for_decision(db, repo_root, fp, row)
+            if pi is not None:
+                update_classifier_for_decision(db, repo_root, pi, approved=False)
+    except Exception:
+        pass
 
 
 def _notify_ready_hypothesis(session_id: str, cwd: str) -> None:
@@ -271,15 +358,20 @@ def _main_inner() -> int:
     if not isinstance(payload, dict):
         return 0  # valid JSON but not an object (list/str/num)
 
-    # Run verification first (pure side effects, no stdout), then surface a
-    # ready hypothesis if one is waiting. The notification is the hook's single
-    # stdout emit; verification only writes traces. Both are best-effort and
-    # independent — verification not being configured doesn't suppress the
-    # hypothesis nudge, and vice versa.
+    session_id = payload.get("session_id") or ""
+    cwd = payload.get("cwd") or os.getcwd()
+    repo_root = repo_root_key(cwd)
+
+    # Run verification first (pure side effects, no stdout).
     _run_verification(payload)
-    _notify_ready_hypothesis(
-        payload.get("session_id") or "", payload.get("cwd") or os.getcwd()
-    )
+
+    # Infer developer denials: surfaced edits with no PostToolUse = denied.
+    # This recovers the approve/deny learning signal the CLI gets from clicks.
+    _record_inferred_denials(session_id, repo_root)
+
+    # Surface a ready hypothesis if one is waiting. The notification is the
+    # hook's single stdout emit — independent of verification and denial inference.
+    _notify_ready_hypothesis(session_id, cwd)
     return 0
 
 

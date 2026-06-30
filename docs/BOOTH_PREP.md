@@ -145,30 +145,45 @@ Three possible outputs:
 
 ## The Learning Loop — Exact Mechanics
 
-**What counts as a regret event**
+**How the plugin recovers approve/deny signal**
 
-After every edit applies, `hedwig-record.py` runs as a PostToolUse hook. It reads `decisions.jsonl` (via the sibling-aware `_iter_jsonl`) to find the most recent `suppressed` decision for this `(session_id, file_path)`. If the current PostToolUse is writing content that substantially reverses that edit (same file, content significantly diverged from what was applied), it's a reversal. `hedwig-verify.py` also runs at session Stop and checks whether any auto-applied edit's file has since been restored to a pre-edit state.
+The CLI sees every approve/deny click directly because it owns its own UI. The plugin can't — Claude Code owns the native permission prompt. But the plugin now recovers the equivalent signal through outcome inference:
 
-Both detection mechanisms write to `regret.jsonl` with a stable `regret_key` — a hash of `(session_id, file_path, original_ts)`. The `_corrected_regret_ids` set in the classifier ensures each regret fires exactly one negative gradient update, even across restarts.
+- **Surfaced + PostToolUse fires** = developer approved the edit. `hedwig-record.py` correlates the PostToolUse event back to the original surfaced decision and feeds it as a positive classifier sample. Response time is measured (time between PreToolUse and PostToolUse) and flagged as a rubber stamp if under 5 seconds.
+- **Surfaced + no PostToolUse by session end** = developer denied. `hedwig-verify.py` (Stop hook) scans all surfaced decisions and infers denials for those with no corresponding execution. Each inferred denial becomes a negative classifier sample with `count_sample=True` — real developer decisions, not corrections.
+- **Auto-applied + no reversal** = positive sample (unchanged).
+- **Auto-applied + reversal** = regret, negative correction sample.
+- **Verification failure** = negative sample on the files in the failing change.
+
+This gives the plugin full learning signal parity with the CLI on the per-decision axis.
+
+**What counts as a reversal**
+
+`hedwig-record.py` uses two detection strategies. First, it checks `structuredPatch` from the PostToolUse payload: if the patch has more deletions than additions on a file Hedwig suppressed this session, that's a likely partial or full undo. This catches more reversals than exact string matching. The fallback is the original exact-inverse check: prior edit was `old→new`, this edit is `new→old`.
+
+Both write to `regret.jsonl`. The `_corrected_regret_ids` set in the classifier ensures each regret fires exactly one negative gradient, even across restarts.
 
 **The classifier update cycle**
 
-On a positive outcome (edit applied, no reversal):
+On a positive outcome (auto-applied or surfaced+approved):
 1. `hedwig-record.py` calls `classifier.update(pi, approved=True, count_sample=True)`
 2. `sample_count` increments by 1
-3. If `sample_count` crosses 10, `ready()` returns True and future decisions use the classifier instead of the heuristic
-4. Classifier is pickled and written back to `policy_models` in SQLite
+3. If `sample_count` crosses 10, `ready()` returns True — learned classifier takes over
+4. Classifier written back to `policy_models` in SQLite
+
+On an inferred denial (surfaced, no PostToolUse at session end):
+1. `hedwig-verify.py` reconstructs `PolicyInput` from the logged decision
+2. Calls `update_classifier_for_decision(db, repo_root, pi, approved=False)`
+3. `count_sample=True` — a real developer decision, not a correction
 
 On a regret:
-1. `hedwig-record.py` reconstructs the `PolicyInput` for the original edit using its stored feature values
-2. It decrements `effective_approvals` by the original approval weight (0.5 if rubber stamp, 1.0 if full)
-3. Calls `classifier.update(pi, approved=False, count_sample=False)` — count_sample=False because a regret is a correction, not a new decision
-4. Adds `regret_key` to `_corrected_regret_ids`
-5. Writes classifier back to SQLite
+1. Decrements `effective_approvals` by the original approval weight (0.5 if rubber stamp)
+2. Calls `classifier.update(pi, approved=False, count_sample=False)` — correction, not a new sample
+3. Adds `regret_key` to `_corrected_regret_ids`
 
 **Rubber stamps**
 
-If an edit is approved in under 5 seconds average response time (stored per-file in `policy_history`), `hedwig-record.py` marks it as `rubber_stamp=True` in the trace. The classifier update weights this at 0.5 instead of 1.0. If a rubber-stamped edit then gets reverted, only 0.5 units of approval need to be unwound — the correction uses a 0.5 decrement to `effective_approvals`.
+When a surfaced edit executes in under 5 seconds (measured from PreToolUse timestamp to PostToolUse), it's marked `rubber_stamp=True`. The classifier weights this approval at 0.5. If it later gets reverted, only 0.5 units need to be unwound.
 
 ---
 
@@ -285,7 +300,7 @@ Yes. Everything is in SQLite per-repo. The classifier, confirmed preferences, ha
 Nothing leaves the machine. Governance runs from vendored Python. The database is local SQLite. `fastembed` runs locally. No cloud dependencies at runtime.
 
 **"What's the difference between the plugin and the research CLI?"**
-The plugin is the Claude Code integration — no credentials, fully local, hooks-based. What's at the fair is the plugin. The research CLI (`hw`) is a Bedrock-backed REPL that calls a hosted Claude model and runs a richer read/plan/apply/verify cascade. The CLI sees approve/deny clicks directly (its own UI). The plugin can't — Claude Code owns the native prompt — so it learns from outcomes instead. Same learning loop, different signal source.
+The plugin is the Claude Code integration — no credentials, fully local, hooks-based. What's at the fair is the plugin. The research CLI (`hw`) is a Bedrock-backed REPL that calls a hosted Claude model and runs a richer read/plan/apply/verify cascade. The CLI sees approve/deny clicks directly (its own UI). The plugin recovers equivalent signal through outcome inference: surfaced edits that execute = approvals, surfaced edits that don't = denials (inferred at session end), reversals and verify failures = regrets. The learning loop is effectively the same.
 
 ---
 
