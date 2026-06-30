@@ -34,6 +34,7 @@ Always exits 0; a noticer failure must never break the session. Local, no cloud.
 from __future__ import annotations
 
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -65,7 +66,7 @@ def _cmd_traces(argv: list[str]) -> int:
     # cwd + session passed as args so the agent can pass ${CLAUDE_PROJECT_DIR}
     # / ${CLAUDE_SESSION_ID}; fall back to env/getcwd.
     cwd = argv[0] if argv else ""
-    session_id = argv[1] if len(argv) > 1 else ""
+    session_id = (argv[1] if len(argv) > 1 else "") or os.environ.get("CLAUDE_SESSION_ID", "")
     repo_root = repo_root_key(cwd)
     try:
         from sc.hypothesis_bank import _format_trace_digest  # noqa: PLC0415
@@ -100,7 +101,7 @@ def _main_inner() -> int:
         return 0
 
     repo_root = repo_root_key(payload.get("cwd") or "")
-    session_id = str(payload.get("session_id") or "")
+    session_id = str(payload.get("session_id") or os.environ.get("CLAUDE_SESSION_ID", "") or "")
 
     try:
         from sc.hypothesis_bank import ingest_llm_hypotheses  # noqa: PLC0415
