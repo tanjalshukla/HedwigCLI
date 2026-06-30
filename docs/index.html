@@ -140,7 +140,7 @@
   .caps{margin-top:48px;display:grid;grid-template-columns:1fr 1fr;gap:0;
     border:1px solid var(--line-soft);border-radius:11px;overflow:hidden}
   @media(max-width:680px){.caps{grid-template-columns:1fr}}
-  .cap{padding:28px 32px;border-right:1px solid var(--line-soft);border-bottom:1px solid var(--line-soft)}
+  .cap{padding:22px 28px;border-right:1px solid var(--line-soft);border-bottom:1px solid var(--line-soft)}
   .cap:nth-child(2n){border-right:none}
   .cap:nth-last-child(-n+2){border-bottom:none}
   @media(max-width:680px){.cap{border-right:none;border-bottom:1px solid var(--line-soft)}
@@ -336,7 +336,7 @@ decision on that file.</span></pre>
         </div>
       </div>
     </div>
-    <p class="shot-cap">Real output from a seeded demo repo. Your numbers come from your own edits.</p>
+    <p class="shot-cap">Powered by your trace data and behavior in this repo.</p>
   </div>
 </section>
 
@@ -356,7 +356,7 @@ decision on that file.</span></pre>
         </li>
         <li>
           <h3>Learn from outcomes</h3>
-          <p>A reverted edit or a failed verification is a training signal. One gradient step. No retraining, no synthetic data.</p>
+          <p>A reverted edit or a failed verification is a training signal. One gradient step, no retraining.</p>
         </li>
       </ol>
 
@@ -402,7 +402,7 @@ decision on that file.</span></pre>
   <div class="wrap">
     <span class="eyebrow">What makes it work</span>
     <h2 style="margin-top:16px">It calibrates to how you work in this repo.</h2>
-    <p class="lead" style="margin-top:14px;max-width:60ch">Claude Code's auto mode runs on rules you write up front. Hedwig learns the line from what you actually revert, and holds a security floor it won't cross no matter what it learns. Grounded in a study of 128 developers: style varies more within a person than between people, so Hedwig calibrates per repo, not per developer.</p>
+    <p class="lead" style="margin-top:14px;max-width:60ch">Hedwig learns the line from what you actually revert, and holds a security floor it won't cross no matter what it learns. It calibrates per repo, not per developer.</p>
     <div class="caps" style="margin-top:36px">
       <div class="cap">
         <h3>It learns from your reverts</h3>
@@ -414,7 +414,7 @@ decision on that file.</span></pre>
       </div>
       <div class="cap">
         <h3>A real classifier, trained live</h3>
-        <p>A lightweight logistic-regression scorer updates one decision at a time and takes over from the built-in heuristics after ten real calls. No batch retraining, no GPU, no synthetic data.</p>
+        <p>A lightweight logistic-regression scorer updates one decision at a time and takes over from the built-in heuristics after ten real calls. No batch retraining, no GPU.</p>
       </div>
       <div class="cap">
         <h3>It scans for what keywords miss</h3>
@@ -461,7 +461,7 @@ decision on that file.</span></pre>
       <a href="https://github.com/tanjalshukla/HedwigCLI">GitHub</a>
       <a href="commands.html">Docs</a>
       <a href="mailto:shuklatanjal@gmail.com">Contact</a>
-      <span class="ver" data-hedwig-version>v0.1.13</span>
+      <span class="ver" data-hedwig-version>v0.1.14</span>
     </nav>
   </div>
 </footer>

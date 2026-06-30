@@ -179,7 +179,38 @@ def _render(summary: dict, rows: list[dict], scope: str) -> str:
     return "\n".join(lines)
 
 
+def _write_debug_snapshot() -> None:
+    """Write CLAUDE_PLUGIN_DATA and sibling dirs to /tmp/hedwig_status_debug.txt.
+
+    One-shot diagnostic for the data-dir split: run /hedwig-status once inside
+    Claude Code, then read /tmp/hedwig_status_debug.txt to see exactly which
+    path the slash command receives vs. what the hooks write.
+    """
+    import os
+    from pathlib import Path
+    try:
+        from _hedwig_common import data_dir  # noqa: PLC0415
+        d = data_dir()
+        siblings = sorted(p for p in d.parent.glob("hedwig*") if p.is_dir())
+        lines = [
+            f"CLAUDE_PLUGIN_DATA={os.environ.get('CLAUDE_PLUGIN_DATA', '(unset)')}",
+            f"data_dir={d}",
+            f"decisions.jsonl exists: {(d / 'decisions.jsonl').exists()}",
+            "siblings:",
+        ]
+        for s in siblings:
+            df = s / "decisions.jsonl"
+            lines.append(f"  {s}  decisions.jsonl={'yes' if df.exists() else 'no'}")
+        Path("/tmp/hedwig_status_debug.txt").write_text("\n".join(lines) + "\n")
+    except Exception as exc:
+        try:
+            Path("/tmp/hedwig_status_debug.txt").write_text(f"error: {exc}\n")
+        except Exception:
+            pass
+
+
 def main(argv: list[str]) -> int:
+    _write_debug_snapshot()
     session_id: str | None = None
     as_json = False
     i = 0
