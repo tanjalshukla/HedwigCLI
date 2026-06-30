@@ -34,7 +34,7 @@ from _hedwig_common import (  # noqa: E402
     DECISIONS_LOG,
     _iter_jsonl,
     append_jsonl,
-    data_dir,
+
     ensure_learned_interpreter,
     open_trust_db,
     policy_input_for_decision,
@@ -68,21 +68,9 @@ def _is_reversal(session_id: str | None, file_path: str | None, cur_old: str, cu
     """
     if not (cur_old or cur_new):
         return False
-    path = data_dir() / DECISIONS_LOG
-    if not path.exists():
-        return False
-    try:
-        lines = path.read_text(encoding="utf-8").splitlines()
-    except Exception:
-        return False
-    for line in reversed(lines):
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            row = json.loads(line)
-        except json.JSONDecodeError:
-            continue
+    # Use _iter_jsonl (sibling-dir-aware) so reversal detection works even when
+    # the hook and the recorder receive different CLAUDE_PLUGIN_DATA values.
+    for row in _iter_jsonl(DECISIONS_LOG, reverse=True):
         if row.get("session_id") != session_id or row.get("file_path") != file_path:
             continue
         if row.get("verdict") != "suppressed":

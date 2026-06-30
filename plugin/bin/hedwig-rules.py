@@ -133,7 +133,12 @@ def main(argv: list[str]) -> int:
     if verb == "add" and len(argv) >= 3:
         return _cmd_add(argv[1], " ".join(argv[2:]))
     if verb == "remove" and len(argv) >= 2:
-        return _cmd_remove(" ".join(argv[1:]))
+        # Accept both `remove <path>` and the mistaken `remove deny <path>`
+        # (mirroring add's syntax) by skipping a leading policy alias.
+        rest = argv[1:]
+        if rest[0].lower() in _POLICY_ALIASES and len(rest) >= 2:
+            rest = rest[1:]
+        return _cmd_remove(" ".join(rest))
     sys.stdout.write(
         "Usage:\n"
         "  /hedwig-rules list\n"
