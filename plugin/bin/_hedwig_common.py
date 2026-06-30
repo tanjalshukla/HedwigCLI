@@ -491,26 +491,34 @@ LOW_CONFIDENCE_THRESHOLD = 0.5
 
 
 def _iter_jsonl(filename: str, *, reverse: bool = False):
-    """Yield parsed JSON dicts from <data_dir>/<filename> and any sibling
-    hedwig* data dirs, skipping blanks and bad lines.
+    """Yield parsed JSON dicts from <data_dir>/<filename> and every hedwig*
+    directory under ~/.claude/plugins/data/, skipping blanks and bad lines.
 
-    Claude Code can give hooks and slash-command subprocesses different values
-    for CLAUDE_PLUGIN_DATA (hooks get the marketplace-namespaced dir, commands
-    may get the fallback 'hedwig' dir). Both share the same parent. We scan
-    every sibling whose name starts with 'hedwig' and merge results so commands
-    like /hedwig-status and /hedwig-retrospective find data written by the hooks
-    regardless of which CLAUDE_PLUGIN_DATA value each subprocess received. Rows
-    are deduplicated by (session_id, file_path, ts) so a row that appears in
-    multiple dirs is only yielded once. Best-effort: any I/O failure is skipped.
+    Claude Code gives hooks and slash-command subprocesses different values for
+    CLAUDE_PLUGIN_DATA. We can't rely on them sharing a parent, so we scan the
+    canonical install root (~/.claude/plugins/data/hedwig*) unconditionally in
+    addition to whatever data_dir() returns. This guarantees status/retrospective
+    always find what the hooks wrote regardless of which path the platform passes.
+    Rows are deduplicated by content hash. Best-effort: any I/O failure is skipped.
     """
     primary = data_dir()
     candidates: list = [primary / filename]
     try:
         seen_dirs = {primary.resolve()}
-        for sibling in primary.parent.glob("hedwig*"):
-            if sibling.is_dir() and sibling.resolve() not in seen_dirs:
-                seen_dirs.add(sibling.resolve())
-                candidates.append(sibling / filename)
+        # Scan the canonical Claude Code plugin data root unconditionally so
+        # slash commands always find hook-written data even when the platform
+        # passes a different CLAUDE_PLUGIN_DATA to each subprocess type.
+        # HEDWIG_DATA_ROOT overrides the canonical root (used in tests to isolate).
+        _env_root = os.environ.get("HEDWIG_DATA_ROOT")
+        canonical_root = Path(_env_root) if _env_root else Path.home() / ".claude" / "plugins" / "data"
+        search_roots = {canonical_root}
+        if primary.parent.resolve() != canonical_root.resolve():
+            search_roots.add(primary.parent)
+        for root in search_roots:
+            for sibling in root.glob("hedwig*"):
+                if sibling.is_dir() and sibling.resolve() not in seen_dirs:
+                    seen_dirs.add(sibling.resolve())
+                    candidates.append(sibling / filename)
     except Exception:
         pass
 

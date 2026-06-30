@@ -23,6 +23,9 @@ _PLUGIN_BIN = Path(__file__).resolve().parent.parent / "plugin" / "bin"
 def _run(script: str, *args: str, payload: dict | None = None, data_dir: Path, cwd: Path | None = None):
     env = dict(os.environ)
     env["CLAUDE_PLUGIN_DATA"] = str(data_dir)
+    # Pin the canonical data-root scan to the same tmp dir so tests never read
+    # the real ~/.claude/plugins/data/ (which would make "empty" tests fail).
+    env["HEDWIG_DATA_ROOT"] = str(data_dir.parent)
     env["PYTHONPATH"] = ""
     env.pop("VIRTUAL_ENV", None)
     return subprocess.run(
